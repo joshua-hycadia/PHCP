@@ -69,7 +69,7 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE` |
+| `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
@@ -85,6 +85,7 @@ line that uses it.  Every pipe name is unique.
 | `PUMP` | NAME IN OUT CHURN FLOW PRESSURE [FLOW PRESSURE ...] |
 | `BP` | PIPE CHURN FLOW PRESSURE [...] - a pump in a pipe |
 | `PUMPDUTY` | PUMP FLOW PRESSURE - the rated duty of a `PUMP` (its name) or a `BP` (its pipe), checked against its curve |
+| `AREA` | NAME OUTLET [OUTLET ...] - a design area: outlets that flow together; a second line of the same name adds to it |
 | `BFP` | PIPE FLOW LOSS [FLOW LOSS ...] - a backflow preventer in a pipe |
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
@@ -811,6 +812,35 @@ allowance, at the system's pressure, and the supply is read at that flow.
 The report shows the system flow, the allowance and the demand, and states
 in its notes whether an allowance is included.
 
+## Design areas
+
+A model may hold more outlets than ever flow at once - a whole floor, of
+which the design area is one part.  Each `AREA` line names outlets that flow
+together:
+
+```
+AREA NEAR A1 A2 A3 A4
+AREA FAR  B1 B2 B3 B4
+```
+
+An outlet named in no `AREA` (a hydrant, a hose reel) flows in every area.
+PHCP solves each area on its own, with the other areas' outlets shut, and
+reports the one that governs:
+
+1. an area whose solve did not converge, first - nothing about it can be
+   relied on;
+2. else, with one supply, the area with the least margin at the supply
+   (available minus demand at its demand point);
+3. else the area whose governing outlet has the least pressure to spare.
+
+The report, the editor's results and the JSON are of that area.  Section 1
+lists every area - its governing outlet and margin, and its demand flow,
+pressure and supply margin - and marks the one that governs.
+`OPTION DESIGN_AREA <name>` (DESIGN AREA in the PROJECT tab) solves and
+reports that one area only.  The model has no drawing, so areas are not found
+by position: the designer names them, and PHCP says which governs.  Example
+11 is a floor of two branch lines and a hose reel, in three areas.
+
 ## Supply, pump and loss curves
 
 A `WATER` supply with flow/pressure points, a `PUMP` or `BP`, and a `BFP` or
@@ -852,12 +882,12 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 39 / 39 |
-| `.phc` language, line checker, pressure ratio valves and roughness, pump checks and hose allowance | 292 / 292 |
+| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance and design areas | 307 / 307 |
 | AutoCAD exporter, structure | 5 / 5 |
-| JSON interface | 81 / 81 |
+| JSON interface | 90 / 90 |
 | supply, pump and loss curves, and supplies combined | 18 / 18 |
-| report hand-checks, 8 models | 419 / 419 |
-| PDF structure, typeface and graphs, 8 models | 158 / 158 |
+| report hand-checks, 9 models | 515 / 515 |
+| PDF structure, typeface and graphs, 9 models | 173 / 173 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 151 / 151 |
 | quick tools | 58 / 58 |
