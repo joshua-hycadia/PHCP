@@ -351,6 +351,6 @@ independent of the calculation.
 - [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
 - [ ] PR 5 - AutoCAD SOLVE command run inside AutoCAD
 - [x] v1.0 - `.hcx` removed throughout, no other program or person named
-- [x] v1.0 - program icon: on the editor window, and in both `.exe` files
+- [x] v1.0 - program icon on the editor window and taskbar (the .exe files keep the default: PAR::Packer has no --icon)
 - [x] Report: a supply graph for each supply when there are several, then all combined - flows added at equal pressure, the combined duty at one common pressure; example 09, three pumps in parallel (engine files Report, PDF, Demand: no solved number changes)
 - [x] v1.0 - GRAPH tab: Q^1.85 water supply graphs from figures typed in, printed to PDF
