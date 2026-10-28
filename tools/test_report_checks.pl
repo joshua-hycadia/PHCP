@@ -24,6 +24,7 @@ use strict;
 use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
+use File::Spec;
 
 my @models = @ARGV ? @ARGV : glob("$FindBin::Bin/../examples/*.phc");
 @models = grep { !/grid1000/ } @models;          # large; adds nothing here
@@ -44,10 +45,19 @@ sub close_to {
     return 0;
 }
 
+# run -- phcp.pl on a model, quietly, by this perl and without a shell, so it
+# runs the same on Windows (no /dev/null, no #! line there).
+sub run {
+    open my $out, '>&', \*STDOUT or die; open my $err, '>&', \*STDERR or die;
+    open STDOUT, '>', File::Spec->devnull; open STDERR, '>', File::Spec->devnull;
+    system($^X, "$FindBin::Bin/../phcp.pl", @_);
+    open STDOUT, '>&', $out; open STDERR, '>&', $err;
+}
+
 for my $m (@models) {
     my (undef, $rep) = tempfile(SUFFIX => '.txt', UNLINK => 1);
-    system("\"$FindBin::Bin/../phcp.pl\" \"$m\" \"$rep\" >/dev/null 2>&1");
-    next unless -s $rep;
+    run($m, $rep);
+    unless (-s $rep) { $fails++; push @bad, "$m: no report written"; next }   # never a silent pass
     open my $fh, '<', $rep or next;
     my @L = <$fh>;
     close $fh;
