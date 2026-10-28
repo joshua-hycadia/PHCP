@@ -52,6 +52,11 @@ unless (eval { require Tk; 1 }) {
 # Load the editor without starting its event loop: the flag tells it not to
 # run main().
 chdir "$FindBin::Bin/..";
+# Settings of our own, so the tests never read or write a user's real ones;
+# and no database folder from the environment.
+my $SETTINGS_DIR = tempdir(CLEANUP => 1);
+$ENV{PHCP_SETTINGS} = "$SETTINGS_DIR/settings.ini";
+delete $ENV{PHCP_DATABASE_DIR};
 $main::PHCP_EDITOR_LOAD_ONLY = 1;
 require "./phcp_editor.pl";
 
@@ -107,14 +112,24 @@ my @strip = main::strip_commands();
 is('the command strip lists the 19 network commands, no settings',
    @strip == 19 && $strip[0] eq 'USE' && $strip[-1] eq 'PRA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK and PROJECT tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT'
+is('NETWORK, PROJECT and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
    && $main::list{NODES}->rooty > $main::list{ERRORS}->rooty);
 is('the results sit below the editor', $main::table{PIPES}{page}->rooty > $main::ed->rooty + $main::ed->height);
 is('a line-number gutter left of the editor', $main::gutter->rootx < $main::ed->rootx && (main::gutter_numbers())[0] eq '1');
+{
+    my @pw = grep { $_->isa('Tk::Panedwindow') } $main::mw->Descendants;
+    is('two dividers, each wide enough to grab and drag (6 px), with the resize pointer',
+       @pw == 2 && !grep({ $_->cget(-sashwidth) < 6 } @pw)
+       && (grep { $_->cget(-sashcursor) eq 'sb_v_double_arrow' } @pw) == 1);
+}
+is('sizes scale with the screen: px() multiplies by the scale, at least 1',
+   $main::SCALE >= 1 && main::px(10) == int(10 * $main::SCALE + 0.5) && ref main::px([2, 4]) eq 'ARRAY');
+is('FITTING_BASIS is a drop-down that shows DEFAULT when blank',
+   $main::form{FITTING_BASIS}->isa('Tk::Menubutton') && $main::form{FITTING_BASIS}->cget(-text) =~ /^DEFAULT/);
 is('CALCULATE is off and the model NOT VALIDATED', !main::calculate_enabled() && main::state_text() eq 'NOT VALIDATED');
 
 #==============================================================================
@@ -351,6 +366,9 @@ main::calculate();
 my $all = main::table_rows('PIPES');
 $main::hide_pipes = 1; main::fill_table('PIPES');
 my @shown = map { $_->[0] } main::table_rows('PIPES');
+is('the HIDE boxes count what they would hide: one pipe, one node',
+   main::hide_count_text('pipes') eq '(1)' && main::hide_count_text('nodes') eq '(1)',
+   main::hide_count_text('pipes') . ' ' . main::hide_count_text('nodes'));
 is('HIDE NON-FLOWING PIPES leaves out the dead end', $all == 7 && @shown == 6 && !grep { $_ eq 'D1' } @shown);
 $main::hide_pipes = 0; main::fill_table('PIPES');
 my $alln = main::table_rows('NODES');
@@ -362,6 +380,41 @@ $main::hide_nodes = 0; main::fill_table('NODES');
 main::set_buffer($doc->{network});
 main::validate();
 main::calculate();
+is('with everything flowing the boxes say NONE, and are greyed',
+   main::hide_count_text('pipes') eq '(NONE)' && main::hide_count_text('nodes') eq '(NONE)'
+   && lc $main::checks{pipes}{label}->cget(-foreground) eq lc $main::C{faint});
+{
+    # The wheel goes to the pane under the pointer, not the one with the focus.
+    main::select_tab($main::restabs, 'NODES');
+    main::set_buffer(join "\n", map({ "NODE N$_ 0" } 1 .. 60), "WATER S 0 500", "SPRINKLER H 0 0 80",
+                     map({ "PIPE P$_ N$_ N" . ($_ + 1) . " 1 50" } 1 .. 59), "PIPE PS S N1 1 100", "PIPE PH N60 H 1 50", '');
+    main::validate();
+    main::calculate();
+    main::select_tab($main::restabs, 'NODES');
+    $main::mw->update;
+    my $h = $main::table{NODES}{hlist};
+    my ($ey0) = $main::ed->yview;
+    my ($hy0) = $h->yview;
+    $main::ed->focusForce;
+    $main::mw->update;
+    $main::ed->eventGenerate('<MouseWheel>', -delta => -120, -when => 'now',
+        -rootx => $h->rootx + 40, -rooty => $h->rooty + 60, -x => 40, -y => 60);
+    $main::mw->update;
+    my ($ey1) = $main::ed->yview;
+    my ($hy1) = $h->yview;
+    is('the wheel over the NODES table scrolls the table, not the editor with the focus',
+       $hy1 > $hy0 && $ey1 == $ey0, "table $hy0 -> $hy1, editor $ey0 -> $ey1");
+    $h->selectionSet(2);
+    $h->anchorSet(2);
+    my $cb = $h->cget(-browsecmd);
+    $cb->Call(2) if $cb;
+    is('a clicked row has its blue band and no dotted anchor box',
+       !defined(($h->info('anchor'))[0]) || ($h->info('anchor'))[0] eq '');
+    is('the results show the ordinary pointer', $h->cget(-cursor) =~ /^(left_ptr|arrow)$/);
+    main::set_buffer($doc->{network});
+    main::validate();
+    main::calculate();
+}
 if ($SHOT) {
     main::go_to_line($pl);
     $main::mw->raise;
@@ -448,6 +501,71 @@ is('WRITE REPORT .txt writes the text report', slurp("$TMP/report.txt") =~ /OUTL
 main::set_buffer(main::buffer() . "PIPX\n");
 is('WRITE REPORT on a model with problems stops at VALIDATION', !main::file_report("$TMP/no.txt") && !-e "$TMP/no.txt"
    && $main::restabs->{current} eq 'VALIDATION');
+
+#==============================================================================
+print "11. THE DATABASE TAB\n";
+#==============================================================================
+{
+    my $real = slurp('data/pipes.dat');
+    main::select_tab($main::toptabs, 'DATABASE');
+    $main::mw->update;
+    is('a DATABASE tab: the built-in database, its path and fingerprint',
+       $main::dbv{origin}->cget(-text) eq 'BUILT-IN' && $main::dbv{path}->cget(-text) =~ m{data/pipes\.dat$}
+       && $main::dbv{sha}->cget(-text) =~ /^FINGERPRINT [0-9A-F]{12}$/);
+    is('four tables: pipe types, pipe sizes, fittings, K\' factors',
+       join('|', @{ $main::dbv{tabs}{names} }) eq "PIPE TYPES|PIPE SIZES|FITTINGS|K' FACTORS");
+    main::select_tab($main::dbv{tabs}, 'FITTINGS');
+    is('the fittings table lists every fitting', @{ $main::dbv{shown_rows} } == 219);
+    is('read-only at first: the row buttons off, the fields read-only, SAVE off',
+       !$main::dbv{editing} && $main::dbv{btn}{UPDATE}->cget(-state) eq 'disabled'
+       && $main::dbv{entries}[0]->cget(-state) eq 'readonly' && $main::dbv{btn}{SAVE}->cget(-state) eq 'disabled');
+    $main::dbv{filter} = 'long radius 50 0.9';
+    main::db_fill();
+    is('the filter narrows the table: LONG RADIUS 50 0.9 is one row', @{ $main::dbv{shown_rows} } == 1,
+       scalar @{ $main::dbv{shown_rows} });
+    # Use a team folder of our own before any edit, so the real file is safe.
+    my $team = tempdir(CLEANUP => 1);
+    main::db_choose_folder($team, 'yes');
+    is('CHOOSE FOLDER: an empty folder takes a copy and becomes the TEAM FOLDER',
+       -e "$team/pipes.dat" && $main::dbv{origin}->cget(-text) eq 'TEAM FOLDER'
+       && HardyCross::Settings::get('DATABASE_DIR') eq $team);
+    main::select_tab($main::dbv{tabs}, 'FITTINGS');
+    main::db_fill();
+    my $row = $main::dbv{shown_rows}[0];
+    $main::dbv{hlist}->selectionSet($row);
+    $main::dbv{hlist}->cget(-browsecmd)->Call($row);
+    is('a click on a row fills the fields', $main::dbv{vals}[1] eq 'EL' && $main::dbv{vals}[3] eq '50');
+    main::db_update();
+    is('read-only: UPDATE does nothing', !$main::dbv{db}{modified});
+    $main::dbv{editing} = 1;
+    main::db_editing_changed();
+    is('ticking EDIT turns the row buttons and fields on',
+       $main::dbv{btn}{UPDATE}->cget(-state) eq 'normal' && $main::dbv{entries}[0]->cget(-state) eq 'normal');
+    $main::dbv{vals}[4] = 'ABC';
+    main::db_update();
+    is('a length that is not a number: refused, and the reason shown in red',
+       $main::dbv{msg}->cget(-text) =~ /MUST BE A NUMBER/ && lc $main::dbv{msg}->cget(-foreground) eq lc $main::C{error});
+    $main::dbv{vals}[4] = '1.7';
+    main::db_update();
+    is('a good change: made, and SAVE CHANGES comes on',
+       $main::dbv{db}{modified} && $main::dbv{btn}{SAVE}->cget(-state) eq 'normal');
+    main::open_path('examples/07_pipe_database_demo.phc');
+    main::validate();
+    my $before = $main::dbv{sha}->cget(-text);
+    main::db_save();
+    is('SAVE: written to the team folder, a new fingerprint, nothing pending',
+       slurp("$team/pipes.dat") =~ /^FIT\|AS\|EL\|.*\|50\|1\.7$/m && $main::dbv{sha}->cget(-text) ne $before
+       && !$main::dbv{db}{modified}, $main::dbv{msg}->cget(-text));
+    is('   and the model must be validated again: CALCULATE is off', !main::calculate_enabled());
+    main::validate();
+    main::calculate();
+    (my $flat = main::report_text()) =~ s/\s+/ /g;
+    is('the report then names the team folder\'s file in full', $flat =~ /\Q$team\E.?pipes\.dat \(team folder\)/, substr($flat, index($flat, 'database:'), 200));
+    main::db_use_builtin();
+    is('USE BUILT-IN: back to the program\'s own database', $main::dbv{origin}->cget(-text) eq 'BUILT-IN'
+       && !defined HardyCross::Settings::get('DATABASE_DIR'));
+    is('the real database was never written', slurp('data/pipes.dat') eq $real);
+}
 
 $main::mw->destroy;
 print "\n$pass passed, $fail failed\n";

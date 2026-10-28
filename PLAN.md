@@ -1,8 +1,9 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1 merged.  PR 2 (`.phc` language, reworked to the positional layout
-Joshua chose on 28 October 2026) and PR 3 (text editor, built on PR 2) open for
-review.  PR 4 and PR 5 not started.
+Status: PR 1, PR 2 (`.phc` language, positional layout) and PR 3 (text editor)
+merged.  Open for review: the editor fixes from the Windows run, the drawn
+supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
+PR 5 (the JSON interface).
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -141,7 +142,7 @@ Units, one `UNITS` line per quantity; defaults (the office's) in brackets:
 | KFACTOR | LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI (LPM/KPA) |
 
 Velocity is reported in m/s.  Defaults are the office's (Joshua, 28 October
-2026); the K-factor default is not yet confirmed.
+2026); the K-factor default, LPM/KPA, confirmed the same day.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `14'3"`, `6'`.
 
@@ -244,18 +245,22 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 
 ## PR 4 - one file type
 
-Branch: `phc-only`.  Decided by Joshua: there are no `.hcx` models in use -
-the format only ever served the prototype - so `.phc` becomes the one file
-type a user sees.
+Decided by Joshua: there are no `.hcx` models in use - the format only ever
+served the prototype - so `.phc` is the one file type a user sees.  (The
+`--convert` command and the editor's conversion planned here were removed in
+PR 2 and PR 3, before any user had a `.hcx` to convert.)
 
 | file | change |
 |---|---|
-| `autocad/phcp_export.lsp`, `autocad/AUTOCAD.md` | the exporter writes `.phc` |
-| `phcp.pl`, `phcp_viewer.pl` | read `.phc` only; a `.hcx` is refused with "convert it first: phcp.pl --convert" |
-| `phcp_editor.pl` | unchanged: OPEN still converts a `.hcx` into a new `.phc` |
-| `examples/*.hcx` | moved to `tools/baseline/`, kept as the converter's regression baseline |
+| `autocad/phcp_export.lsp`, `autocad/AUTOCAD.md` | the exporter writes positional `.phc`: a supply or head names its node, `USE` lines where the type or C changes, drops as `<ID>_D`; PHCPSUPPLY asks for the static pressure first; new checks for two items on one node and IDs used twice |
+| `tools/check_lisp.pl` | structural checks of the exporter, which cannot run without AutoCAD |
+| `HardyCross/Parse.pm` | `read_model` refuses any file but `.phc`, with the reason |
+| `phcp.pl`, `phcp_viewer.pl` | `.phc` only |
+| `examples/*.hcx` | moved to `tools/baseline/`, the independent description each example is checked against |
+| `examples/08_autocad_export_format.phc` | exactly what the new exporter writes; solves exactly as its baseline |
 | `tools/test_report_checks.pl`, `tools/test_pdf.pl` | run on `examples/*.phc` |
-| `README.md` | one format; `.hcx` described only as what `--convert` reads |
+| `build_windows.bat` | smoke test on `.phc` only |
+| `README.md` | one format |
 
 Inside, `.phc` lines are still translated into `.hcx` rows for the existing
 parser (`HardyCross::Parse`); that is how the checks stay in one place, and
@@ -264,27 +269,25 @@ the user never sees it.  `tools/stress_invariance.pl` builds its networks as
 
 ## PR 5 - the phcp.exe JSON interface
 
-Branch: `phc-json`.  Decided by Joshua: other programs call `phcp.exe`, not a
-DLL.  AutoCAD first, possibly Revit later.
+Decided by Joshua: other programs call `phcp.exe`, not a DLL.  AutoCAD first,
+possibly Revit later.
 
     phcp.exe --json model.phc          results as JSON on standard output
     phcp.exe --json -                  the model read from standard input
     phcp.exe --json model.phc --report out.pdf
 
-- Output: status, converged, iterations, units, every element (id, kind,
-  nodes, flow, velocity for a pipe), every node (elevation, pressure), outlet
-  compliance including fixed flows, the governing outlet, the demand point,
-  and errors with their `.phc` line numbers.  Values in the model's units,
-  the units named in the output.
-- Exit status as now: 0 converged, 1 not converged, 2 input error - and the
-  JSON is written in every case, so a caller always has something to read.
-- JSON::PP, which is core Perl.  The contract is documented in the README
-  with an example, and versioned (`"interface": 1`) so a caller can check it.
-- `tools/test_json.pl`: every example, the JSON parsed back and checked
-  against the solved network; an input error; standard input.
-- The AutoCAD exporter gains a SOLVE command that runs `phcp.exe --json` and
-  shows the governing outlet and any failing outlets; it has not been run
-  inside AutoCAD until Joshua runs it.
+| file | change |
+|---|---|
+| `HardyCross/Json.pm` | the results as one JSON object, versioned (`"interface": 1`), the contract described at its head |
+| `phcp.pl` | `--json`, `-` for standard input, `--report`; the plain output unchanged without `--json` |
+| `autocad/phcp_export.lsp` | PHCPSOLVE: export, run `phcp.exe --json`, show the summary |
+| `tools/test_json.pl` | every example's JSON against the plain output of the same solve; input error, `.hcx`, no convergence; standard input; `--report`; the summary read line by line as AutoCAD reads it |
+| `build_windows.bat` | packs `HardyCross::Json` and `JSON::PP`; smoke test of `--json` |
+
+- Exit status as before - 0 converged, 1 not converged, 2 input error - and
+  the JSON written in every case.
+- JSON::PP, which is core Perl.  Written one value to a line in a fixed key
+  order, so AutoLISP can find the summary lines without a JSON reader.
 
 ## Definition of done, each PR
 
@@ -310,9 +313,13 @@ DLL.  AutoCAD first, possibly Revit later.
 - [x] PR 3 - spreadsheet removed, build script and licence updated
 - [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
 - [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
-- [ ] PR 3 - Windows build run by Joshua
+- [x] PR 3 - Windows build run by Joshua (28 October 2026, Perl 5.42.3)
+- [x] DATABASE tab: view and edit the pipe and fitting database (read-only until EDIT is ticked); a team folder for it, else the built-in (Joshua, 28 October 2026)
+- [x] Editor fixes from the Windows run: sharp at 150 %, draggable dividers, wheel under the pointer, HIDE counts, option labels
+- [x] PR 4 - AutoCAD exporter writes `.phc`; `.phc` the one file type
+- [ ] PR 4 - exporter run inside AutoCAD by Joshua
+- [x] PR 5 - `phcp.exe --json`, documented and tested
+- [x] Pressure ratio valve band: designed to the bottom of +/-5% of inlet, top of band reported (engine change, Joshua 28 October 2026)
 - [x] Report: the supply graph drawn in the PDF on q^1.85 graph paper, from the numbers the text graph uses (engine change, approved by Joshua 28 October 2026)
 - [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
-- [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
-- [ ] PR 5 - `phcp.exe --json`, documented and tested
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua

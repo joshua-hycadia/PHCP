@@ -148,31 +148,21 @@ sub read_curve {
     return HardyCross::fit_curve($c, $rising);
 }
 
-# read_model reads a file; read_string reads the same syntax out of memory.
-# The GUI needs the second one: its grid IS the model, and round-tripping it
-# through a temporary file to solve it would be both slow and a good way to
-# leave junk behind when something dies mid-edit.
+# read_model reads a model file: a .phc command file, the one file type a
+# user sees.  HardyCross::Phc translates its lines into rows of the older
+# .hcx block syntax and hands them back to read_string below, so every check,
+# default and unit conversion lives in one place; read_string reads that
+# syntax out of memory, as the tests and the stress tools also use it.
 #
-# The extension chooses the language: a .phc file is the command language and
-# goes to HardyCross::Phc, which translates it into .hcx rows and hands them
-# back to read_string below -- so both formats share every check, default and
-# unit conversion.  Anything else is read as .hcx, as it always has been.
+# A .hcx FILE is refused, with the reason (Joshua, 28 October 2026: there are
+# no .hcx models in use; the format only ever served the prototype).
 sub read_model {
     my $path = shift;
-    if ($path =~ /\.phc\z/i) {
-        # Loaded here, not at the top, because Phc.pm itself uses this module.
-        require HardyCross::Phc;
-        return HardyCross::Phc::read_model($path);
-    }
-    open my $fh, '<', $path or HardyCross::fail("cannot open input file %s", $path);
-    # Slurp inside a do-block so the undefined $/ ends HERE.  Written as a bare
-    # "local $/" at the top of the sub, it stayed in force for everything the
-    # parse called -- including the pipe database load, which then read its
-    # whole data file as a single line, found it began with '#', skipped it as
-    # a comment, and loaded nothing at all.
-    my $text = do { local $/; <$fh> };
-    close $fh;
-    return read_string($text);
+    HardyCross::fail('%s IS NOT A .PHC MODEL. PHCP READS .PHC FILES ONLY', $path)
+        unless $path =~ /\.phc\z/i;
+    # Loaded here, not at the top, because Phc.pm itself uses this module.
+    require HardyCross::Phc;
+    return HardyCross::Phc::read_model($path);
 }
 
 #------------------------------------------------------------------------------
@@ -570,10 +560,18 @@ sub parse_row {
             my $r = kv($tk, 'RATIO') // 0;
             HardyCross::fail("PRA %s needs RATIO= more than 1", $tk->[0]) if $r <= 1;
             my $mi = kv($tk, 'MININLET');
+            # BAND= the valve's tolerance, as a percentage of its inlet
+            # pressure (the manufacturer's +/- 5 % unless given); the solve
+            # designs to the bottom of it (HardyCross::ratio_valves).
+            my $band = kv($tk, 'BAND') // 5;
+            HardyCross::fail("PRA %s: BAND= cannot be negative", $tk->[0]) if $band < 0;
+            HardyCross::fail("PRA %s: a band of %g%% of the inlet pressure is more than the %g%% "
+                             . "a %g:1 valve passes - the bottom of the band would be no pressure at all",
+                             $tk->[0], $band, 100 / $r, $r) if $band / 100 >= 1 / $r;
             push @{ $net->{elems} }, {
                 id => $tk->[0], kind => 'RATIO', n1 => $n1, n2 => $n2,
-                ratio => $r, dp => 0, q => 0, in_tree => 0,
-                (defined $mi ? (mininlet => $mi * $net->{f_pres}) : ()),
+                ratio => $r, band => $band / 100, dp => 0, q => 0, in_tree => 0,
+                (defined $mi && $mi > 0 ? (mininlet => $mi * $net->{f_pres}) : ()),
             };
         } elsif ($ty eq 'BFP') {
             push @{ $net->{elems} }, {

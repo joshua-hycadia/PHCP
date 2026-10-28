@@ -14,6 +14,7 @@ calculation report.  The whole stack is Perl.
 perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
+./phcp.pl --json model.phc               # the results as JSON, for another program
 perl phcp_viewer.pl model.phc            # read-only results viewer
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
@@ -22,11 +23,11 @@ perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
-`phcp.pl` and the viewer, `phcp_viewer.pl`, read either input format; the
-extension decides which.  `.phc` is the command language described below.
-`.hcx` is the older block format, still read so the AutoCAD exporter keeps
-working; every example is supplied in both, the `.hcx` as the baseline the
-`.phc` is tested against.  The editor works in `.phc` only.
+One file type: `.phc`, the command language described below.  `phcp.pl`, the
+editor, the viewer and the AutoCAD exporter all read or write it, and a file of
+any other type is refused with the reason.  (`.hcx`, the block format of the
+prototype, is gone as a user format; its files are kept in `tools/baseline/`
+as the independent description each example is tested against.)
 
 ## The .phc command language
 
@@ -85,7 +86,7 @@ line that uses it.  Every pipe name is unique.
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
 | `OFD` | PIPE BORE [CD] - an orifice plate of that bore; the drop is calculated |
-| `PRA` | PIPE RATIO [MININLET] - a pressure ratio valve, ratio written `3:1` or `1.5` |
+| `PRA` | PIPE RATIO [MININLET] [BAND] - a pressure ratio valve, ratio written `3:1` or `1.5`; BAND in % of the inlet pressure, 5 if not given; MININLET 0 for none |
 
 **Outlets.**  `SPRINKLER`, `HYDRANT` and `HREEL` define their node and the
 outlet on it together, so the report counts sprinklers apart from hydrants and
@@ -109,8 +110,19 @@ and solves again until the drops settle.  Section 10 of the report shows each
 valve's ratio, inlet and outlet pressure.  The report warns if the inlet is
 below the MININLET given (the manufacturer's minimum, 200 kPa screwed or
 300 kPa flanged in the data supplied), if flow runs backwards through a valve,
-or if the drops did not settle.  The nominal ratio is used; the valve holds it
-to within 5 % of the inlet pressure in the manufacturer's data.
+or if the drops did not settle.
+
+The valve holds its ratio only to within a band - "within +/- 5% of the inlet
+pressure" in the manufacturer's data - so 1500 kPa into a 3:1 valve gives
+anywhere from 425 to 575 kPa.  The calculation uses the BOTTOM of the band,
+outlet = inlet x (1/ratio - band), so every outlet downstream is checked
+against the least pressure the valve can be relied on to give (Joshua, 28
+October 2026).  Section 10 shows each valve's band, and the report solves the
+network once more with every valve at the TOP of its band and states the
+highest pressure that gives downstream, for the pipe, fitting and head
+ratings.  A valve with other data takes its own band, `PRA P2 3:1 300 3`;
+`0` is the nominal ratio exactly.  A band wider than the ratio passes - 40 %
+on a 3:1 valve, which passes 33 % - is refused.
 
 **Sizes and fittings.**  Under `USE <PIPETYPE>` the size is the nominal size
 and the bore comes from the database; under `USE BORE` it is the bore.  Before
@@ -134,11 +146,12 @@ default.  Velocity is reported in m/s.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `2.5CM`,
 `14'3"`.  The K-factor default is the unit the office's existing data uses
-(K 8 for a K80 head); it is not yet confirmed as the default.
+(K 8 for a K80 head), confirmed as the default by Joshua on 28 October 2026.
 
-**How it is read.**  Each `.phc` command is translated into the `.hcx` rows
-that mean the same thing, and the rows are read by the same parser that reads
-a `.hcx` file (`HardyCross/Phc.pm`).  Every hydraulic check and default
+**How it is read.**  Each `.phc` command is translated into rows of the
+prototype's `.hcx` block syntax that mean the same thing, and the rows are read
+by that syntax's parser (`HardyCross/Phc.pm`, `HardyCross/Parse.pm`) - an
+internal step a user never sees.  Every hydraulic check and default
 therefore exists once.  The `.phc` reader checks the language itself - command
 words, fields, numbers, units, names - and converts lengths and elevations to
 metres, using the engine's own unit factors for everything else.  Every error
@@ -157,14 +170,14 @@ it needs to deliver that flow.  The minimum is CHECKED:
   point is the supply pressure at which it receives exactly its minimum.
 
 The flow itself is not reduced when the pressure is short; the report shows
-the shortfall as a FAIL instead.  (In `.hcx`, `FIXEDFLOW ... MINP=` or `P=`.
-Until this change the minimum was read and thrown away.)  Solved flows and
+the shortfall as a FAIL instead.  (Until this change the minimum was read and
+thrown away.)  Solved flows and
 pressures are unchanged by it; the compliance rows, and the demand point of a
 model whose fixed flow governs, are new.
 
 **Examples.**  Every example is supplied as `.phc`, with its `.hcx` original
-kept as the baseline: `tools/test_phc.pl` solves both and requires the same
-pipe flows and node pressures.  In `.phc` a supply or outlet takes its node's
+kept as the baseline in `tools/baseline/`: `tools/test_phc.pl` solves both and
+requires the same pipe flows and node pressures.  In `.phc` a supply or outlet takes its node's
 name, a device sits in a pipe of no length where the `.hcx` had it between two
 nodes, and example 04's sprinkler on the supply node has a node of its own -
 so the reports differ in those names, not in the numbers.
@@ -173,23 +186,49 @@ so the reports differ in those names, not in the numbers.
 typed, without Tk, for the text editor: whether it is complete, the command's
 field template and which field the cursor is in, the pipe types or fitting
 codes from the database for a pick list, and a proposed next line.  A line the
-language accepts is also parsed as its `.hcx` row, so a size the pipe type does
+language accepts is also parsed as its internal row, so a size the pipe type does
 not make, or a fitting the database lacks, shows on the line as it is typed.
 
 ## Pipe and fitting database
 
 `data/pipes.dat` holds the pipe dimensions and fitting equivalent lengths.  It
 is a plain text file and is meant to be edited: add a pipe type, a size or a
-fitting, or correct a value, with any text editor.  The file's header explains
-the record format.
+fitting, or correct a value - in the editor's DATABASE tab, or with any text
+editor.  The file's header explains the record format.
+
+**The DATABASE tab.**  The database as four tables - pipe types, pipe sizes,
+fittings, K' factors - with a filter.  It opens read-only; ticking EDIT THE
+DATABASE lets a row be changed, added or deleted.  SAVE CHANGES checks every
+row (numbers where numbers belong or DASH, a size only for a pipe type that
+exists, no two rows for the same thing, a bore smaller than its OD), reads the
+whole file with the solver's own reader before it replaces the old one, dates
+the DATASET line, and makes it the database in use; a model must then be
+validated again before it is calculated.  Comments, blank lines and order are
+kept, and a field not edited keeps its exact text.
+
+**Where the database is.**  In order, the first that is set or exists:
+
+| | |
+|---|---|
+| a team folder | set on each machine with CHOOSE FOLDER... in the DATABASE tab (or the environment variable `PHCP_DATABASE_DIR`) - for example a folder on a network drive that a whole team points at.  If that folder cannot be read, the program stops and says where; it does not quietly use other data |
+| beside the program | `data\pipes.dat` next to `phcp.exe` - an office copy that wins over the built-in one; the DATABASE tab saves here when the built-in copy is packed inside the `.exe` |
+| built-in | the copy the program ships with |
+
+The choice is kept per machine in `%APPDATA%\PHCP\settings.ini` on Windows
+(`~/.config/phcp/settings.ini` elsewhere).  CHOOSE FOLDER on a folder with no
+`pipes.dat` offers to copy the database in use there, which is how a team
+starts its shared database; USE BUILT-IN goes back.  When two people edit the
+shared database at once, the second SAVE is refused - the file changed after
+they opened it - rather than overwrite the first person's change.
 
 101 pipe sizes across eight pipe types, 219 fitting equivalent lengths, and 19
 PPI factors for PE.
 
 **Traceability.**  Because the data can change, every report states the
 database's DATASET name and date, its file name and the SHA-256 of the exact
-bytes read (Section 4).  A calculation can always be tied back to the data it
-used.  Change the DATASET line whenever you change the content, and re-run
+bytes read (Section 4) - with its full path when it is a team folder's or an
+office copy, so shared data and a local copy cannot be confused.  A
+calculation can always be tied back to the data it used.  Change the DATASET line whenever you change the content, and re-run
 `tools/test_pipedata.pl` after any edit.
 
 **Where it is read from**, first found wins: `data/pipes.dat` beside the source;
@@ -199,15 +238,13 @@ office update the data without rebuilding the program.
 ### Writing a pipe
 
 ```
-USE   ASAM                                 // .phc
+USE   ASAM
 PIPE  P1  A  B  12000  100  T 2E G CV
-
-P1  A  B  12.0  100  TYPE=ASAM  FIT=1T,2E,1GV,1CV        ! .hcx
 ```
 
 With a pipe type the size is the NOMINAL size; the bore comes from that
 type's PIPE records in the database.  Fittings take the office form `2E,1T`,
-the compact form `1E1T`, or (in `.phc`) separate codes `2E T`.  A pipe with no
+the compact form `1E1T`, or separate codes `2E T`.  A pipe with no
 type works as before, with the bore entered directly - and the report says it
 carries no database provenance.
 
@@ -245,7 +282,7 @@ publishes the screwed elbow only to DN300, so `E` on a DN350+ main returns
 `DATA_REQUIRED` and the message says to use `EF` for a flanged, grooved or
 medium-sweep elbow.
 
-`OPTION FITTING_BASIS STANDARD` (`.hcx`: `OPTIONS FITTING_BASIS STANDARD`)
+`OPTION FITTING_BASIS STANDARD` (FITTING LENGTHS in the editor's PROJECT tab)
 is the "published Standard alone" election:
 AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 `CORRECTED`, the default, applies both corrections.
@@ -316,13 +353,17 @@ there and selects it.
 | proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it |
 | pick list | Ctrl+Space in a `USE` type or a pipe's fittings lists the codes with descriptions |
 | ERRORS / WARNINGS / NODES | live as you type: lines the reader refuses; the last calculation's warnings; nodes undefined or unconnected.  A click goes to the line, or to the PROJECT tab field |
-| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (METHOD and the options; a blank option takes its default).  Text is kept in capitals |
+| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (each option with a plain label, its `.phc` name beside it, and a line saying what it does and what a blank means; the rarely needed ones under SOLVER - ADVANCED).  Text is kept in capitals; the tab scrolls |
 | PIPES | 21 columns: NAME, SNODE, ENODE, NOM, I.D., MAT, C (C factor, or absolute roughness under `METHOD DW`), L, F, T, FIT K, Q, PF, PF/M, PE, PS (loss across a device in the pipe), PV, VEL, RE, F (Darcy) and FORMULA.  A right click on the headings opens the column chooser; NAME to PF, PS and VEL are shown at first |
 | NODES, OUTLETS | every node with its type, elevation, pressure, discharge, requirement and margin; every outlet and fixed flow with the required and achieved flow and pressure, the margin and PASS or FAIL |
 | sorting | a click on a heading sorts on it, a second click reverses; the heading shows the direction |
-| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES |
+| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES, each with the count of rows it would hide beside it - (NONE), and greyed, when every pipe flows or every node is active |
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
+| DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
+| dividers | the grey bands between the editor, the lists and the results can be dragged |
+| mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
+| sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -333,7 +374,8 @@ refuses.  `tools/test_editor.pl` checks those decisions headless;
 `tools/test_editor_window.pl` drives the window itself under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
-Linux with Tk 804.036; the window has not yet been run on Windows.
+Linux with Tk 804.036.  The window has been run on Windows 11 by Joshua
+(see Windows below); the test suites themselves have been run on Linux only.
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
 tests, and Tk::TableMatrix is no longer needed.
@@ -364,22 +406,21 @@ condition), and the OPERATING POINT, with the supply connected.  The schedules
 are at the operating point, and the cover says so.
 
 The fields are entered as `.phc` `TITLE` and `PROJECT` lines -
-`PROJECT HAZARD Ordinary Hazard 1` - or in a `.hcx` model's PROJECT block:
+`PROJECT HAZARD ORDINARY HAZARD 1` - which the editor's PROJECT tab writes:
 
 ```
-PROJECT
-  COMPANY            Hycadia Pty Ltd
-  ADDRESS            1 Example Road, Sydney NSW 2000
-  LICENCE            NSW DBP DEP0000000, FPAS F000000X
-  LOCATION           12 Example Street, Sydney NSW 2000
-  HAZARD             Ordinary Hazard 1
-  DENSITY            5.0         ! mm/min
-  AREA_PER_SPRINKLER 12.0        ! m2
-  AREA_OF_OPERATION  72.0        ! m2, optional
-  BASE_OF_RISER      R1          ! a node in the model
-  AUTHORITY          Fire and Rescue NSW
-  AUTHORITY_PHONE    02 9265 2999
-END
+TITLE     LEVEL 2 SPRINKLER RANGE
+PROJECT   COMPANY HYCADIA PTY LTD
+PROJECT   ADDRESS 1 EXAMPLE ROAD, SYDNEY NSW 2000
+PROJECT   LICENCE NSW DBP DEP0000000, FPAS F000000X
+PROJECT   LOCATION 12 EXAMPLE STREET, SYDNEY NSW 2000
+PROJECT   HAZARD ORDINARY HAZARD 1
+PROJECT   DENSITY 5.0                  // MM/MIN
+PROJECT   AREA_PER_SPRINKLER 12.0      // M2
+PROJECT   AREA_OF_OPERATION 72.0       // M2, OPTIONAL
+PROJECT   BASE_OF_RISER R1             // A NODE IN THE MODEL
+PROJECT   AUTHORITY FIRE AND RESCUE NSW
+PROJECT   AUTHORITY_PHONE 02 9265 2999
 ```
 
 Long values wrap on the cover rather than being cut off.
@@ -450,8 +491,8 @@ label is at its place on the q^1.85 axis and clear of the next.
 
 **Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
-rounding of the printed figures allowed for: 659 checks across fourteen models
-(every example, in `.hcx` and in `.phc`).  Its
+rounding of the printed figures allowed for: 351 checks across the seven
+examples.  Its
 first run found two faults that had been in the report since it was written:
 outlet K printed with its unit factors inverted - 36 times too large in L/s and
 bar, invisible in L/min and kPa - and loss per metre printed to four places,
@@ -489,7 +530,7 @@ not evidence; this is.
 `build_windows.bat` builds `phcp.exe` and `phcp_editor.exe` on a Windows PC
 with Strawberry Perl installed: it fetches Tk and PAR::Packer from CPAN,
 packages both programs with the pipe and fitting database inside, and runs a
-smoke test on a `.hcx` and a `.phc` example.
+smoke test on the `.phc` examples.
 
 The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
 with the same module lists: from an empty folder the packaged `phcp` solved
@@ -498,16 +539,82 @@ packaged `phcp_editor` opened its window with a model loaded.  That run found
 and fixed a defect - the packaged editor exited without opening a window.  It
 was run again after the editor's layout changed, with the new Tk modules in
 the list.
-The Windows build itself has not yet been run.
+Joshua ran the Windows build on 28 October 2026 (Strawberry Perl 5.42.3, GCC
+13.2.0): Tk compiled from the patched release, both programs built, and the
+smoke test solved the examples and wrote a PDF.  The editor ran on Windows 11
+at 150 % display scaling; what that run showed - blurred text, dividers too
+thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
+The script now also packs Win32::API, which the editor uses to be sharp on a
+scaled display; the build has not been re-run since that line was added.
+
+## Calling PHCP from another program
+
+Other programs run `phcp.exe` and read what it prints - a program to call,
+not a library to link (Joshua, 28 October 2026).  AutoCAD does so now (see
+below); Revit could later.
+
+```
+phcp.exe --json model.phc                     results as JSON on standard output
+phcp.exe --json -                             the model read from standard input
+phcp.exe --json model.phc --report out.pdf    ...and the report written too
+```
+
+The exit status says how it went - 0 converged, 1 solved but did not
+converge (the results must not be used), 2 the model could not be read or
+solved - and one JSON object is printed in every case, so a caller always has
+something to read.  Abridged, for example 07:
+
+```
+{
+   "interface" : 1,
+   "status" : "converged",
+   "converged" : true,
+   "iterations" : 15,
+   "units" : { "flow" : "L/min", "pressure" : "kPa", "length" : "m", ... },
+   "database" : { "name" : "Hycadia pipe and fitting database", "sha256" : "0b74...", ... },
+   "pipes" : [ { "id" : "M1", "from" : "SUP", "to" : "R1", "flow" : 3576.7756,
+                 "velocity" : 6.871, "friction_loss" : 144.8598, ... }, ... ],
+   "elements" : [ { "id" : "SUP", "kind" : "WATER", "from" : null, "to" : "SUP", ... } ],
+   "nodes" : [ { "id" : "R1", "elevation" : 4.5, "pressure" : 461.0082 }, ... ],
+   "outlets" : [ { "id" : "H2", "type" : "SPRINKLER", "required_pressure" : 50,
+                   "pressure" : 182.2904, "margin" : 132.2904, "pass" : true, ... } ],
+   "governing" : { "id" : "H2", "margin" : 132.2904 },
+   "demand" : { "supply" : "SUP", "flow" : 1889.5674, "pressure" : 223.864,
+                "available" : 650, "margin" : 426.136, "meets" : true },
+   "warnings" : [],
+   "errors" : [],
+   "summary" : [
+      "CONVERGED IN 15 ITERATIONS",
+      "GOVERNING OUTLET H2: 182.3 KPA AGAINST 50.0 REQUIRED, MARGIN 132.3 KPA",
+      "EVERY OUTLET PASSES",
+      "SUPPLY SUP MEETS THE DEMAND: 650.0 KPA AVAILABLE AT 1889.6 L/MIN, 223.9 NEEDED",
+      "5 PIPES OVER THE VELOCITY LIMIT"
+   ]
+}
+```
+
+Flows and pressures are in the model's own units, named in `units`; lengths
+and elevations in m, sizes in mm, velocity in m/s.  A pipe's flow is signed,
+positive from `from` to `to` as the model wrote it.  On an error, `status` is
+`error` and `errors` holds the message with its `.phc` line.  The `summary`
+is what a caller shows a user, one line to a string; the JSON is written one
+value to a line, so even a caller with no JSON reader can find it line by
+line, as AutoCAD's PHCPSOLVE does.  The contract is versioned - `interface`
+is 1, a field is never renamed or changed in meaning under that number, and
+new fields may be added - and is described in full in `HardyCross/Json.pm`.
+`tools/test_json.pl` runs `phcp.pl` as a caller would and checks every
+example's JSON against the plain output of the same solve.
 
 ## AutoCAD
 
 `autocad/phcp_export.lsp` marks up a 2D AutoCAD 2026 drawing - supply, pipe
-sizes, elevations, heads - and exports it as a `.hcx`.  See
-`autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.hcx` is a file in the
-exact format the routine writes, proven to solve in PHCP.  The routine itself
-has not yet been run inside AutoCAD.  Its output is `.hcx`, which `phcp.pl`
-still reads; making it write `.phc` is planned (`PLAN.md`, PR 4).
+sizes, elevations, heads - and exports it as a `.phc`.  See
+`autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.phc` is a file in the
+exact form the routine writes, and solves exactly as the same network did in
+the old format.  The routine has not yet been run inside AutoCAD; what can be
+checked without it is, by `tools/check_lisp.pl` - brackets matched, every
+function it calls defined, every command it announces present.  PHCPSOLVE
+exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 
 ## Supply, pump and loss curves
 
@@ -529,7 +636,7 @@ three points), examples 03, 05 and 08 by under 8 L/min and 1 kPa.
 
 ## Settings
 
-`OPTION VEL_LIMIT 6` (`.hcx`: `OPTIONS VEL_LIMIT 6`) sets the velocity flagged
+`OPTION VEL_LIMIT 6` (VELOCITY WARNING LIMIT in the PROJECT tab) sets the velocity flagged
 in validation and the report.
 It is a setting, not a requirement of AS 2118.1, and the report prints the value
 in force and whether it was set in the model or is the program default.
@@ -551,12 +658,15 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, line checker and pressure ratio valves | 256 / 256 |
+| `.phc` language, line checker and pressure ratio valves | 263 / 263 |
+| AutoCAD exporter, structure | 5 / 5 |
+| JSON interface | 72 / 72 |
 | supply, pump and loss curves | 14 / 14 |
-| report hand-checks, 14 models | 659 / 659 |
-| PDF structure, typeface and graph, 14 models | 186 / 186 |
-| text editor logic, headless | 114 / 114 |
-| text editor window, under Xvfb | 92 / 92 |
+| report hand-checks, 7 models | 351 / 351 |
+| PDF structure, typeface and graph, 7 models | 93 / 93 |
+| text editor logic, headless | 117 / 117 |
+| text editor window, under Xvfb | 116 / 116 |
+| database editing and location | 37 / 37 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing

@@ -69,6 +69,8 @@ use Tk::TextUndo;
 use HardyCross;
 use HardyCross::Phc;
 use HardyCross::Editor;
+use HardyCross::DbEdit;
+use File::Spec;
 
 #------------------------------------------------------------------------------
 # Colours.
@@ -97,11 +99,16 @@ our %C = (
     fault_bg   => '#F9D4D4',     # behind the field validation found at fault
     warn       => '#8A5A00',     # a warning
     proposal   => '#9AA5B4',     # the greyed proposed line
+    sash       => '#E4E7EB',     # the dividers between panes, wide enough to grab
 );
+
+# The ordinary pointer.  X11's "arrow" points up and to the right, so it is
+# left_ptr there; Windows calls the same pointer "arrow".
+our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 
 # Fonts are chosen when the window is built, from what the machine has:
 # Consolas and Segoe UI on Windows, DejaVu on Linux.
-our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S);
+our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S, $UI_S_N);
 sub pick_fonts {
     my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
     my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
@@ -109,7 +116,37 @@ sub pick_fonts {
     $mono //= 'Courier';
     $ui   //= 'Helvetica';
     ($MONO, $MONO_B, $MONO_I) = ([ $mono, 10 ], [ $mono, 10, 'bold' ], [ $mono, 10, 'italic' ]);
-    ($UI, $UI_B, $UI_S) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ]);
+    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ], [ $ui, 8 ]);
+}
+
+#------------------------------------------------------------------------------
+# Crisp on a high-resolution screen.
+#
+# Windows draws a program that has not declared itself DPI-aware at 96 dpi and
+# then stretches the bitmap -- at 150 % scaling everything comes out soft.
+# Perl/Tk does not declare it, so dpi_aware does, before the first window is
+# made.  Tk then measures the real resolution: fonts, given in points, come
+# out at the right size and sharp.  Sizes given in pixels -- padding, the
+# divider and scrollbar widths, the window itself -- are passed through px(),
+# which multiplies them by the screen's scale (1.5 at 150 %), so the layout
+# keeps its proportions.
+#------------------------------------------------------------------------------
+our $SCALE = 1;
+sub px {
+    my $v = shift;
+    return [ map { px($_) } @$v ] if ref $v;
+    return int($v * $SCALE + 0.5);
+}
+
+sub dpi_aware {
+    return unless $^O eq 'MSWin32';
+    eval {
+        require Win32::API;
+        # Per-monitor where Windows offers it (8.1 and later), else system-wide.
+        my $per = Win32::API->new('shcore', 'SetProcessDpiAwareness', 'I', 'I');
+        if ($per) { $per->Call(1) } else { Win32::API->new('user32', 'SetProcessDPIAware', '', 'I')->Call() }
+        1;
+    };
 }
 
 # The window's state.  One editor window per process, so plain package
@@ -117,8 +154,10 @@ sub pick_fonts {
 our ($mw, $ed, $gutter, $report, $statusbar, $strip, $pill, $vtable);
 our (%list, %list_lines, %list_head);   # ERRORS, WARNINGS, NODES: listbox, entries, heading
 our (%table);                    # PIPES, NODES, OUTLETS: { hlist, data, sort, desc }
-our ($toptabs, $restabs);        # the NETWORK / PROJECT tabs and the results tabs
+our ($toptabs, $restabs);        # the NETWORK / PROJECT / DATABASE tabs; the results tabs
 our (%btn, %form, %checks);      # toolbar buttons; PROJECT tab fields; HIDE boxes
+our $project_canvas;             # the PROJECT tab's scrolling canvas
+our %dbv;                        # the DATABASE tab: { db, editing, kind, sel, ... }
 our %pipe_show;                  # the pipe columns shown, by key
 our ($hide_pipes, $hide_nodes) = (0, 0);
 our $path;                       # the file being edited, or undef for a new buffer
@@ -156,7 +195,7 @@ sub flat_button {
         -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
         -activebackground => $p ? $C{accent_dk} : $C{hover},
         -activeforeground => $p ? '#FFFFFF' : $C{ink},
-        -disabledforeground => $C{faint}, -padx => 14, -pady => 5, -cursor => 'hand2');
+        -disabledforeground => $C{faint}, -padx => px(14), -pady => px(5), -cursor => 'hand2');
 }
 
 #------------------------------------------------------------------------------
@@ -174,8 +213,8 @@ sub make_tabs {
     for my $n (@$names) {
         my $f = $t->{bar}->Frame(-background => $C{paper})->pack(-side => 'left');
         my $l = $f->Label(-text => $n, -font => $UI_B, -background => $C{paper}, -foreground => $C{muted},
-                          -padx => 14, -pady => 7, -cursor => 'hand2')->pack(-side => 'top');
-        my $u = $f->Frame(-height => 2, -background => $C{paper})->pack(-side => 'top', -fill => 'x');
+                          -padx => px(14), -pady => px(7), -cursor => 'hand2')->pack(-side => 'top');
+        my $u = $f->Frame(-height => px(2), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
         $t->{label}{$n} = [ $l, $u ];
         $l->bind('<ButtonRelease-1>' => sub { select_tab($t, $n) });
         $t->{page}{$n} = $body->Frame(-background => $C{paper});
@@ -204,22 +243,25 @@ sub select_tab {
 sub check_box {
     my ($parent, $text, $var, $cmd) = @_;
     my $f = $parent->Frame(-background => $C{paper}, -cursor => 'hand2');
-    my $c = $f->Canvas(-width => 14, -height => 14, -background => $C{paper},
-                       -highlightthickness => 0, -borderwidth => 0)->pack(-side => 'left', -padx => [0, 6]);
+    my $b = px(14);
+    my $c = $f->Canvas(-width => $b, -height => $b, -background => $C{paper},
+                       -highlightthickness => 0, -borderwidth => 0)->pack(-side => 'left', -padx => px([0, 6]));
     my $l = $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{ink})
               ->pack(-side => 'left');
+    my $n = $f->Label(-text => '', -font => $UI, -background => $C{paper}, -foreground => $C{muted})
+              ->pack(-side => 'left', -padx => px([4, 0]));
     my $draw = sub {
         $c->delete('all');
         if ($$var) {
-            $c->createRectangle(1, 1, 13, 13, -fill => $C{accent}, -outline => $C{accent});
-            $c->createLine(4, 7, 6, 10, 11, 4, -fill => '#FFFFFF', -width => 2);
+            $c->createRectangle(1, 1, $b - 1, $b - 1, -fill => $C{accent}, -outline => $C{accent});
+            $c->createLine(map({ px($_) } 4, 7, 6, 10, 11, 4), -fill => '#FFFFFF', -width => px(2));
         } else {
-            $c->createRectangle(1, 1, 13, 13, -fill => $C{paper}, -outline => $C{faint});
+            $c->createRectangle(1, 1, $b - 1, $b - 1, -fill => $C{paper}, -outline => $C{faint});
         }
     };
-    $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l;
+    $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l, $n;
     $draw->();
-    return { frame => $f, draw => $draw };
+    return { frame => $f, draw => $draw, label => $l, count => $n };
 }
 
 #------------------------------------------------------------------------------
@@ -229,16 +271,16 @@ sub check_box {
 our @dd_refresh;                  # drop-downs to redraw when settings are loaded
 sub drop_down {
     my ($parent, $var, $choices, $cmd, $default) = @_;
-    my $show = sub { sprintf '%-9s %s', $$var // '', "\x{25BE}" };
+    my $show = sub { sprintf '%-9s %s', length($$var // '') ? $$var : 'DEFAULT', "\x{25BE}" };
     my $mb = $parent->Menubutton(-text => $show->(), -font => $MONO, -relief => 'flat',
         -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
         -background => $C{paper}, -activebackground => $C{hover}, -foreground => $C{ink},
-        -anchor => 'w', -width => 11, -padx => 6, -pady => 3, -indicatoron => 0, -cursor => 'hand2');
+        -anchor => 'w', -width => 11, -padx => px(6), -pady => px(3), -indicatoron => 0, -cursor => 'hand2');
     my $m = $mb->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
         -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
         -activebackground => $C{select}, -activeforeground => $C{ink});
     for my $v (@$choices) {
-        $m->command(-label => $v . (defined $default && $v eq $default ? '   (DEFAULT)' : ''), -command => sub { $$var = $v; $mb->configure(-text => $show->()); $cmd->() });
+        $m->command(-label => ($v eq '' ? 'DEFAULT' : $v) . (defined $default && $v eq $default ? '   (DEFAULT)' : ''), -command => sub { $$var = $v; $mb->configure(-text => $show->()); $cmd->() });
     }
     $mb->configure(-menu => $m);
     push @dd_refresh, sub { $mb->configure(-text => $show->()) };
@@ -255,11 +297,24 @@ sub flat_entry {
         -selectbackground => $C{select}, -selectforeground => $C{ink});
 }
 
+#------------------------------------------------------------------------------
+# divider -- a pane divider the user can drag: a 6-pixel light grey band (a
+# one-pixel line could not be grabbed), the resize pointer over it, and the
+# panes redrawn live while it moves.
+#------------------------------------------------------------------------------
+sub divider {
+    my ($parent, $orient) = @_;
+    return $parent->Panedwindow(-orient => $orient, -background => $C{sash}, -sashwidth => px(6),
+        -sashpad => 0, -borderwidth => 0, -showhandle => 0, -handlesize => 0,
+        -sashrelief => 'flat', -opaqueresize => 1,
+        -sashcursor => $orient eq 'vertical' ? 'sb_v_double_arrow' : 'sb_h_double_arrow');
+}
+
 # flat_scrollbar -- a thin grey scrollbar with no bevels.
 sub flat_scrollbar {
     my ($parent, $orient) = @_;
     return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
-        -elementborderwidth => 0, -width => 11, -troughcolor => $C{panel},
+        -elementborderwidth => 0, -width => px(11), -troughcolor => $C{panel},
         -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
 }
 
@@ -267,9 +322,14 @@ sub flat_scrollbar {
 # build_window -- create every widget.  Returns the main window.
 #==============================================================================
 sub build_window {
+    dpi_aware();
     $mw = MainWindow->new(-background => $C{paper});
+    # The screen's scale against the 96 dpi the sizes here were drawn for;
+    # never below 1, so a low-resolution screen is not cramped further.
+    my $dpi = $mw->winfo('pixels', '1i');
+    $SCALE = $dpi > 96 ? $dpi / 96 : 1;
     pick_fonts();
-    $mw->geometry('1500x950');
+    $mw->geometry(px(1500) . 'x' . px(950));
     $mw->optionAdd('*Font', $UI);
     $mw->optionAdd('*Background', $C{paper});
     $mw->optionAdd('*Menu.Relief', 'flat');
@@ -282,16 +342,15 @@ sub build_window {
     build_toolbar();
 
     # The divider between the work above and the results below can be moved.
-    my $vp = $mw->Panedwindow(-orient => 'vertical', -background => $C{line},
-                              -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
-                              -handlesize => 0, -sashrelief => 'flat');
+    my $vp = divider($mw, 'vertical');
     my $top = $mw->Frame(-background => $C{paper});
     my $bottom = $mw->Frame(-background => $C{paper});
-    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT' ]);
+    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT', 'DATABASE' ]);
     build_network($toptabs->{page}{NETWORK});
     build_project($toptabs->{page}{PROJECT});
+    build_database($toptabs->{page}{DATABASE});
     build_results($bottom);
-    $vp->add($top, -height => 560);
+    $vp->add($top, -height => px(560));
     $vp->add($bottom);
     $vp->pack(-fill => 'both', -expand => 1);
 
@@ -333,18 +392,18 @@ sub build_menus {
 # on the right the model's state: not validated, problems, valid, calculated.
 sub build_toolbar {
     my $tb = $mw->Frame(-background => $C{panel})->pack(-side => 'top', -fill => 'x');
-    my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => 14, -pady => 8);
-    my $sep = sub { $in->Frame(-background => $C{line}, -width => 1, -height => 22)->pack(-side => 'left', -padx => 10) };
-    $btn{NEW}  = flat_button($in, 'NEW',  sub { file_new() })->pack(-side => 'left', -padx => [0, 4]);
-    $btn{OPEN} = flat_button($in, 'OPEN', sub { file_open() })->pack(-side => 'left', -padx => 4);
-    $btn{SAVE} = flat_button($in, 'SAVE', sub { file_save() })->pack(-side => 'left', -padx => 4);
+    my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px(8));
+    my $sep = sub { $in->Frame(-background => $C{line}, -width => 1, -height => px(22))->pack(-side => 'left', -padx => px(10)) };
+    $btn{NEW}  = flat_button($in, 'NEW',  sub { file_new() })->pack(-side => 'left', -padx => px([0, 4]));
+    $btn{OPEN} = flat_button($in, 'OPEN', sub { file_open() })->pack(-side => 'left', -padx => px(4));
+    $btn{SAVE} = flat_button($in, 'SAVE', sub { file_save() })->pack(-side => 'left', -padx => px(4));
     $sep->();
-    $btn{VALIDATE}  = flat_button($in, 'VALIDATE  F4', sub { validate() })->pack(-side => 'left', -padx => 4);
+    $btn{VALIDATE}  = flat_button($in, 'VALIDATE  F4', sub { validate() })->pack(-side => 'left', -padx => px(4));
     $btn{CALCULATE} = flat_button($in, 'CALCULATE  F5', sub { calculate() }, primary => 1)
-                          ->pack(-side => 'left', -padx => 4);
+                          ->pack(-side => 'left', -padx => px(4));
     $sep->();
-    $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => 4);
-    $pill = $in->Label(-text => '', -font => $UI_B, -padx => 12, -pady => 4)->pack(-side => 'right');
+    $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
+    $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
     rule($mw, 'x', -side => 'top');
 }
 
@@ -355,9 +414,7 @@ sub build_toolbar {
 sub build_network {
     my $page = shift;
     build_strip($page);
-    my $hp = $page->Panedwindow(-orient => 'horizontal', -background => $C{line},
-                                -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
-                                -handlesize => 0, -sashrelief => 'flat');
+    my $hp = divider($page, 'horizontal');
     my $left  = $page->Frame(-background => $C{paper});
     my $right = $page->Frame(-background => $C{paper});
 
@@ -365,8 +422,8 @@ sub build_network {
     my $sb = $left->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
     rule($sb, 'x', -side => 'top');
     $statusbar = $sb->Text(-height => 1, -wrap => 'none', -font => $MONO, -background => $C{panel},
-        -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 14, -pady => 6,
-        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0)->pack(-fill => 'x');
+        -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(14), -pady => px(6),
+        -state => 'disabled', -cursor => $POINTER, -takefocus => 0)->pack(-fill => 'x');
     $statusbar->tagConfigure('current', -foreground => $C{accent}, -font => $MONO_B, -underline => 1);
     $statusbar->tagConfigure('muted', -foreground => $C{muted});
     $statusbar->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
@@ -379,8 +436,8 @@ sub build_network {
     my $vsb = flat_scrollbar($ef, 'vertical')->pack(-side => 'right', -fill => 'y');
     my $hsb = flat_scrollbar($ef, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
     $gutter = $ef->Text(-width => 5, -wrap => 'none', -font => $MONO, -background => $C{panel},
-        -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => 6, -pady => 6,
-        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
+        -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => px(6), -pady => px(6),
+        -state => 'disabled', -cursor => $POINTER, -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
         ->pack(-side => 'left', -fill => 'y');
     $gutter->tagConfigure('num', -justify => 'right');
     $gutter->tagConfigure('cur', -foreground => $C{ink}, -font => $MONO_B);
@@ -391,16 +448,15 @@ sub build_network {
     });
     rule($ef, 'y', -side => 'left');
     $ed = $ef->TextUndo(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
-        -insertbackground => $C{ink}, -insertwidth => 2, -selectbackground => $C{select},
-        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 10, -pady => 6,
+        -insertbackground => $C{ink}, -insertwidth => px(2), -selectbackground => $C{select},
+        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(10), -pady => px(6),
         -spacing1 => 1, -spacing3 => 1, -exportselection => 1,
         -yscrollcommand => sub { $vsb->set(@_); $gutter->yviewMoveto($_[0]) },
         -xscrollcommand => sub { $hsb->set(@_) })->pack(-side => 'left', -fill => 'both', -expand => 1);
     $vsb->configure(-command => sub { $ed->yview(@_) });
     $hsb->configure(-command => sub { $ed->xview(@_) });
-    for my $ev ('<MouseWheel>', '<Button-4>', '<Button-5>') {
-        $gutter->bind($ev => sub { my $d = $ev eq '<Button-4>' ? -3 : 3; $ed->yviewScroll($d, 'units'); Tk->break });
-    }
+    wheel_target($ed);
+    wheel_target($gutter, $ed);       # the wheel over the numbers scrolls the editor
 
     # Syntax colours.  Blue for command words and keywords, black bold for a
     # name being defined, dark blue for numbers, grey italic for comments.
@@ -426,18 +482,19 @@ sub build_network {
     for my $name (qw(ERRORS WARNINGS NODES)) {
         my $f = $right->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
         $list_head{$name} = $f->Label(-text => $name, -font => $UI_S, -anchor => 'w', -background => $C{paper},
-            -foreground => $C{muted}, -padx => 14, -pady => 8)->pack(-side => 'top', -fill => 'x');
+            -foreground => $C{muted}, -padx => px(14), -pady => px(8))->pack(-side => 'top', -fill => 'x');
         $list{$name} = $f->Listbox(-height => 5, -font => $MONO, -background => $C{paper},
             -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
             -selectbackground => $C{select}, -selectforeground => $C{ink}, -relief => 'flat',
-            -borderwidth => 0, -highlightthickness => 0, -activestyle => 'none')
-            ->pack(-fill => 'both', -expand => 1, -padx => [14, 4], -pady => [0, 6]);
+            -borderwidth => 0, -highlightthickness => 0, -activestyle => 'none', -cursor => $POINTER)
+            ->pack(-fill => 'both', -expand => 1, -padx => px([14, 4]), -pady => px([0, 6]));
+        wheel_target($list{$name});
         rule($f, 'x', -side => 'bottom') unless $name eq 'NODES';
         $list_lines{$name} = [];
         my $n = $name;
         $list{$name}->bind('<ButtonRelease-1>' => sub { go_to_list($n) });
     }
-    $hp->add($left, -width => 1000);
+    $hp->add($left, -width => px(1000));
     $hp->add($right);
     $hp->pack(-fill => 'both', -expand => 1);
 }
@@ -472,6 +529,46 @@ sub bind_keys {
     $mw->bind('<Control-r>' => sub { file_report() });
     $mw->bind('<Control-q>' => sub { file_quit() });
     $mw->protocol('WM_DELETE_WINDOW' => sub { file_quit() });
+    bind_wheel();
+}
+
+#------------------------------------------------------------------------------
+# The mouse wheel scrolls what is under the pointer.
+#
+# Windows sends wheel events to the widget with the keyboard focus, so with
+# the cursor in the editor the wheel over the results table scrolled the
+# editor and the table could not be scrolled at all.  Every scrollable pane
+# is registered here (wheel_target puts a 'PhcWheel' tag first in its
+# bindtags); a wheel event, wherever it is delivered, is passed to the
+# registered pane under the pointer, and goes no further.  The same binding
+# on the main window catches the wheel when the focus is in a field of the
+# PROJECT tab.  On Linux the wheel arrives as buttons 4 and 5.
+#------------------------------------------------------------------------------
+our %WHEEL;                      # widget path => the widget the wheel scrolls
+sub wheel_target {
+    my ($w, $target) = @_;
+    $WHEEL{ $w->PathName } = $target // $w;
+    $w->bindtags([ 'PhcWheel', grep { $_ ne 'PhcWheel' } $w->bindtags ]);
+}
+
+sub route_wheel {
+    my ($units, $X, $Y) = @_;           # lines to scroll; the pointer on the screen
+    my $w = $mw->containing($X, $Y);
+    $w = $w->parent while $w && !$WHEEL{ $w->PathName } && $w ne $mw;
+    my $t = $w && $WHEEL{ $w->PathName } or return;
+    $t->yview('scroll', $units, 'units');     # the form every scrollable widget takes
+    Tk->break;
+}
+
+sub bind_wheel {
+    for my $tag ('PhcWheel', $mw) {
+        # Windows: 120 per notch of the wheel, three lines a notch.
+        $mw->bind($tag, '<MouseWheel>' => [ sub { my (undef, $d, $X, $Y) = @_;
+            route_wheel($d > 0 ? -3 * (int($d / 120) || 1) : 3 * (int(-$d / 120) || 1), $X, $Y) },
+            Ev('D'), Ev('X'), Ev('Y') ]);
+        $mw->bind($tag, '<Button-4>' => [ sub { route_wheel(-3, $_[1], $_[2]) }, Ev('X'), Ev('Y') ]);
+        $mw->bind($tag, '<Button-5>' => [ sub { route_wheel(3,  $_[1], $_[2]) }, Ev('X'), Ev('Y') ]);
+    }
 }
 
 # text_widget -- the Text where keys arrive (the editor itself).
@@ -724,16 +821,16 @@ sub state_text { return $pill->cget(-text) }
 #==============================================================================
 sub build_strip {
     my $parent = shift;
-    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => 8, -pady => 6);
+    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(8), -pady => px(6));
     my @groups = @HardyCross::Phc::COMMAND_GROUPS[1 .. $#HardyCross::Phc::COMMAND_GROUPS];
     my $first = 1;
     for my $group (@groups) {
-        $strip->Frame(-background => $C{line}, -width => 1, -height => 16)->pack(-side => 'left', -padx => 8)
+        $strip->Frame(-background => $C{line}, -width => 1, -height => px(16))->pack(-side => 'left', -padx => px(8))
             unless $first;
         $first = 0;
         for my $cmd (@$group) {
             my $l = $strip->Label(-text => $cmd, -font => $MONO_B, -background => $C{paper},
-                                  -foreground => $C{accent}, -padx => 6, -pady => 3, -cursor => 'hand2')
+                                  -foreground => $C{accent}, -padx => px(6), -pady => px(3), -cursor => 'hand2')
                           ->pack(-side => 'left');
             $l->bind('<Enter>' => sub { $l->configure(-background => $C{accent_bg}) });
             $l->bind('<Leave>' => sub { $l->configure(-background => $C{paper}) });
@@ -772,13 +869,26 @@ sub strip_commands {
 #==============================================================================
 sub build_project {
     my $page = shift;
-    my $wrap = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1, -padx => 18, -pady => 12);
+    # The form scrolls: on a short window, or with the results pane dragged
+    # up, the CALCULATION options run below the bottom edge.  A canvas holds
+    # the form, with the same thin scrollbar as the rest of the window.
+    my $sb = flat_scrollbar($page, 'vertical')->pack(-side => 'right', -fill => 'y');
+    my $cv = $page->Canvas(-background => $C{paper}, -highlightthickness => 0, -borderwidth => 0,
+                           -yscrollcommand => sub { $sb->set(@_) })->pack(-fill => 'both', -expand => 1);
+    $sb->configure(-command => sub { $cv->yview(@_) });
+    my $wrap = $cv->Frame(-background => $C{paper});
+    $cv->createWindow(px(18), px(12), -window => $wrap, -anchor => 'nw');
+    $wrap->bind('<Configure>' => sub {
+        $cv->configure(-scrollregion => [ 0, 0, $wrap->reqwidth + px(36), $wrap->reqheight + px(24) ]);
+    });
+    wheel_target($cv);
+    $project_canvas = $cv;
     my $column = sub {
         my ($title) = @_;
-        my $c = $wrap->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'y', -anchor => 'n', -padx => [0, 32]);
+        my $c = $wrap->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'y', -anchor => 'n', -padx => px([0, 26]));
         $c->Label(-text => $title, -font => $UI_B, -background => $C{paper}, -foreground => $C{ink}, -anchor => 'w')
           ->pack(-fill => 'x');
-        rule($c, 'x', -pady => [4, 8]);
+        rule($c, 'x', -pady => px([4, 8]));
         my $g = $c->Frame(-background => $C{paper})->pack(-fill => 'x');
         return $g;
     };
@@ -786,12 +896,12 @@ sub build_project {
     my $label = sub {
         my ($g, $text) = @_;
         $g->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{muted}, -anchor => 'w')
-          ->grid(-row => $row, -column => 0, -sticky => 'w', -pady => 3, -padx => [0, 14]);
+          ->grid(-row => $row, -column => 0, -sticky => 'w', -pady => px(3), -padx => px([0, 14]));
     };
     my $entry = sub {
         my ($g, $field, $var, $width) = @_;
         my $e = flat_entry($g, $var, $width);
-        $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3, -ipady => 3);
+        $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px(3), -ipady => px(3));
         $e->bind('<KeyRelease>' => sub { settings_changed() });
         $form{$field} = $e;
         $row++;
@@ -802,45 +912,77 @@ sub build_project {
     my $g = $column->('PROJECT DETAILS');
     $row = 0;
     $label->($g, 'TITLE');
-    $entry->($g, 'TITLE', \$settings->{title}, 38);
+    $entry->($g, 'TITLE', \$settings->{title}, 34);
     for my $k (@f[0 .. $split]) {
         $settings->{project}{$k} //= '';
         $label->($g, HardyCross::Editor::project_label($k));
-        $entry->($g, $k, \$settings->{project}{$k}, 38);
+        $entry->($g, $k, \$settings->{project}{$k}, 34);
     }
     $g = $column->('DESIGN BASIS');
     $row = 0;
     for my $k (@f[ $split + 1 .. $#f ]) {
         $settings->{project}{$k} //= '';
         $label->($g, HardyCross::Editor::project_label($k));
-        $entry->($g, $k, \$settings->{project}{$k}, 24);
+        $entry->($g, $k, \$settings->{project}{$k}, 22);
     }
 
     $g = $column->('UNITS');
     $row = 0;
     for my $q (@HardyCross::Phc::UNIT_QUANTITIES) {
-        $label->($g, $q);
+        $label->($g, $HardyCross::Editor::UNIT_LABEL{$q});
         my $dd = drop_down($g, \$settings->{units}{$q}, $HardyCross::Phc::UNIT_CHOICES{$q}, sub { settings_changed() },
                             $HardyCross::Phc::UNIT_DEFAULT{$q});
-        $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+        $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px(3));
         $form{$q} = $dd;
         $row++;
     }
+
+    # CALCULATION: each option with a plain label, its .phc name small and
+    # grey beside it, and a line under it saying what it does and what a
+    # blank means (HardyCross::Editor::@OPTION_FORM).
     $g = $column->('CALCULATION');
     $row = 0;
-    $label->($g, 'METHOD');
+    my $help = sub {
+        my ($text) = @_;
+        $g->Label(-text => $text, -font => $UI_S_N, -background => $C{paper}, -foreground => $C{muted},
+                  -justify => 'left', -anchor => 'w', -wraplength => px(300))
+          ->grid(-row => $row++, -column => 0, -columnspan => 2, -sticky => 'w', -pady => px([0, 6]));
+    };
+    my $name = sub {
+        my ($text, $key) = @_;
+        my $f = $g->Frame(-background => $C{paper});
+        $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{ink})->pack(-side => 'left');
+        $f->Label(-text => $key, -font => $UI_S_N, -background => $C{paper}, -foreground => $C{faint})
+          ->pack(-side => 'left', -padx => px([6, 0]));
+        $f->grid(-row => $row, -column => 0, -sticky => 'w', -pady => px([3, 0]), -padx => px([0, 14]));
+    };
+    $name->('FRICTION FORMULA', 'METHOD');
     my $dd = drop_down($g, \$settings->{method}, [qw(HW DW)], sub { settings_changed() });
-    $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+    $dd->grid(-row => $row++, -column => 1, -sticky => 'w', -pady => px([3, 0]));
     $form{METHOD} = $dd;
-    $row++;
-    for my $o (@HardyCross::Phc::OPTIONS) {
-        $settings->{options}{$o} //= '';
-        $label->($g, $o);
-        $entry->($g, $o, \$settings->{options}{$o}, 12);
+    $help->('HW HAZEN-WILLIAMS, THE SPRINKLER STANDARD\'S METHOD. DW DARCY-WEISBACH, WITH ROUGHNESS IN PLACE OF C.');
+    for my $o (@HardyCross::Editor::OPTION_FORM) {
+        unless (ref $o) {           # a subheading
+            $g->Label(-text => $o, -font => $UI_B, -background => $C{paper}, -foreground => $C{ink}, -anchor => 'w')
+              ->grid(-row => $row++, -column => 0, -columnspan => 2, -sticky => 'w', -pady => px([12, 4]));
+            next;
+        }
+        my ($key, $text, $about, $choices) = @$o;
+        $settings->{options}{$key} //= '';
+        $name->($text, $key);
+        if ($choices) {
+            my $d = drop_down($g, \$settings->{options}{$key}, $choices, sub { settings_changed() });
+            $d->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px([3, 0]));
+            $form{$key} = $d;
+        } else {
+            my $e = flat_entry($g, \$settings->{options}{$key}, 12);
+            $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px([3, 0]), -ipady => px(3));
+            $e->bind('<KeyRelease>' => sub { settings_changed() });
+            $form{$key} = $e;
+        }
+        $row++;
+        $help->($about);
     }
-    $g->Label(-text => "HW HAZEN-WILLIAMS, DW DARCY-WEISBACH.\nA BLANK OPTION TAKES ITS DEFAULT.",
-              -font => $UI, -background => $C{paper}, -foreground => $C{faint}, -justify => 'left')
-      ->grid(-row => $row, -column => 0, -columnspan => 3, -sticky => 'w', -pady => [8, 0]);
 }
 
 # settings_changed -- after any change in the PROJECT tab.
@@ -853,6 +995,292 @@ sub settings_changed {
     update_actions();
     recolour();         # the units in force change what a line means
     update_status();
+}
+
+#==============================================================================
+# The DATABASE tab: the pipe and fitting database, viewed and edited.
+#
+# Read-only until EDIT THE DATABASE is ticked, because a change reaches every
+# calculation made after it (Joshua, 28 October 2026).  Four tables -- pipe
+# types, pipe sizes, fittings, K' factors -- each with a filter; a click on a
+# row puts it in the fields below, where it can be changed, added as a new
+# row, or deleted.  SAVE CHANGES checks every row and the whole file, writes
+# it, and makes it the database in use; the report then prints its new
+# SHA-256.  Every decision is HardyCross::DbEdit's; this is drawing.
+#
+# Above the tables: where the database is -- the program's own (BUILT-IN), a
+# copy beside the program, or a TEAM FOLDER chosen with CHOOSE FOLDER..., such
+# as a folder on a network drive that every machine in a team points at.
+#==============================================================================
+sub build_database {
+    my $page = shift;
+    my $top = $page->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(14), -pady => px([10, 6]));
+    my $l1 = $top->Frame(-background => $C{paper})->pack(-fill => 'x');
+    $dbv{origin} = $l1->Label(-text => '', -font => $UI_B, -padx => px(10), -pady => px(3))->pack(-side => 'left');
+    $dbv{path} = $l1->Label(-text => '', -font => $MONO, -background => $C{paper}, -foreground => $C{ink})
+                    ->pack(-side => 'left', -padx => px(10));
+    $dbv{sha} = $l1->Label(-text => '', -font => $UI_S_N, -background => $C{paper}, -foreground => $C{muted})
+                   ->pack(-side => 'left', -padx => px(6));
+    $dbv{btn}{BUILTIN} = flat_button($l1, 'USE BUILT-IN', sub { db_use_builtin() })->pack(-side => 'right', -padx => px([6, 0]));
+    $dbv{btn}{FOLDER}  = flat_button($l1, 'CHOOSE FOLDER...', sub { db_choose_folder() })->pack(-side => 'right', -padx => px(6));
+    $dbv{btn}{RELOAD}  = flat_button($l1, 'RELOAD', sub { db_reload() })->pack(-side => 'right', -padx => px(6));
+
+    my $l2 = $top->Frame(-background => $C{paper})->pack(-fill => 'x', -pady => px([10, 0]));
+    $dbv{edit_box} = check_box($l2, 'EDIT THE DATABASE', \$dbv{editing}, sub { db_editing_changed() });
+    $dbv{edit_box}{frame}->pack(-side => 'left');
+    $dbv{btn}{SAVE} = flat_button($l2, 'SAVE CHANGES', sub { db_save() }, primary => 1)->pack(-side => 'left', -padx => px([16, 4]));
+    $dbv{btn}{DISCARD} = flat_button($l2, 'DISCARD CHANGES', sub { db_reload(1) })->pack(-side => 'left', -padx => px(4));
+    $dbv{note} = $l2->Label(-text => '', -font => $UI_S_N, -background => $C{paper}, -foreground => $C{muted},
+                            -justify => 'left', -anchor => 'w')->pack(-side => 'left', -padx => px(14), -fill => 'x');
+    my $ff = $l2->Frame(-background => $C{paper})->pack(-side => 'right');
+    $ff->Label(-text => 'FILTER', -font => $UI, -background => $C{paper}, -foreground => $C{muted})->pack(-side => 'left');
+    $dbv{filter} = '';
+    my $fe = flat_entry($ff, \$dbv{filter}, 18)->pack(-side => 'left', -padx => px([8, 0]), -ipady => px(3));
+    $fe->bind('<KeyRelease>' => sub { db_fill() });
+    rule($page, 'x', -side => 'top');
+
+    # The edit fields, under the tables.
+    my $form = $page->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
+    rule($form, 'x', -side => 'top');
+    $dbv{formrow} = $form->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px([8, 4]));
+    my $fb = $form->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px([0, 8]));
+    $dbv{btn}{UPDATE} = flat_button($fb, 'UPDATE ROW', sub { db_update() })->pack(-side => 'left', -padx => px([0, 4]));
+    $dbv{btn}{ADD}    = flat_button($fb, 'ADD AS NEW ROW', sub { db_add() })->pack(-side => 'left', -padx => px(4));
+    $dbv{btn}{DELETE} = flat_button($fb, 'DELETE ROW', sub { db_delete() })->pack(-side => 'left', -padx => px(4));
+    $dbv{msg} = $fb->Label(-text => '', -font => $UI_B, -background => $C{panel}, -foreground => $C{muted},
+                           -anchor => 'w', -justify => 'left')->pack(-side => 'left', -padx => px(14), -fill => 'x');
+
+    my @kinds = map { $_->[0] } @HardyCross::DbEdit::TABLES;
+    my %title = map { $_->[0] => $_->[1] } @HardyCross::DbEdit::TABLES;
+    $dbv{tabs} = make_tabs($page, [ map { $title{$_} } @kinds ], sub {
+        my $t = shift;
+        ($dbv{kind}) = grep { $title{$_} eq $t } @kinds;
+        db_fill();
+        db_form();
+    });
+    db_reload(1);
+}
+
+# db_open -- read the database in use into the tab; a file that cannot be
+# read (a team folder off the network) is said so, and the tab shows nothing.
+sub db_open {
+    my $db = eval { HardyCross::Parse::ensure_db(); HardyCross::DbEdit::open_db(HardyCross::PipeData::path()) };
+    $dbv{error} = $db ? undef : uc(ref $@ ? $@->{msg} : "$@");
+    $dbv{error} =~ s/\s+\z// if $dbv{error};
+    $dbv{db} = $db;
+}
+
+# db_reload -- read the database again from its file, losing unsaved edits
+# (after asking, unless $quiet).
+sub db_reload {
+    my $quiet = shift;
+    return if !$quiet && !db_ok_to_leave();
+    db_open();
+    $dbv{sel} = undef;
+    db_header();
+    db_fill();
+    db_form();
+    db_state();
+    db_message($dbv{error} // '', $dbv{error} ? 1 : 0);
+}
+
+# db_header -- where the database is, its path and fingerprint.
+sub db_header {
+    my $o = HardyCross::PipeData::origin(HardyCross::PipeData::path() || HardyCross::PipeData::default_path());
+    my $team = $o eq 'TEAM FOLDER';
+    $dbv{origin}->configure(-text => $o, -foreground => $team ? $C{accent} : $C{muted},
+                            -background => $team ? $C{accent_bg} : $C{hover});
+    $dbv{path}->configure(-text => HardyCross::PipeData::path() || HardyCross::PipeData::default_path());
+    my $sha = HardyCross::PipeData::sha256();
+    $dbv{sha}->configure(-text => $sha ? 'FINGERPRINT ' . uc(substr $sha, 0, 12) : '');
+}
+
+# db_state -- buttons and fields on or off for read-only or editing.
+sub db_state {
+    my $ed = $dbv{editing} && $dbv{db};
+    my $mod = $dbv{db} && $dbv{db}{modified};
+    $dbv{btn}{$_}->configure(-state => $ed ? 'normal' : 'disabled') for qw(UPDATE ADD DELETE);
+    $dbv{btn}{SAVE}->configure($mod && $ed
+        ? (-state => 'normal', -background => $C{accent}, -highlightbackground => $C{accent})
+        : (-state => 'disabled', -background => $C{panel}, -highlightbackground => $C{line}));
+    $dbv{btn}{DISCARD}->configure(-state => $mod ? 'normal' : 'disabled');
+    $_->configure(-state => $ed ? 'normal' : 'readonly') for @{ $dbv{entries} || [] };
+    $dbv{note}->configure(-text => !$dbv{db} ? ''
+        : $ed ? 'EDITING. CHANGES TAKE EFFECT WHEN SAVED, AND EVERY REPORT AFTER THEM PRINTS THE NEW FINGERPRINT.'
+              : 'READ-ONLY. TICK EDIT THE DATABASE TO CHANGE IT.');
+}
+
+sub db_editing_changed { db_state() }
+
+# db_cols -- the current table's columns.
+sub db_cols { return @{ HardyCross::DbEdit::table($dbv{kind})->{cols} } }
+
+# db_fill -- the current table, filtered: every row with a word beginning
+# with each word of the filter.
+sub db_fill {
+    my $kind = $dbv{kind} or return;
+    return unless $dbv{tabs};          # make_tabs selects its first tab before it returns
+    my $page = $dbv{tabs}{page}{ HardyCross::DbEdit::table($kind)->{title} };
+    $dbv{box}{$kind}->destroy if $dbv{box}{$kind};
+    my @cols = db_cols();
+    my ($h, $box) = hlist($page, scalar @cols);
+    my $st = styles($h);
+    $dbv{box}{$kind} = $box;
+    $dbv{hlist} = $h;
+    my @rows = $dbv{db} ? @{ HardyCross::DbEdit::rows($dbv{db}, $kind) } : ();
+    my @w = map { length $_->[0] } @cols;
+    my @shown = map { [ map { HardyCross::DbEdit::shown($_) } @{ $_->{fields} } ] } @rows;
+    for my $r (@shown) { for my $i (0 .. $#w) { my $l = length($r->[$i] // ''); $w[$i] = $l if $l > $w[$i] } }
+    my $num = sub { $cols[ $_[0] ][1] =~ /^(int|num)/ };
+    heading($h, $_, pad($cols[$_][0], $w[$_], $num->($_) ? 'e' : 'w'), $st->{headm}) for 0 .. $#cols;
+    my @words = grep { length } split ' ', uc($dbv{filter} // '');
+    $dbv{shown_rows} = [];
+    for my $k (0 .. $#rows) {
+        # Each word of the filter must begin some word of the row: "50"
+        # finds DN 50, not DN 150.
+        my @tok = map { split ' ' } @{ $shown[$k] };
+        next if grep { my $w = $_; !grep { index($_, $w) == 0 } @tok } @words;
+        my $id = $rows[$k]{line};
+        $h->add($id);
+        $h->itemCreate($id, $_, -text => pad($shown[$k][$_] // '', $w[$_], $num->($_) ? 'e' : 'w'),
+                       -style => $st->{w0}) for 0 .. $#cols;
+        push @{ $dbv{shown_rows} }, $id;
+    }
+    $h->configure(-browsecmd => sub { $h->anchorClear; $dbv{sel} = shift; db_form() });
+    if (defined $dbv{sel} && $h->info('exists', $dbv{sel})) { $h->selectionSet($dbv{sel}); $h->see($dbv{sel}) }
+}
+
+# db_form -- the edit fields for the current table, holding the selected row.
+sub db_form {
+    my $kind = $dbv{kind} or return;
+    return unless $dbv{tabs};
+    $_->destroy for $dbv{formrow}->children;
+    my @cols = db_cols();
+    my $l = defined $dbv{sel} && $dbv{db} ? $dbv{db}{lines}[ $dbv{sel} ] : undef;
+    $l = undef unless $l && ($l->{kind} // '') eq $kind;
+    $dbv{vals} = [ map { $l ? HardyCross::DbEdit::shown($l->{fields}[$_]) : '' } 0 .. $#cols ];
+    $dbv{entries} = [];
+    for my $i (0 .. $#cols) {
+        my $f = $dbv{formrow}->Frame(-background => $C{panel})->pack(-side => 'left', -padx => px([0, 10]));
+        $f->Label(-text => $cols[$i][0], -font => $UI_S_N, -background => $C{panel}, -foreground => $C{muted},
+                  -anchor => 'w')->pack(-fill => 'x');
+        my $w = $cols[$i][1] eq 'text' ? 30 : $cols[$i][1] eq 'code' ? 9 : 11;
+        my $e = flat_entry($f, \$dbv{vals}[$i], $w)->pack(-ipady => px(3));
+        $e->configure(-readonlybackground => $C{panel});
+        push @{ $dbv{entries} }, $e;
+    }
+    db_state();
+}
+
+# db_message -- a line beside the row buttons: red for a problem.
+sub db_message {
+    my ($t, $bad) = @_;
+    $dbv{msg}->configure(-text => $t, -foreground => $bad ? $C{error} : $C{accent});
+}
+
+sub db_update {
+    return unless $dbv{editing} && $dbv{db};
+    return db_message('SELECT A ROW TO CHANGE FIRST', 1) unless defined $dbv{sel};
+    my $err = HardyCross::DbEdit::set_row($dbv{db}, $dbv{sel}, [ @{ $dbv{vals} } ]);
+    return db_message($err, 1) if $err;
+    db_fill();
+    db_state();
+    db_message('ROW CHANGED. SAVE CHANGES TO USE IT.');
+}
+
+sub db_add {
+    return unless $dbv{editing} && $dbv{db};
+    my ($err, $at) = HardyCross::DbEdit::add_row($dbv{db}, $dbv{kind}, [ @{ $dbv{vals} } ]);
+    return db_message($err, 1) if $err;
+    $dbv{sel} = $at;
+    db_fill();
+    db_state();
+    db_message('ROW ADDED. SAVE CHANGES TO USE IT.');
+}
+
+sub db_delete {
+    return unless $dbv{editing} && $dbv{db};
+    return db_message('SELECT A ROW TO DELETE FIRST', 1) unless defined $dbv{sel};
+    my $err = HardyCross::DbEdit::delete_row($dbv{db}, $dbv{sel});
+    return db_message($err, 1) if $err;
+    $dbv{sel} = undef;
+    db_fill();
+    db_form();
+    db_message('ROW DELETED. SAVE CHANGES TO MAKE IT FINAL.');
+}
+
+#------------------------------------------------------------------------------
+# db_save -- check, write, and use the edited database.  A model validated
+# against the old data must be validated again: CALCULATE goes off.
+#------------------------------------------------------------------------------
+sub db_save {
+    return unless $dbv{editing} && $dbv{db} && $dbv{db}{modified};
+    my $r = HardyCross::DbEdit::save($dbv{db});
+    unless ($r->{ok}) {
+        my $p = $r->{problems}[0];
+        my $where = defined $p->{line} ? ' (' . HardyCross::DbEdit::table($p->{kind})->{title} . ')' : '';
+        $dbv{sel} = $p->{line} if defined $p->{line};
+        db_fill();
+        return db_message("NOT SAVED: $p->{message}$where", 1);
+    }
+    db_after_change();
+    db_message("SAVED TO $r->{path}. VALIDATE THE MODEL AGAIN BEFORE CALCULATING.");
+}
+
+# db_after_change -- the database in use has changed: what was checked or
+# calculated against the old one is out of date.
+sub db_after_change {
+    HardyCross::Editor::clear_cache();
+    ($valid_text, $validation, $solved) = (undef, undef, undef);
+    fill_results();
+    fill_validation();
+    db_header();
+    db_fill();
+    db_state();
+    recolour();
+    update_actions();
+}
+
+#------------------------------------------------------------------------------
+# db_choose_folder / db_use_builtin -- where the database is kept, for this
+# machine.  A folder with no database yet is offered a copy of the one in use,
+# which is how a team starts its shared database.
+#------------------------------------------------------------------------------
+sub db_choose_folder {
+    my $dir = shift;
+    return unless db_ok_to_leave();
+    $dir //= $mw->chooseDirectory(-title => 'FOLDER FOR THE PIPE AND FITTING DATABASE', -mustexist => 1);
+    return unless defined $dir && length $dir;
+    my $copy = 0;
+    unless (-e File::Spec->catfile($dir, 'pipes.dat')) {
+        my $a = shift // $mw->messageBox(-title => 'NO DATABASE IN THAT FOLDER', -icon => 'question',
+            -type => 'YesNo', -message => "$dir HAS NO PIPES.DAT.\n\nCOPY THE DATABASE IN USE THERE, TO START "
+            . "A SHARED DATABASE FOR THE TEAM?");
+        return unless lc($a) eq 'yes';
+        $copy = 1;
+    }
+    my $err = HardyCross::DbEdit::use_folder($dir, $copy);
+    return db_message($err, 1) if $err;
+    db_open();
+    db_after_change();
+    db_message("USING THE DATABASE IN $dir ON THIS MACHINE.");
+}
+
+sub db_use_builtin {
+    return unless db_ok_to_leave();
+    HardyCross::DbEdit::use_builtin();
+    db_open();
+    db_after_change();
+    db_message('USING THE BUILT-IN DATABASE ON THIS MACHINE.');
+}
+
+# db_ok_to_leave -- true unless there are unsaved database edits the user
+# wants to keep.
+sub db_ok_to_leave {
+    return 1 unless $dbv{db} && $dbv{db}{modified};
+    my $a = $mw->messageBox(-title => 'UNSAVED DATABASE CHANGES', -icon => 'warning', -type => 'YesNo',
+        -message => 'THE DATABASE HAS CHANGES THAT ARE NOT SAVED.  DISCARD THEM?');
+    return lc($a) eq 'yes';
 }
 
 #------------------------------------------------------------------------------
@@ -896,9 +1324,9 @@ sub build_results {
     $restabs = make_tabs($parent, [ 'VALIDATION', 'PIPES', 'NODES', 'OUTLETS', 'REPORT' ]);
     my $opts = $restabs->{bar};
     $checks{nodes} = check_box($opts, 'HIDE INACTIVE NODES', \$hide_nodes, sub { fill_table('NODES') });
-    $checks{nodes}{frame}->pack(-side => 'right', -padx => [6, 14]);
+    $checks{nodes}{frame}->pack(-side => 'right', -padx => px([6, 14]));
     $checks{pipes} = check_box($opts, 'HIDE NON-FLOWING PIPES', \$hide_pipes, sub { fill_table('PIPES') });
-    $checks{pipes}{frame}->pack(-side => 'right', -padx => 6);
+    $checks{pipes}{frame}->pack(-side => 'right', -padx => px(6));
 
     build_validation($restabs->{page}{VALIDATION});
     for my $name (qw(PIPES NODES OUTLETS)) {
@@ -909,8 +1337,9 @@ sub build_results {
     my $rsb = flat_scrollbar($rp, 'vertical')->pack(-side => 'right', -fill => 'y');
     $report = $rp->Text(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
         -selectbackground => $C{select}, -selectforeground => $C{ink}, -borderwidth => 0,
-        -highlightthickness => 0, -padx => 12, -pady => 8, -state => 'disabled',
+        -highlightthickness => 0, -padx => px(12), -pady => px(8), -state => 'disabled', -cursor => $POINTER,
         -yscrollcommand => sub { $rsb->set(@_) })->pack(-fill => 'both', -expand => 1);
+    wheel_target($report);
     $rsb->configure(-command => sub { $report->yview(@_) });
     %pipe_show = map { $_->{key} => $_->{show} } HardyCross::Editor::pipe_columns({ q => '', p => '', l => '' });
 }
@@ -924,11 +1353,16 @@ sub hlist {
     my $h = $box->HList(-header => 1, -columns => $ncol, -background => $C{paper},
         -foreground => $C{ink}, -font => $MONO, -selectbackground => $C{select},
         -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0,
-        -selectmode => 'browse', -drawbranch => 0, -indent => 0,
+        -selectmode => 'browse', -drawbranch => 0, -indent => 0, -selectborderwidth => 0,
+        -cursor => $POINTER, -takefocus => 0,
         -yscrollcommand => sub { $vsb->set(@_) }, -xscrollcommand => sub { $hsb->set(@_) })
         ->pack(-fill => 'both', -expand => 1);
     $vsb->configure(-command => sub { $h->yview(@_) });
     $hsb->configure(-command => sub { $h->xview(@_) });
+    # A clicked row is shown by its pale blue band alone: HList also draws a
+    # dotted box round the "anchor" row, which looked like a stray outline.
+    $h->configure(-browsecmd => sub { $h->anchorClear });
+    wheel_target($h);
     return ($h, $box);
 }
 
@@ -977,25 +1411,25 @@ sub styles {
         my $bg = $C{paper};      # no stripes: HList cannot run a band past its last column
         for my $al (qw(e w)) {
             $s{"$al$stripe"} = $h->ItemStyle('text', -anchor => $al, -font => $MONO, -background => $bg,
-                -foreground => $C{ink}, -selectforeground => $C{ink}, -padx => 8, -pady => 3);
+                -foreground => $C{ink}, -selectforeground => $C{ink}, -padx => px(8), -pady => px(3));
         }
         $s{"bad$stripe"} = $h->ItemStyle('text', -anchor => 'w', -font => $MONO_B, -background => $bg,
-            -foreground => $C{error}, -padx => 8, -pady => 3);
+            -foreground => $C{error}, -padx => px(8), -pady => px(3));
         $s{"wrap$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
-            -foreground => $C{ink}, -padx => 8, -pady => 4, -wraplength => $o{wrap} // 600, -justify => 'left');
+            -foreground => $C{ink}, -padx => px(8), -pady => px(4), -wraplength => px($o{wrap} // 600), -justify => 'left');
         $s{"what$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI_B, -background => $bg,
-            -foreground => $C{error}, -padx => 8, -pady => 4, -wraplength => 380, -justify => 'left');
+            -foreground => $C{error}, -padx => px(8), -pady => px(4), -wraplength => px(380), -justify => 'left');
         $s{"where$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
-            -foreground => $C{ink}, -padx => 8, -pady => 4);
+            -foreground => $C{ink}, -padx => px(8), -pady => px(4));
     }
     $s{good} = $h->ItemStyle('text', -anchor => 'w', -font => $UI_B, -background => $C{paper},
-        -foreground => $C{accent}, -padx => 8, -pady => 8);
+        -foreground => $C{accent}, -padx => px(8), -pady => px(8), -wraplength => px(380));
     $s{muted} = $h->ItemStyle('text', -anchor => 'w', -font => $UI, -background => $C{paper},
-        -foreground => $C{muted}, -padx => 8, -pady => 8);
+        -foreground => $C{muted}, -padx => px(8), -pady => px(8), -wraplength => px(380));
     $s{headm} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $MONO_B,
-        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+        -background => $C{panel}, -foreground => $C{ink}, -padx => px(8), -pady => px(6));
     $s{headw} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $UI_B,
-        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+        -background => $C{panel}, -foreground => $C{ink}, -padx => px(8), -pady => px(6));
     return \%s;
 }
 
@@ -1110,7 +1544,27 @@ sub fill_results {
         $table{$name}{data} = $tables->{ lc $name };
         make_table($name);
     }
+    hide_counts();
 }
+
+#------------------------------------------------------------------------------
+# hide_counts -- how many rows each HIDE box would hide, beside it: (2), or
+# (NONE) with the box greyed when every pipe flows or every node is active,
+# so ticking a box that has nothing to hide is not mistaken for a fault.
+#------------------------------------------------------------------------------
+sub hide_counts {
+    for my $k ([ 'pipes', 'PIPES' ], [ 'nodes', 'NODES' ]) {
+        my ($key, $name) = @$k;
+        my $c = $checks{$key} or next;
+        my $d = $table{$name}{data};
+        my $n = $d ? grep { !$_->{active} } @{ $d->{rows} } : undef;
+        $c->{count}->configure(-text => !defined $n ? '' : $n ? "($n)" : '(NONE)');
+        $c->{label}->configure(-foreground => defined $n && !$n ? $C{faint} : $C{ink});
+    }
+}
+
+# hide_count_text -- the count shown beside a HIDE box (for the tests).
+sub hide_count_text { return $checks{ shift() }{count}->cget(-text) }
 
 # table_rows -- what a table shows, row by row (for the tests).
 sub table_rows {
@@ -1139,8 +1593,8 @@ sub build_validation {
     heading($h, $_, $heads[$_], $st->{headw}) for 0 .. 3;
     $h->columnWidth(0, -char => 14);
     $h->columnWidth(1, -char => 16);
-    $h->columnWidth(2, 400);
-    $h->configure(-browsecmd => sub { go_to_fault(shift) });
+    $h->columnWidth(2, px(400));
+    $h->configure(-browsecmd => sub { $h->anchorClear; go_to_fault(shift) });
     $vtable = { hlist => $h, styles => $st };
     fill_validation();
 }
@@ -1283,7 +1737,7 @@ sub pick_list {
     my $lb = $top->Listbox(-height => 14, -width => 64, -font => $MONO, -background => $C{paper},
         -foreground => $C{ink}, -selectbackground => $C{select}, -selectforeground => $C{ink},
         -activestyle => 'none', -relief => 'flat', -borderwidth => 0, -highlightthickness => 0)
-        ->pack(-fill => 'both', -expand => 1, -padx => 1, -pady => 1);
+        ->pack(-fill => 'both', -expand => 1, -padx => px(1), -pady => px(1));
     $lb->insert('end', sprintf('%-9s %s', @$_)) for @$ch;
     $lb->selectionSet(0);
     $lb->activate(0);
@@ -1414,6 +1868,7 @@ sub modified { full_text() ne $saved_text }
 
 # ok_to_discard -- true if nothing is unsaved, or the user agrees to lose it.
 sub ok_to_discard {
+    return 0 unless db_ok_to_leave();
     return 1 unless modified();
     my $a = $mw->messageBox(-title => 'UNSAVED CHANGES', -icon => 'warning', -type => 'YesNo',
         -message => 'THE MODEL HAS UNSAVED CHANGES.  DISCARD THEM?');

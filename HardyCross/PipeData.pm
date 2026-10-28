@@ -24,6 +24,8 @@ use strict;
 use warnings;
 use utf8;
 use FindBin;
+use HardyCross::Settings;
+use Cwd ();
 use File::Spec;
 use Digest::SHA ();
 
@@ -47,21 +49,56 @@ my %NOT_COUNTED = (CPL => 1, TR => 1);
 # whatever script happened to start Perl, which is a different place for the
 # command line, the GUI and the test harness.
 sub default_path {
-    # Where the database may be, in order:
-    #   1. beside this module, in ../data  -- running from the source folder
-    #   2. inside a packaged .exe, which unpacks to PAR_TEMP/inc/lib/data
-    #   3. beside the program itself, in ./data -- a copy shipped next to the
-    #      .exe, which lets the office update the data without a rebuild
-    # The first that exists wins.  If none does, the first is returned so the
-    # error message names a real, expected location.
+    # A folder chosen for the database (HardyCross::Settings: a team's shared
+    # folder on a network drive) is used whenever one is set, and nothing
+    # else is: if it cannot be read, loading fails and says where, rather
+    # than quietly calculating with different data.
+    if (defined(my $dir = HardyCross::Settings::database_dir())) {
+        return File::Spec->catfile($dir, 'pipes.dat');
+    }
+    # Otherwise, in order:
+    #   1. beside the program itself, in ./data -- the office's own copy.  The
+    #      editor's DATABASE tab saves here, and a copy here wins over the one
+    #      built into a packaged .exe, so the office can correct or add data
+    #      without a rebuild (Joshua, 28 October 2026).  Running from the
+    #      source folder this is the same file as 2.
+    #   2. beside this module, in ../data  -- running from the source folder
+    #   3. inside a packaged .exe, which unpacks to PAR_TEMP/inc/lib/data
+    # The first that exists wins.  If none does, the source copy is returned
+    # so the error message names a real, expected location.  The report
+    # prints the path and the SHA-256 of whichever was read.
     my ($vol, $dir) = File::Spec->splitpath(File::Spec->rel2abs(__FILE__));
     my $name = 'pipes.dat';
-    my @try = (File::Spec->catfile($vol . $dir, File::Spec->updir, 'data', $name));
+    my @try = (user_path());
+    push @try, File::Spec->catfile($vol . $dir, File::Spec->updir, 'data', $name);
     push @try, File::Spec->catfile($ENV{PAR_TEMP}, 'inc', 'lib', 'data', $name) if $ENV{PAR_TEMP};
-    my ($pv, $pd) = File::Spec->splitpath(File::Spec->rel2abs($0));
-    push @try, File::Spec->catfile($pv . $pd, 'data', $name);
-    for (@try) { return $_ if -r $_ }
-    return $try[0];
+    # A found file is named plainly (no "HardyCross/../"), as the report
+    # prints it.
+    for (@try) { return Cwd::abs_path($_) // $_ if -r $_ }
+    return $try[1];
+}
+
+# origin -- where the database in use comes from, in words for the window:
+# TEAM FOLDER (the folder set in the settings), BUILT-IN (the program's own:
+# the source folder's, or the copy packed into an .exe), or BESIDE THE
+# PROGRAM (an office copy in data/ next to the .exe).
+sub origin {
+    my $p = File::Spec->rel2abs(shift // $PATH // default_path());
+    my $dir = HardyCross::Settings::database_dir();
+    return 'TEAM FOLDER' if defined $dir && $p eq File::Spec->rel2abs(File::Spec->catfile($dir, 'pipes.dat'));
+    my ($vol, $mdir) = File::Spec->splitpath(File::Spec->rel2abs(__FILE__));
+    my $src = File::Spec->rel2abs(File::Spec->catfile($vol . $mdir, File::Spec->updir, 'data', 'pipes.dat'));
+    return 'BUILT-IN' if $p eq $src || ($ENV{PAR_TEMP} && index($p, $ENV{PAR_TEMP}) == 0);
+    my ($a, $b) = map { my $x = $_; 1 while $x =~ s{[^/\\]+[/\\]\.\.[/\\]}{}; $x } $p, $src;
+    return 'BUILT-IN' if $a eq $b;
+    return 'BESIDE THE PROGRAM';
+}
+
+# user_path -- the office's own copy: data/pipes.dat beside the program.  A
+# packaged .exe names itself in PAR_PROGNAME; otherwise it is the script.
+sub user_path {
+    my ($pv, $pd) = File::Spec->splitpath(File::Spec->rel2abs($ENV{PAR_PROGNAME} || $0));
+    return File::Spec->catfile($pv . $pd, 'data', 'pipes.dat');
 }
 
 sub load {
@@ -69,9 +106,16 @@ sub load {
     # Fingerprint the exact bytes read, so the report can say which data was
     # used.  The database is user editable; the hash is what makes that safe.
     open my $raw, '<:raw', $path
-        or die "cannot open the pipe and fitting database $path: $!\n";
+        or die "cannot open the pipe and fitting database $path: $!"
+             . (defined HardyCross::Settings::database_dir()
+                ? ' (the database folder set in the PHCP settings, ' . HardyCross::Settings::file() . ')' : '')
+             . "\n";
     my $bytes = do { local $/; <$raw> };
     close $raw;
+    # Start clean: the editor reloads after saving an edit, and a row deleted
+    # there must not survive from the last load.
+    %PIPETYPE = %PIPE = %FIT = %KPRIME = ();
+    ($DATASET, $ISSUED) = (undef, undef);
     $SHA256 = Digest::SHA::sha256_hex($bytes);
     $PATH   = $path;
     open my $fh, '<:encoding(UTF-8)', \$bytes

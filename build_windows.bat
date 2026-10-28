@@ -68,9 +68,17 @@ if errorlevel 1 (
     call :savelog tk_build.log
 )
 
+rem Win32::API lets the editor tell Windows it draws itself at the screen's
+rem real resolution, so it is sharp at 125 or 150 per cent scaling instead of
+rem stretched and soft.  Strawberry Perl normally includes it.  Without it
+rem the editor still runs, only blurred on a scaled display.
+set DPI=
+perl -MWin32::API -e1 >nul 2>&1 || call cpanm --notest Win32::API
+perl -MWin32::API -e1 >nul 2>&1 && set DPI=-M Win32::API
+
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
 rem so it is listed here by name rather than left to the dependency scan.
-set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc
+set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M JSON::PP
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
 rem The PDF report's typeface goes beside it, in lib\data\fonts.
@@ -84,7 +92,7 @@ if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . %MODS% -M HardyCross::Editor -M Tk -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Canvas -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar %DATA% -o phcp_editor.exe phcp_editor.pl
+    call pp --gui -I . %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
     if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
@@ -92,13 +100,13 @@ if "!GUI!"=="yes" (
 
 echo.
 echo [6/6] Smoke test: solve an example with phcp.exe...
-phcp.exe examples\05_crosscheck.hcx > smoke_test.txt
-findstr /c:"converged yes" smoke_test.txt >nul || (echo ERROR: phcp.exe did not solve the example. See smoke_test.txt & exit /b 1)
 phcp.exe examples\05_crosscheck.phc > smoke_test_phc.txt
 findstr /c:"converged yes" smoke_test_phc.txt >nul || (echo ERROR: phcp.exe did not solve the .phc example. See smoke_test_phc.txt & exit /b 1)
-phcp.exe examples\07_pipe_database_demo.hcx smoke_test.pdf >nul
+phcp.exe examples\07_pipe_database_demo.phc smoke_test.pdf >nul
 if not exist smoke_test.pdf (echo ERROR: no PDF was written & exit /b 1)
-echo        ok - .hcx and .phc examples solved and converged, PDF report written
+phcp.exe --json examples\05_crosscheck.phc > smoke_test.json
+findstr /c:"\"interface\" : 1" smoke_test.json >nul || (echo ERROR: phcp.exe --json gave no result. See smoke_test.json & exit /b 1)
+echo        ok - .phc examples solved and converged, PDF report and JSON written
 
 echo.
 echo ===========================================================================
