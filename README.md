@@ -86,7 +86,7 @@ line that uses it.  Every pipe name is unique.
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
 | `OFD` | PIPE BORE [CD] - an orifice plate of that bore; the drop is calculated |
-| `PRA` | PIPE RATIO [MININLET] - a pressure ratio valve, ratio written `3:1` or `1.5` |
+| `PRA` | PIPE RATIO [MININLET] [BAND] - a pressure ratio valve, ratio written `3:1` or `1.5`; BAND in % of the inlet pressure, 5 if not given; MININLET 0 for none |
 
 **Outlets.**  `SPRINKLER`, `HYDRANT` and `HREEL` define their node and the
 outlet on it together, so the report counts sprinklers apart from hydrants and
@@ -110,8 +110,19 @@ and solves again until the drops settle.  Section 10 of the report shows each
 valve's ratio, inlet and outlet pressure.  The report warns if the inlet is
 below the MININLET given (the manufacturer's minimum, 200 kPa screwed or
 300 kPa flanged in the data supplied), if flow runs backwards through a valve,
-or if the drops did not settle.  The nominal ratio is used; the valve holds it
-to within 5 % of the inlet pressure in the manufacturer's data.
+or if the drops did not settle.
+
+The valve holds its ratio only to within a band - "within +/- 5% of the inlet
+pressure" in the manufacturer's data - so 1500 kPa into a 3:1 valve gives
+anywhere from 425 to 575 kPa.  The calculation uses the BOTTOM of the band,
+outlet = inlet x (1/ratio - band), so every outlet downstream is checked
+against the least pressure the valve can be relied on to give (Joshua, 28
+October 2026).  Section 10 shows each valve's band, and the report solves the
+network once more with every valve at the TOP of its band and states the
+highest pressure that gives downstream, for the pipe, fitting and head
+ratings.  A valve with other data takes its own band, `PRA P2 3:1 300 3`;
+`0` is the nominal ratio exactly.  A band wider than the ratio passes - 40 %
+on a 3:1 valve, which passes 33 % - is refused.
 
 **Sizes and fittings.**  Under `USE <PIPETYPE>` the size is the nominal size
 and the bore comes from the database; under `USE BORE` it is the bore.  Before
@@ -135,7 +146,7 @@ default.  Velocity is reported in m/s.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `2.5CM`,
 `14'3"`.  The K-factor default is the unit the office's existing data uses
-(K 8 for a K80 head); it is not yet confirmed as the default.
+(K 8 for a K80 head), confirmed as the default by Joshua on 28 October 2026.
 
 **How it is read.**  Each `.phc` command is translated into rows of the
 prototype's `.hcx` block syntax that mean the same thing, and the rows are read
@@ -631,7 +642,7 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, line checker and pressure ratio valves | 258 / 258 |
+| `.phc` language, line checker and pressure ratio valves | 263 / 263 |
 | AutoCAD exporter, structure | 5 / 5 |
 | JSON interface | 72 / 72 |
 | supply, pump and loss curves | 14 / 14 |

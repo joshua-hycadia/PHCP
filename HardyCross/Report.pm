@@ -621,15 +621,20 @@ sub write_report {
                         ? sprintf('bore %.2f mm in %.2f mm pipe, beta %.3f',
                                   $e->{bore}, $e->{pipedia}, $e->{bore} / $e->{pipedia})
                      : $e->{kind} eq 'RATIO'
-                        # Outlet = inlet / ratio, so the reader can check it.
-                        ? sprintf('ratio %g:1, inlet %.1f, outlet %.1f', $e->{ratio},
-                                  ($e->{pin} // 0) / $up, (($e->{pin} // 0) - $e->{dp}) / $up)
+                        # Outlet = inlet x (1/ratio - band), so the reader
+                        # can check it: the bottom of the valve's band.
+                        ? sprintf('ratio %g:1 +/-%g%%, inlet %.1f, outlet %.1f (band %.1f to %.1f)',
+                                  $e->{ratio}, 100 * ($e->{band} // 0.05), ($e->{pin} // 0) / $up,
+                                  (($e->{pin} // 0) - $e->{dp}) / $up,
+                                  ($e->{pin} // 0) * (1 / $e->{ratio} - ($e->{band} // 0.05)) / $up,
+                                  ($e->{pin} // 0) * (1 / $e->{ratio} + ($e->{band} // 0.05)) / $up)
                      : '';
             $out .= sprintf " %-12s %-11s %-8s %-8s %11.*f %11.*f   %s\n",
                 $e->{id}, $nm{ $e->{kind} } // $e->{kind},
                 $net->{nodes}[ $e->{n1} ]{id}, $net->{nodes}[ $e->{n2} ]{id},
                 qdp($net->{u_flow}), $e->{q} / $uf, pdp($net->{u_pres}) + 1, $hf / $up, $note;
         }
+        $out .= ratio_band_note($net) if grep { $_->{kind} eq 'RATIO' } @sup;
     }
 
     #------------------------------------------------------- 9. verification
@@ -998,6 +1003,53 @@ sub supply_graph {
     $out .= "   *  supply available          .  system curve, each point a full solve\n";
     $out .= "   D  demand point              O  operating point\n";
     return $out;
+}
+
+#------------------------------------------------------------------------------
+# ratio_band_note -- what the report says under Section 10 about pressure
+# ratio valves and their band.
+#
+# The calculation uses the bottom of each valve's band (HardyCross::
+# ratio_valves): every outlet is checked against the least pressure the valve
+# can be relied on to give.  The top of the band is what pipe, fitting and
+# head ratings downstream must stand, so the network is solved once more with
+# every valve at the top of its band, and the highest pressure that solve
+# gives at a node the valves raise is stated -- with each valve's outlet.
+#------------------------------------------------------------------------------
+sub ratio_band_note {
+    my $net = shift;
+    my $up = $net->{f_pres};
+    my $pu = sym($net->{u_pres});
+    my $out = "\n" . wrap(' ', 'Each pressure ratio valve holds its outlet at inlet / ratio to within a '
+        . 'band: +/-5% of the inlet pressure, from the manufacturer\'s data, unless the model gives another.  '
+        . 'The calculation uses the BOTTOM of each band, outlet = inlet x (1/ratio - band), so every outlet '
+        . 'is checked against the least pressure the valve can be relied on to give.');
+    my $high = eval {
+        my $h = HardyCross::Parse::read_string($net->{source_text});
+        $h->{opts}{pra_side} = 'HIGH';
+        HardyCross::solve_model($h) ? $h : undef;
+    };
+    unless ($high) {
+        return $out . wrap(' ', 'The network was not solved with the valves at the top of their bands, '
+            . 'so the highest pressures downstream are not stated: check the pressure ratings by hand.');
+    }
+    # The highest pressure at a node the valves raise: one whose pressure is
+    # higher with the valves at the top of their bands than at the bottom.
+    my %low = map { $net->{nodes}[$_]{id} => HardyCross::Demand::gauge($net, $_) } 1 .. $#{ $net->{nodes} };
+    my ($top, $at);
+    for my $i (1 .. $#{ $high->{nodes} }) {
+        my $id = $high->{nodes}[$i]{id};
+        next if $id eq 'REF' || !defined $low{$id};
+        my $g = HardyCross::Demand::gauge($high, $i);
+        next unless $g > $low{$id} + 0.01;
+        ($top, $at) = ($g, $id) if !defined $top || $g > $top;
+    }
+    my @v = map { my $e = $_; sprintf('%s outlet %.1f %s', $e->{id},
+                  HardyCross::Demand::gauge($high, $e->{n2}) / $up, $pu) }
+            grep { $_->{kind} eq 'RATIO' } @{ $high->{elems} }[1 .. $#{ $high->{elems} }];
+    return $out . wrap(' ', 'With every valve at the TOP of its band (' . join(', ', @v) . ')'
+        . (defined $top ? sprintf(', the highest pressure downstream is %.1f %s at node %s', $top / $up, $pu, $at)
+                        : '') . ': the pipes, fittings and heads downstream must be rated for it.');
 }
 
 # Hang-indented paragraph wrap, so a long note reads as one item.
