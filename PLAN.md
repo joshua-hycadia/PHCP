@@ -330,6 +330,7 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `build_windows.bat` | packs HardyCross::Tools |
 | `data/pipes.dat` | a ROUGHNESS column for each pipe type, each value's source in the header: steel 0.045 mm, PVC-M 0.003, PE100 0.007, CPVC 0.003 |
 | `HardyCross/PipeData.pm`, `HardyCross/DbEdit.pm` | read it (an older database without it reads as none published); the DATABASE tab shows and edits it |
+| `HardyCross/Parse.pm`, `HardyCross/Phc.pm`, `HardyCross/Report.pm` (engine change, approved 28 October 2026) | under `METHOD DW` a pipe's roughness is as given, else the database's for its type, else 0.045 mm - and an assumed 0.045 is flagged in the report's BASIS, the warnings, the editor and the JSON |
 
 ## Definition of done, each PR
 
@@ -370,3 +371,4 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 - [x] Report: a supply graph for each supply when there are several, then all combined - flows added at equal pressure, the combined duty at one common pressure; example 09, three pumps in parallel (engine files Report, PDF, Demand: no solved number changes)
 - [x] v1.0 - GRAPH tab: Q^1.85 water supply graphs from figures typed in, printed to PDF
 - [x] v1.1 - QUICK TOOLS tab: velocity, K-factor, K-factor converter, pressure loss (HW and DW)
+- [x] v1.1 - Darcy-Weisbach takes the database roughness for a pipe type; an assumed 0.045 mm is flagged (engine change, approved 28 October 2026)
