@@ -316,6 +316,19 @@ independent of the calculation.
 | `tools/test_graph.pl`, `tools/test_editor_window.pl` | the graph headless, and the tab driven |
 | `build_windows.bat` | packs HardyCross::Graph |
 
+## v1.1 - the QUICK TOOLS tab
+
+Asked for: a tab of quick calculators - velocity (pipe type, size and flow),
+a K-factor solver (any two of K, Q and P), a pressure loss calculator by both
+Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
+
+| file | change |
+|---|---|
+| `HardyCross/Tools.pm` | new: the four calculators, on the database's bores and the solver's own loss routine (`elem_hf` on one pipe) |
+| `phcp_editor.pl` | the QUICK TOOLS tab, between GRAPH and DATABASE; it scrolls |
+| `tools/test_tools.pl`, `tools/test_editor_window.pl` | the calculators against formulas written out in the test, and the tab driven |
+| `build_windows.bat` | packs HardyCross::Tools |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -354,3 +367,4 @@ independent of the calculation.
 - [x] v1.0 - program icon on the editor window and taskbar (the .exe files keep the default: PAR::Packer has no --icon)
 - [x] Report: a supply graph for each supply when there are several, then all combined - flows added at equal pressure, the combined duty at one common pressure; example 09, three pumps in parallel (engine files Report, PDF, Demand: no solved number changes)
 - [x] v1.0 - GRAPH tab: Q^1.85 water supply graphs from figures typed in, printed to PDF
+- [x] v1.1 - QUICK TOOLS tab: velocity, K-factor, K-factor converter, pressure loss (HW and DW)
