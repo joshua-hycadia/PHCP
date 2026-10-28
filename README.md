@@ -14,6 +14,7 @@ calculation report.  The whole stack is Perl.
 perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
+./phcp.pl --json model.phc               # the results as JSON, for another program
 perl phcp_viewer.pl model.phc            # read-only results viewer
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
@@ -519,6 +520,64 @@ thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
 The script now also packs Win32::API, which the editor uses to be sharp on a
 scaled display; the build has not been re-run since that line was added.
 
+## Calling PHCP from another program
+
+Other programs run `phcp.exe` and read what it prints - a program to call,
+not a library to link (Joshua, 28 October 2026).  AutoCAD does so now (see
+below); Revit could later.
+
+```
+phcp.exe --json model.phc                     results as JSON on standard output
+phcp.exe --json -                             the model read from standard input
+phcp.exe --json model.phc --report out.pdf    ...and the report written too
+```
+
+The exit status says how it went - 0 converged, 1 solved but did not
+converge (the results must not be used), 2 the model could not be read or
+solved - and one JSON object is printed in every case, so a caller always has
+something to read.  Abridged, for example 07:
+
+```
+{
+   "interface" : 1,
+   "status" : "converged",
+   "converged" : true,
+   "iterations" : 15,
+   "units" : { "flow" : "L/min", "pressure" : "kPa", "length" : "m", ... },
+   "database" : { "name" : "Hycadia pipe and fitting database", "sha256" : "0b74...", ... },
+   "pipes" : [ { "id" : "M1", "from" : "SUP", "to" : "R1", "flow" : 3576.7756,
+                 "velocity" : 6.871, "friction_loss" : 144.8598, ... }, ... ],
+   "elements" : [ { "id" : "SUP", "kind" : "WATER", "from" : null, "to" : "SUP", ... } ],
+   "nodes" : [ { "id" : "R1", "elevation" : 4.5, "pressure" : 461.0082 }, ... ],
+   "outlets" : [ { "id" : "H2", "type" : "SPRINKLER", "required_pressure" : 50,
+                   "pressure" : 182.2904, "margin" : 132.2904, "pass" : true, ... } ],
+   "governing" : { "id" : "H2", "margin" : 132.2904 },
+   "demand" : { "supply" : "SUP", "flow" : 1889.5674, "pressure" : 223.864,
+                "available" : 650, "margin" : 426.136, "meets" : true },
+   "warnings" : [],
+   "errors" : [],
+   "summary" : [
+      "CONVERGED IN 15 ITERATIONS",
+      "GOVERNING OUTLET H2: 182.3 KPA AGAINST 50.0 REQUIRED, MARGIN 132.3 KPA",
+      "EVERY OUTLET PASSES",
+      "SUPPLY SUP MEETS THE DEMAND: 650.0 KPA AVAILABLE AT 1889.6 L/MIN, 223.9 NEEDED",
+      "5 PIPES OVER THE VELOCITY LIMIT"
+   ]
+}
+```
+
+Flows and pressures are in the model's own units, named in `units`; lengths
+and elevations in m, sizes in mm, velocity in m/s.  A pipe's flow is signed,
+positive from `from` to `to` as the model wrote it.  On an error, `status` is
+`error` and `errors` holds the message with its `.phc` line.  The `summary`
+is what a caller shows a user, one line to a string; the JSON is written one
+value to a line, so even a caller with no JSON reader can find it line by
+line, as AutoCAD's PHCPSOLVE does.  The contract is versioned - `interface`
+is 1, a field is never renamed or changed in meaning under that number, and
+new fields may be added - and is described in full in `HardyCross/Json.pm`.
+`tools/test_json.pl` runs `phcp.pl` as a caller would and checks every
+example's JSON against the plain output of the same solve.
+
 ## AutoCAD
 
 `autocad/phcp_export.lsp` marks up a 2D AutoCAD 2026 drawing - supply, pipe
@@ -527,7 +586,8 @@ sizes, elevations, heads - and exports it as a `.phc`.  See
 exact form the routine writes, and solves exactly as the same network did in
 the old format.  The routine has not yet been run inside AutoCAD; what can be
 checked without it is, by `tools/check_lisp.pl` - brackets matched, every
-function it calls defined, every command it announces present.
+function it calls defined, every command it announces present.  PHCPSOLVE
+exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 
 ## Supply, pump and loss curves
 
@@ -573,6 +633,7 @@ others on the page, and the report says which check to make.
 | pipe and fitting database | 35 / 35 |
 | `.phc` language, line checker and pressure ratio valves | 258 / 258 |
 | AutoCAD exporter, structure | 5 / 5 |
+| JSON interface | 72 / 72 |
 | supply, pump and loss curves | 14 / 14 |
 | report hand-checks, 7 models | 351 / 351 |
 | PDF structure, 7 models | 49 / 49 |
