@@ -268,7 +268,9 @@ sub fit { my ($t, $w) = @_; length $t > $w ? substr($t, 0, $w - 3) . '...' : $t 
 #------------------------------------------------------------------------------
 sub font_dir {
     my ($vol, $dir) = File::Spec->splitpath(File::Spec->rel2abs(__FILE__));
-    my @try = (File::Spec->catdir($vol . $dir, File::Spec->updir, File::Spec->updir, 'data', 'fonts'));
+    # This file is HardyCross/PDF.pm, so the fonts are one folder up from
+    # its own, in data/fonts.
+    my @try = (File::Spec->catdir($vol . $dir, File::Spec->updir, 'data', 'fonts'));
     push @try, File::Spec->catdir($ENV{PAR_TEMP}, 'inc', 'lib', 'data', 'fonts') if $ENV{PAR_TEMP};
     my ($pv, $pd) = File::Spec->splitpath(File::Spec->rel2abs($0));
     push @try, File::Spec->catdir($pv . $pd, 'data', 'fonts');
@@ -310,47 +312,16 @@ sub load_font {
 #------------------------------------------------------------------------------
 sub write_pdf {
     my ($text, $path, %meta) = @_;
-    my $reg  = load_font('DejaVuSansMono.ttf');
-    my $bold = $reg && load_font('DejaVuSansMono-Bold.ttf');
-    $reg = $bold = undef unless $reg && $bold;
-    set_advance($reg ? $reg->{advance} / 1000 : 0.6);
+    my ($reg, $bold) = fonts();
 
     my $graphs = $meta{graphs} || ($meta{graph} ? [ $meta{graph} ] : []);
     my $pages = paginate($text, $graphs);
     my $n = @$pages;
 
-    my $hdr_left  = 'PHCP  HYDRAULIC CALCULATION';
-    my $hdr_right = join '   ', grep { length }
-        ($meta{job} ? "Job $meta{job}" : ''), ($meta{revision} ? "Rev $meta{revision}" : ''),
-        ($meta{date} // '');
-    my $hdr_mid   = fit($meta{title} // '', $COLS - length($hdr_left) - length($hdr_right) - 6);
-
     # Build each page's content stream.
     my @streams;
     for my $p (0 .. $n - 1) {
-        my $s = '';
-        # hairlines under the header and over the footer
-        $s .= sprintf "0.5 w %.2f %.2f m %.2f %.2f l S\n", $LEFT, 560, $PAGE_W - $LEFT, 560;
-        $s .= sprintf "0.5 w %.2f %.2f m %.2f %.2f l S\n", $LEFT, 38, $PAGE_W - $LEFT, 38;
-
-        # running header, laid out on the same 132-column grid as the body
-        my $h = $hdr_left;
-        my $mid_at = int(($COLS - length $hdr_mid) / 2);
-        $h .= ' ' x ($mid_at - length $h) if length $h < $mid_at;
-        $h .= $hdr_mid;
-        $h .= ' ' x ($COLS - length($h) - length($hdr_right)) . $hdr_right;
-        $s .= sprintf "BT /F2 %s Tf %.2f %.2f Td (%s) Tj ET\n", $FONT_SIZE, $LEFT, 566, esc($h);
-
-        # footer: what was calculated, and where this page sits in it
-        # The footer is set smaller than the body, so the page number is
-        # placed by its width in points against the right margin, not by
-        # counting columns of the body's size.
-        my $pg = sprintf 'Page %d of %d', $p + 1, $n;
-        my $fl = fit(($meta{program} // 'PHCP') . ($meta{model} ? "   $meta{model}" : ''),
-                     $COLS - length($pg) - 2);
-        $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8, $LEFT, 26, esc($fl);
-        $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8,
-            $LEFT + $COLS * $CHAR_W - length($pg) * $ADVANCE * 8, 26, esc($pg);
+        my $s = frame($p + 1, $n, %meta);
 
         # The body, one Tj per line, bold only for section titles.  A rule is
         # not typed: its line is left empty and the rule drawn after -- heavy
@@ -383,6 +354,77 @@ sub write_pdf {
         push @streams, $s;
     }
 
+    return write_pages(\@streams, $path, $reg, $bold, %meta);
+}
+
+#------------------------------------------------------------------------------
+# fonts -- the regular and bold faces, loaded and set as the face in use; both
+# undef (Courier) if either file is missing.
+#------------------------------------------------------------------------------
+sub fonts {
+    my $reg  = load_font('DejaVuSansMono.ttf');
+    my $bold = $reg && load_font('DejaVuSansMono-Bold.ttf');
+    $reg = $bold = undef unless $reg && $bold;
+    set_advance($reg ? $reg->{advance} / 1000 : 0.6);
+    return ($reg, $bold);
+}
+
+#------------------------------------------------------------------------------
+# frame -- the hairlines, running header and footer of page $p of $n, as a
+# content stream.  %meta as write_pdf; header names the left-hand header
+# ('PHCP  HYDRAULIC CALCULATION' unless given).
+#------------------------------------------------------------------------------
+sub frame {
+    my ($p, $n, %meta) = @_;
+    my $hdr_left  = $meta{header} // 'PHCP  HYDRAULIC CALCULATION';
+    my $hdr_right = join '   ', grep { length }
+        ($meta{job} ? "Job $meta{job}" : ''), ($meta{revision} ? "Rev $meta{revision}" : ''),
+        ($meta{date} // '');
+    my $hdr_mid   = fit($meta{title} // '', $COLS - length($hdr_left) - length($hdr_right) - 6);
+    my $s = '';
+    # hairlines under the header and over the footer
+    $s .= sprintf "0.5 w %.2f %.2f m %.2f %.2f l S\n", $LEFT, 560, $PAGE_W - $LEFT, 560;
+    $s .= sprintf "0.5 w %.2f %.2f m %.2f %.2f l S\n", $LEFT, 38, $PAGE_W - $LEFT, 38;
+
+    # running header, laid out on the same 132-column grid as the body
+    my $h = $hdr_left;
+    my $mid_at = int(($COLS - length $hdr_mid) / 2);
+    $h .= ' ' x ($mid_at - length $h) if length $h < $mid_at;
+    $h .= $hdr_mid;
+    $h .= ' ' x ($COLS - length($h) - length($hdr_right)) . $hdr_right;
+    $s .= sprintf "BT /F2 %s Tf %.2f %.2f Td (%s) Tj ET\n", $FONT_SIZE, $LEFT, 566, esc($h);
+
+    # footer: what was calculated, and where this page sits in it
+    # The footer is set smaller than the body, so the page number is
+    # placed by its width in points against the right margin, not by
+    # counting columns of the body's size.
+    my $pg = sprintf 'Page %d of %d', $p, $n;
+    my $fl = fit(($meta{program} // 'PHCP') . ($meta{model} ? "   $meta{model}" : ''),
+                 $COLS - length($pg) - 2);
+    $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8, $LEFT, 26, esc($fl);
+    $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8,
+        $LEFT + $COLS * $CHAR_W - length($pg) * $ADVANCE * 8, 26, esc($pg);
+    return $s;
+}
+
+# geometry -- the page and the text grid, for a caller drawing its own page:
+# page width and height, left margin, width of a character at the body size,
+# the advance in em, the body size and leading, and the number of columns.
+sub geometry {
+    return { page_w => $PAGE_W, page_h => $PAGE_H, left => $LEFT, char_w => $CHAR_W,
+             advance => $ADVANCE, size => $FONT_SIZE, leading => $LEADING, cols => $COLS,
+             top => $BODY_TOP, bottom => $BODY_BOT };
+}
+
+#------------------------------------------------------------------------------
+# write_pages -- the PDF file itself from finished page content streams: the
+# fonts (embedded, or Courier), the document information from %meta, and a
+# byte-exact cross-reference table.  Returns the number of pages.
+#------------------------------------------------------------------------------
+sub write_pages {
+    my ($streams, $path, $reg, $bold, %meta) = @_;
+    my @streams = @$streams;
+    my $n = @streams;
     # Objects: 1 catalog, 2 page tree, 3 regular font, 4 bold font, 5
     # document info; then, for embedded fonts, each font's descriptor and
     # file; then each page and its content.
