@@ -116,8 +116,8 @@ my @strip = main::strip_commands();
 is('the command strip lists the 19 network commands, no settings',
    @strip == 19 && $strip[0] eq 'USE' && $strip[-1] eq 'PRA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK, PROJECT, GRAPH and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH DATABASE'
+is('NETWORK, PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
@@ -577,8 +577,8 @@ print "12. THE GRAPH TAB\n";
     my $model = main::full_text();
     main::select_tab($main::toptabs, 'GRAPH');
     $main::mw->update;
-    is('a GRAPH tab, between PROJECT and DATABASE',
-       "@{ $main::toptabs->{names} }" eq 'NETWORK PROJECT GRAPH DATABASE' && $main::toptabs->{current} eq 'GRAPH');
+    is('a GRAPH tab, after PROJECT',
+       "@{ $main::toptabs->{names} }" =~ /^NETWORK PROJECT GRAPH / && $main::toptabs->{current} eq 'GRAPH');
     main::graph_refresh();
     is('empty: the problems listed, PRINT TO PDF off, nothing drawn but a note',
        $G->{problems}->get(0) =~ /A, THE WATER SUPPLY, NEEDS AT LEAST TWO POINTS/
@@ -625,6 +625,70 @@ print "12. THE GRAPH TAB\n";
     is('SAVE GRAPH writes the .phg, and the * goes',
        slurp("$TMP/g.phg") =~ /^DUTY\s+1500 700 1 SPRINKLERS - HIGHEST HAZARD AREA LEVEL 3$/m
        && $G->{file}->cget(-text) eq 'G.PHG');
+    is('the model is untouched by all of it', main::full_text() eq $model);
+    main::select_tab($main::toptabs, 'NETWORK');
+}
+
+print "13. THE QUICK TOOLS TAB\n";
+{
+    my ($Q, $W) = (\%main::qt, \%main::qtw);
+    my $model = main::full_text();
+    main::select_tab($main::toptabs, 'QUICK TOOLS');
+    $main::mw->update;
+    my $text = sub { $W->{ $_[0] }{result}->get('1.0', 'end - 1 chars') };
+    is('a QUICK TOOLS tab: velocity, K-factor, K converter, pressure loss, each asking for its figures',
+       $main::toptabs->{current} eq 'QUICK TOOLS' && $text->('VEL') =~ /CHOOSE A SIZE AND GIVE A FLOW/
+       && $text->('K') =~ /ANY TWO OF K, Q AND P/ && $text->('KCONV') =~ /GIVE A K/ && $W->{VEL}{problems}->cget(-text) eq '');
+    my @sizes = map { $W->{VEL}{size_menu}->entrycget($_, -label) } 0 .. $W->{VEL}{size_menu}->index('end');
+    is('SIZE lists the type\'s sizes with their bores', $sizes[0] =~ /^DN20\s+21\.6 MM$/ && grep({ /^DN50\s+53\.0 MM$/ } @sizes), "@sizes[0..2]");
+    $W->{VEL}{size_menu}->invoke(4);           # DN50
+    $W->{VEL}{field}{FLOW}->insert(0, '500');
+    main::tools_update('VEL');
+    is('VELOCITY: DN50 at 500 L/min is 3.78 m/s, 53.0 mm bore',
+       $text->('VEL') =~ /VELOCITY\s+3\.78 M\/S/ && $text->('VEL') =~ /BORE\s+53\.0 MM/, $text->('VEL'));
+    # As the PIPE TYPE drop-down does: the type set, the size cleared.
+    ($Q->{VEL}{type}, $Q->{VEL}{size}) = ('BORE', '');
+    main::tools_sizes('VEL');
+    $main::mw->update;
+    is('   BORE: the size becomes a field for the bore in mm',
+       $W->{VEL}{size_entry}->ismapped && !$W->{VEL}{size_mb}->ismapped);
+    $W->{VEL}{size_entry}->insert(0, '100');
+    $W->{VEL}{field}{FLOW}->delete(0, 'end');
+    $W->{VEL}{field}{FLOW}->insert(0, '1500');
+    main::tools_update('VEL');
+    is('   100 mm at 1500 L/min: 3.18 m/s', $text->('VEL') =~ /VELOCITY\s+3\.18 M\/S/);
+
+    $W->{K}{field}{Q}->insert(0, '80');
+    $W->{K}{field}{P}->insert(0, '100');
+    main::tools_update('K');
+    is('K-FACTOR: 80 L/min at 100 kPa gives K = 8', $text->('K') =~ /^K =\s+8\.000 L\/MIN\/KPA\^0\.5/m, $text->('K'));
+    $W->{K}{field}{K}->insert(0, '8');
+    main::tools_update('K');
+    is('   three given: refused, the K field outlined red',
+       $W->{K}{problems}->cget(-text) =~ /ONLY TWO/ && lc $W->{K}{field}{K}->cget(-highlightbackground) eq lc $main::C{error});
+    $W->{K}{field}{Q}->delete(0, 'end');
+    main::tools_update('K');
+    is('   cleared Q: solved for it, 80 L/min', $text->('K') =~ /^FLOW Q =\s+80\.00 L\/MIN/m
+       && $W->{K}{problems}->cget(-text) eq '');
+
+    $W->{KCONV}{field}{VALUE}->insert(0, '5.6');
+    main::tools_update('KCONV');
+    is('K CONVERTER: K5.6 US is 80.731 L/min/bar^0.5 and 8.073 per root kPa',
+       $text->('KCONV') =~ /METRIC, BAR\s+80\.731/ && $text->('KCONV') =~ /METRIC, KPA\s+8\.073/, $text->('KCONV'));
+
+    $Q->{LOSS}{size} = 65;
+    $W->{LOSS}{field}{FLOW}->insert(0, '1000');
+    $W->{LOSS}{field}{LENGTH}->insert(0, '25');
+    main::tools_update('LOSS');
+    is('PRESSURE LOSS: DN65 at 1000 L/min, both formulas, per metre and over 25 m',
+       $text->('LOSS') =~ /LOSS, KPA\/M\s+3\.4617\s+2\.79\d\d/ && $text->('LOSS') =~ /LOSS OVER 25 M\s+86\.54\s+69\.9\d/,
+       $text->('LOSS'));
+    $W->{LOSS}{field}{C}->insert(0, 'C1OO');
+    main::tools_update('LOSS');
+    is('   a bad C: named, outlined red, no answer',
+       $W->{LOSS}{problems}->cget(-text) =~ /C FACTOR 'C1OO' IS NOT A NUMBER/
+       && lc $W->{LOSS}{field}{C}->cget(-highlightbackground) eq lc $main::C{error}
+       && $text->('LOSS') =~ /NO ANSWER/);
     is('the model is untouched by all of it', main::full_text() eq $model);
     main::select_tab($main::toptabs, 'NETWORK');
 }
