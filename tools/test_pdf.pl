@@ -96,7 +96,7 @@ for my $m (@models) {
     my %skip;
     for my $gs (@gs) {
         my $ge = $gs;
-        $ge++ while $ge < $#tl && $tl[$ge] !~ /O\s+operating point/;
+        $ge++ while $ge < $#tl && $tl[$ge] !~ /O\s+operating point|D\s+combined duty/;
         $skip{$_} = 1 for $gs + 1 .. $ge;
     }
     my $is_rule = sub { $_[0] =~ /^\s*(=+|-+)\s*$/ && length($1) >= 20 };
@@ -125,9 +125,17 @@ for my $m (@models) {
     next unless defined $pl;
     my $X = sub { $pl + ($_[0] / $qmax) ** 1.85 * $pw };
     my $Y = sub { $pb + $_[0] / $pmax * $ph };
-    my ($qd, $pd) = $T =~ /^\s+DEMAND\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
-    my ($qo, $po) = $T =~ /^\s+OPERATING POINT\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
-    ($qo, $po) = @oper[3 * $k + 1, 3 * $k + 2] if @plots > 1;
+    # Which graph this is: one supply; one of several (an operating point,
+    # no demand point); or all of them combined (the combined duty, and an
+    # operating point only when they run at one pressure).
+    my $kind = @plots == 1 ? 'single' : $streams =~ /% PHCP-GRAPH PART / ? 'combined' : 'shared';
+    my ($qd, $pd) = $kind eq 'combined'
+        ? $T =~ /^\s+COMBINED DUTY\s+([\d.]+) \S+\s+at\s+([\d.]+)/m
+        : $T =~ /^\s+DEMAND\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
+    my ($qo, $po) = $kind eq 'combined'
+        ? $T =~ /^\s+COMBINED OPERATING POINT\s+([\d.]+) \S+\s+at\s+([\d.]+)/m
+        : $T =~ /^\s+OPERATING POINT\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
+    ($qo, $po) = @oper[3 * $k + 1, 3 * $k + 2] if $kind eq 'shared';
     my ($dx, $dy) = $streams =~ /% PHCP-GRAPH D (\S+) (\S+)/;
     my ($ox, $oy) = $streams =~ /% PHCP-GRAPH O (\S+) (\S+)/;
     # The report prints to 0.1, so a figure read from it is good to 0.05 of
@@ -135,14 +143,22 @@ for my $m (@models) {
     # axis (more in bar than in kPa), plus rounding of the coordinates.
     my $tx = sub { (abs($X->($_[0] + 0.05) - $X->($_[0] > 0.05 ? $_[0] - 0.05 : 0))) / 2 + 0.01 };
     my $ty = 0.05 / $pmax * $ph + 0.01;
-    if (@plots == 1) {
-        ok(sprintf("$gname: D drawn at the demand point, x = %.2f + %.2f (%.1f/%.1f)^1.85", $pl, $pw, $qd, $qmax),
-           abs($dx - $X->($qd)) <= $tx->($qd) && abs($dy - $Y->($pd)) <= $ty);
+    if ($kind ne 'shared') {
+        ok(sprintf("$gname: D drawn at the %s, x = %.2f + %.2f (%.1f/%.1f)^1.85",
+                   $kind eq 'combined' ? 'combined duty' : 'demand point', $pl, $pw, $qd, $qmax),
+           defined $dx && abs($dx - $X->($qd)) <= $tx->($qd) && abs($dy - $Y->($pd)) <= $ty);
     } else {
         ok("$gname: no demand point drawn for a supply that shares the load", !defined $dx);
     }
+    if ($kind eq 'combined') {
+        my @parts = $streams =~ /% PHCP-GRAPH PART (\S+)/g;
+        my @ids = map { $oper[3 * $_] } 0 .. $#plots - 1;
+        ok("$gname: each supply's own curve drawn under the combined one (@parts)", "@parts" eq "@ids");
+        ok("$gname: no operating point drawn where the supplies run at different pressures", !defined $ox)
+            unless defined $qo;
+    }
     ok("$gname: O drawn at the operating point",
-       abs($ox - $X->($qo)) <= $tx->($qo) && abs($oy - $Y->($po)) <= $ty);
+       defined $ox && abs($ox - $X->($qo)) <= $tx->($qo) && abs($oy - $Y->($po)) <= $ty) if defined $qo;
     my @xt = $streams =~ /% PHCP-GRAPH XTICK (\S+) (\S+)/g;
     my ($tbad, $prev) = (0, undef);
     for (my $k = 0; $k < @xt; $k += 2) {

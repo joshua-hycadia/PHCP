@@ -484,6 +484,20 @@ supply are plotted: near no flow, with the other supplies pushing back, the
 network may not settle.  Beside each graph the key gives the supply's
 operating flow and pressure and its share of the flow of all the supplies.
 
+Then all the supplies are graphed COMBINED, as pumps in parallel on one header
+are: the supply curves added in flow at equal pressure (pressures are not
+adjusted), each supply's own curve drawn lightly beneath and named.  The
+COMBINED DUTY is found on the same basis - every supply held at one common
+pressure, raised until the governing outlet receives exactly its minimum, and
+the flows of all the supplies then added - and is marked D with its margin to
+the combined curve.  Where the supplies run at one pressure in the modelled
+network (within 2 %), their operating flows added are the combined operating
+point O.  How the total splits between the supplies in the common-pressure
+solve follows the pipework, not their curves, so it is not reported supply by
+supply.  Where supplies connect at different points the combined figures
+describe them taken together; each is also on its own graph.  Example 09 is
+three pumps in parallel.
+
 The graph is worked out once and drawn twice from the same numbers.  The text
 report draws it in characters.  The PDF draws it on flow^1.85 graph paper:
 gridlines at round flows crowding to the right as on printed hydraulic graph
@@ -671,12 +685,12 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, line checker and pressure ratio valves | 263 / 263 |
+| `.phc` language, line checker and pressure ratio valves | 265 / 265 |
 | AutoCAD exporter, structure | 5 / 5 |
-| JSON interface | 72 / 72 |
-| supply, pump and loss curves | 14 / 14 |
-| report hand-checks, 7 models | 351 / 351 |
-| PDF structure, typeface and graphs, 7 models | 115 / 115 |
+| JSON interface | 81 / 81 |
+| supply, pump and loss curves, and supplies combined | 18 / 18 |
+| report hand-checks, 8 models | 419 / 419 |
+| PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 117 / 117 |
 | database editing and location | 37 / 37 |

@@ -19,6 +19,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/..";
 use HardyCross;
+use HardyCross::Demand;
 
 my ($pass, $fail) = (0, 0);
 sub is {
@@ -92,6 +93,35 @@ print "4. REFUSED\n";
     is('one point is refused', !$r && HardyCross::is_model_error($@));
     $r = eval { curve(0, -100, 900, 1000, 800); 1 };
     is('a negative flow is refused', !$r && HardyCross::is_model_error($@));
+}
+
+print "5. SUPPLIES COMBINED - FLOWS ADDED AT EQUAL PRESSURE\n";
+{
+    # Two supply curves, worked by hand.  A: 900 kPa at no flow, 600 at 3000.
+    # B: 850 at no flow, 520 at 2400.  Each is straight in Q^1.85 between, so
+    # at pressure p, A gives 3000 x ((900-p)/300)^(1/1.85) and B gives
+    # 2400 x ((850-p)/330)^(1/1.85).
+    my $A = { kind => 'SUPPLY_CURVE', curve => curve(0, 0, 900, 3000, 600) };
+    my $B = { kind => 'SUPPLY_CURVE', curve => curve(0, 0, 850, 2400, 520) };
+    my $qa = sub { 3000 * ((900 - $_[0]) / 300) ** (1 / 1.85) };
+    my $qb = sub { 2400 * ((850 - $_[0]) / 330) ** (1 / 1.85) };
+    my $c = HardyCross::Demand::combined_avail($A, $B);
+    my $bad = 0;
+    for my $p (610, 650, 700, 800, 849) {      # within both curves' entered points
+        my $q = $qa->($p) + $qb->($p);
+        $bad++ if abs($c->($q) - $p) > 1e-6;
+    }
+    is('two curves: at each pressure the combined flow is their sum', !$bad);
+    is('above the lower curve\'s shut-off, only the higher gives water',
+       abs($c->($qa->(870)) - 870) < 1e-6);
+    is('three identical curves: three times the flow at the same pressure',
+       abs(HardyCross::Demand::combined_avail($A, $A, $A)->(3 * $qa->(700)) - 700) < 1e-6);
+    # A static supply gives any flow at its pressure, so the combined curve
+    # never falls below it; above it, the curve gives the flow.
+    my $T = { kind => 'SUPPLY_STATIC', pstat => 700 };
+    my $ct = HardyCross::Demand::combined_avail($A, $T);
+    is('with a static supply: never below the static pressure',
+       abs($ct->(1e6) - 700) < 1e-9 && abs($ct->($qa->(800)) - 800) < 1e-6);
 }
 
 print "\n$pass passed, $fail failed\n";
