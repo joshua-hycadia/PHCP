@@ -25,7 +25,7 @@ use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
 
-my @models = @ARGV ? @ARGV : glob("$FindBin::Bin/../examples/*.hcx");
+my @models = @ARGV ? @ARGV : glob("$FindBin::Bin/../examples/*.{hcx,phc}");
 @models = grep { !/grid1000/ } @models;          # large; adds nothing here
 my ($checks, $fails) = (0, 0);
 my @bad;
@@ -66,7 +66,10 @@ for my $m (@models) {
             my ($l2, $l3, $l4) = @L[ $at + 1 .. $at + 3 ];
             my ($pipe) = $l2 =~ /^\s(\S+)/;
             my ($ftg, $pe, $pv) = $l2 =~ /F=\s*(-?[\d.]+)\s+C=.*\bPe\s+(-?[\d.]+)\s+Pv\s+(-?[\d.]+)/;
-            my ($tl, $frl, $pf, $pn) = $l3 =~ /TL=\s*([\d.]+)\s+([\d.]+)\s+Pf\s+(-?[\d.]+)\s+Pn\s+(-?[\d.]+)/;
+            # A pipe of no length prints '-' for FRI-LOSS (there is no length
+            # to divide by); its Pf must then be zero, which is the check made.
+            my ($tl, $frl, $pf, $pn) = $l3 =~ /TL=\s*([\d.]+)\s+([\d.]+|-)\s+Pf\s+(-?[\d.]+)\s+Pn\s+(-?[\d.]+)/;
+            $frl = 0 if defined $frl && $frl eq '-' && defined $tl && $tl == 0;
             my ($pte) = $l4 =~ /\bPt\s+(-?[\d.]+)\s*$/;
             if (defined $ftg && defined $tl && defined $pte) {
                 close_to("$name pipe $pipe TL = L + F", $len + $ftg, $tl,

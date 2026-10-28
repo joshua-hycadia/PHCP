@@ -10,7 +10,6 @@
 #   phcp.pl model.phc                  solve; print flows and pressures
 #   phcp.pl model.phc report.txt       ...and write the ASCII report
 #   phcp.pl model.phc report.pdf       ...or the paginated PDF report
-#   phcp.pl --convert in.hcx [out.phc] convert a .hcx model to .phc
 #
 # The model may be a .phc command file or a .hcx block file; the extension
 # decides how it is read (HardyCross::Parse::read_model).  Both give the same
@@ -39,16 +38,8 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl <model.phc | model.hcx> [report.txt | report.pdf]\n"
-          . "       phcp.pl --convert <model.hcx> [model.phc]\n";
+my $USAGE = "usage: phcp.pl <model.phc | model.hcx> [report.txt | report.pdf]\n";
 @ARGV or die $USAGE;
-
-# --convert: write the .phc equivalent of a .hcx model and stop.  Exit status
-# 0 when written, 2 when the .hcx does not read or the output cannot be
-# written -- the same meaning 2 has for a solve.
-if ($ARGV[0] eq '--convert') {
-    exit convert(@ARGV[1 .. $#ARGV]);
-}
 my $report_path = $ARGV[1];
 
 my $net = eval { HardyCross::Parse::read_model($ARGV[0]) };
@@ -94,41 +85,3 @@ for my $i (1 .. $#{ $net->{nodes} }) {
 }
 exit($ok ? 0 : 1);
 
-#------------------------------------------------------------------------------
-# convert -- phcp.pl --convert in.hcx [out.phc]
-#
-# The output name defaults to the input's with .phc for .hcx.  An existing
-# file is never overwritten: a .phc may have been edited by hand since an
-# earlier conversion, and losing that work to a re-run is not an accident
-# worth making possible.
-#------------------------------------------------------------------------------
-sub convert {
-    my ($in, $out) = @_;
-    defined $in or die $USAGE;
-    unless (defined $out) {
-        ($out = $in) =~ s/\.hcx\z//i;
-        $out .= '.phc';
-    }
-    if (-e $out) {
-        print STDERR "MODEL ERROR: $out already exists; give another name or remove it first\n";
-        return 2;
-    }
-    require HardyCross::Convert;
-    my $phc = eval {
-        open my $fh, '<', $in or HardyCross::fail("cannot open input file %s", $in);
-        my $text = do { local $/; <$fh> };
-        close $fh;
-        (my $name = $in) =~ s{.*[/\\]}{};
-        HardyCross::Convert::hcx_to_phc($text, $name);
-    };
-    unless (defined $phc) {
-        my $e = $@;
-        print STDERR "MODEL ERROR: ", (HardyCross::is_model_error($e) ? $e->{msg} : $e), "\n";
-        return 2;
-    }
-    open my $of, '>', $out or do { print STDERR "MODEL ERROR: cannot write $out: $!\n"; return 2 };
-    print $of $phc;
-    close $of;
-    print "converted $in -> $out\n";
-    return 0;
-}
