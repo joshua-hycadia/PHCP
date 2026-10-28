@@ -1,0 +1,196 @@
+#
+# Copyright (c) 2026 Hycadia Pty Ltd
+# SPDX-License-Identifier: MIT -- see LICENSE.  The MIT licence covers this
+# source code; it does not cover the third-party data in data/.
+#
+# HardyCross/Demand.pm -- the flow path to the governing outlet, and the demand
+# the system places on its water supply.
+#
+# TWO QUESTIONS A CERTIFIER ASKS OF EVERY CALCULATION
+#   1. Show me the path to the most demanding head, with the pressure falling
+#      along it, so I can check it with a calculator.
+#   2. How much does the system need at the supply connection, and how much
+#      does the supply have to spare?
+#
+# Neither is simple on a looped network, and the reasons are stated where the
+# code handles them.
+
+package HardyCross::Demand;
+
+use strict;
+use warnings;
+use HardyCross;
+use HardyCross::Parse;
+
+my $GW = $HardyCross::GAMMA_W;
+
+sub gauge {
+    my ($net, $i) = @_;
+    my $n = $net->{nodes}[$i];
+    return $n->{h} - $GW * $n->{z};
+}
+
+# The pressure an outlet has to spare: actual minus required, kPa.
+sub outlet_margin {
+    my ($net, $e) = @_;
+    return gauge($net, $e->{n1}) - $e->{preq};
+}
+
+#------------------------------------------------------------------------------
+# The governing outlet.
+#
+# "Most remote" in the hydraulic sense: the outlet with the LEAST pressure to
+# spare over its requirement, which is the one that fails first as the supply
+# weakens.  It is not necessarily the one furthest away on the drawing -- a
+# near head on a small pipe, or a high one, can govern.  Fixed-flow demands are
+# excluded: their flow is set, so they have no pressure margin to govern with.
+#------------------------------------------------------------------------------
+sub governing_outlet {
+    my $net = shift;
+    my ($best, $bm);
+    for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        next unless $e->{kind} eq 'DISCHARGE';
+        my $m = outlet_margin($net, $e);
+        ($best, $bm) = ($e, $m) if !defined $bm || $m < $bm;
+    }
+    return ($best, $bm);
+}
+
+#------------------------------------------------------------------------------
+# The flow path from a supply to an outlet.
+#
+# A looped network has no single path: water reaches a head by several routes
+# at once.  The path shown is traced BACKWARDS from the outlet, taking at each
+# node the element that brings the most water in, until a supply is reached --
+# the route that carries most of the flow.
+#
+# The choice of path does not affect the numbers on it.  Head at a node is a
+# single value however it is reached, so the pressure worked forward along ANY
+# path must land on the solved pressure at every node.  The worksheet prints
+# both, and the difference column is the check.
+#------------------------------------------------------------------------------
+sub flow_path {
+    my ($net, $outlet) = @_;
+    my @steps;
+    my $v = $outlet->{n1};
+    my %seen = ($v => 1);
+    my $iref = $net->{iref};
+
+    for (1 .. scalar @{ $net->{nodes} }) {
+        my ($best, $bq);
+        for my $ei (1 .. $#{ $net->{elems} }) {
+            my $e = $net->{elems}[$ei];
+            next if $e->{closed} || $e->{kind} eq 'DISCHARGE';
+            # the element delivers INTO $v if flow runs toward it
+            my $in = ($e->{n2} == $v && $e->{q} >  1e-9) ? $e->{q}
+                   : ($e->{n1} == $v && $e->{q} < -1e-9) ? -$e->{q} : 0;
+            next unless $in > 0;
+            ($best, $bq) = ($e, $in) if !defined $bq || $in > $bq;
+        }
+        return (undef, "no inflow found at node $net->{nodes}[$v]{id}") unless $best;
+
+        my $from = $best->{n2} == $v ? $best->{n1} : $best->{n2};
+        unshift @steps, { elem => $best, from => $from, to => $v, q => $bq };
+        last if $from == $iref;              # reached a supply
+        return (undef, 'the trace revisited a node') if $seen{$from}++;
+        $v = $from;
+    }
+    return (\@steps, undef);
+}
+
+#------------------------------------------------------------------------------
+# The demand point.
+#
+# In a solved network the supply always exactly meets the system -- that is
+# what "solved" means -- so the operating point shows no margin at all.  The
+# DEMAND is a different thing: the pressure the system needs at the supply
+# connection for the governing outlet to receive exactly its minimum, and the
+# flow that goes with it.  Every outlet discharges less than at the operating
+# point, because the supply pressure is lower.
+#
+# It is found by replacing the supply with a fixed pressure and bisecting on
+# that pressure until the least outlet margin is zero.  Each trial is a full
+# solve, including pump check valves and orifice sizing -- lowering the supply
+# can close a check valve, and the demand must reflect that.
+#
+# Defined for ONE supply.  With several, "the pressure the system needs" has no
+# single answer -- it depends how the supplies share the load -- and the report
+# says so rather than inventing one.
+#------------------------------------------------------------------------------
+sub margin_at {
+    my ($text, $sid, $p) = @_;
+    my $net = eval { HardyCross::Parse::read_string($text) } or return;
+    my ($sup) = grep { ($_->{id} // '') eq $sid } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    return unless $sup;
+    # Same node, same elevation, a fixed pressure instead of a curve.
+    my $z = $sup->{z} // 0;
+    %$sup = (%$sup, kind => 'SUPPLY_STATIC', pstat => $p, z => $z);
+    delete $sup->{curve};
+    my $ok = eval { HardyCross::solve_model($net) };
+    return unless $ok;
+    my (undef, $m) = governing_outlet($net);
+    return unless defined $m;
+    return ($m, $net);
+}
+
+sub demand_point {
+    my ($net) = @_;
+    my @sup = grep { $_->{kind} =~ /^SUPPLY_/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    return { reason => 'the model has no supply' } unless @sup;
+    return { reason => scalar(@sup) . ' supplies: a single demand point is not defined when '
+                     . 'supplies share the load, so each supply is reported at its operating point' }
+        if @sup > 1;
+    my $s = $sup[0];
+    my $text = $net->{source_text}
+        or return { reason => 'the model text is not available to re-solve' };
+    my ($go) = governing_outlet($net);
+    return { reason => 'the model has no pressure-dependent outlet' } unless $go;
+
+    my $p_now = gauge($net, $s->{n2});
+    my ($lo, $hi) = (0, $p_now > 1 ? $p_now : 100);
+
+    # Make sure the bracket holds the answer: at $hi the margin must be >= 0.
+    my ($mh) = margin_at($text, $s->{id}, $hi);
+    for (1 .. 30) {
+        last if defined $mh && $mh >= 0;
+        $hi *= 1.5;
+        ($mh) = margin_at($text, $s->{id}, $hi);
+    }
+    return { reason => 'no supply pressure up to ' . sprintf('%.0f', $hi)
+                     . ' kPa satisfies every outlet' } unless defined $mh && $mh >= 0;
+
+    # Bisect to 0.01 kPa.  A trial that does not solve counts as a failure:
+    # a supply too weak to push water to every outlet is below the demand.
+    for (1 .. 60) {
+        my $mid = 0.5 * ($lo + $hi);
+        my ($m) = margin_at($text, $s->{id}, $mid);
+        if (defined $m && $m >= 0) { $hi = $mid } else { $lo = $mid }
+        last if $hi - $lo < 0.01;
+    }
+    my ($m, $dn) = margin_at($text, $s->{id}, $hi);
+    my ($dsup) = grep { ($_->{id} // '') eq $s->{id} } @{ $dn->{elems} }[1 .. $#{ $dn->{elems} }];
+    my ($dgo) = governing_outlet($dn);
+    my $q_d = abs $dsup->{q};
+
+    # What the supply has at that flow.
+    my $avail = $s->{kind} eq 'SUPPLY_STATIC'
+              ? $s->{pstat}
+              : HardyCross::curve_eval($s->{curve}, $q_d);
+
+    return {
+        supply    => $s,
+        governing => $dgo,
+        q_demand  => $q_d,
+        p_demand  => $hi,
+        p_avail   => $avail,
+        margin    => $avail - $hi,
+        q_oper    => abs $s->{q},
+        p_oper    => $p_now,
+        # the whole network at the demand point, so the cover sheet can report
+        # sprinkler flows and density at the design condition, not only at the
+        # operating point
+        net       => $dn,
+    };
+}
+
+1;
