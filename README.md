@@ -619,13 +619,13 @@ thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
 The script also packs Win32::API, which the editor uses to be sharp on a
 scaled display.
 
-**The icon.**  `data/phcp.ico` - a blue tile with a two-loop pipe network and
-a red sprinkler at the far node - is written into both `.exe` files by pp,
-which needs Win32::Exe (the script installs it; without it the programs keep
-the default icon).  The editor also sets the same picture on its window and
-taskbar button itself, from PNG data held in `phcp_editor.pl`, so it shows
-when run from source too.  The build has not been re-run since the icon was
-added.
+**The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
+pipe network and a red sprinkler at the far node.  The editor sets the same
+picture on its window and taskbar button itself, from PNG data held in
+`phcp_editor.pl`, so it shows whether run from source or built.  The `.exe`
+files themselves keep the default icon in Explorer: PAR::Packer removed its
+`--icon` option, and rewriting a packed program's resources afterwards risks
+the archive appended to it.
 
 ## Calling PHCP from another program
 
