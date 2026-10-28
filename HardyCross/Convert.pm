@@ -19,7 +19,7 @@
 # parser, so a file that does not read is refused, not half-converted.
 #
 # Whatever the .hcx reader ignores -- an unknown OPTIONS name, a stray field, a
-# MINP= on a fixed flow -- did nothing to the result and so cannot be carried
+# K= on a fixed flow -- did nothing to the result and so cannot be carried
 # into .phc, which refuses such things.  It is dropped, and the header comment
 # of the .phc lists every line dropped and why.  Comments are not carried over;
 # the header says that too.
@@ -420,12 +420,16 @@ sub discharge_line {
         else                { $v->{Q} = $v->{MINQ} }
     }
     if ($ty eq 'FIXEDFLOW' || $ty eq 'FIXED') {
-        # A fixed flow is a nodal demand: only Q is used.  MINP= in particular
-        # is accepted by the .hcx reader and does nothing; .phc refuses it.
-        # See README, "Fixed flows".
-        push @ignored, map { "$_=$v->{$_}" } grep { exists $v->{$_} } qw(K P MINP Z);
+        # A fixed flow is a nodal demand with a minimum pressure that is
+        # checked.  The parser takes P= before MINP= as that minimum (kv('P')
+        # // kv('MINP')); .phc spells it MINP= only.  K has no meaning here.
+        if (exists $v->{P}) {
+            push @ignored, "MINP=$v->{MINP}" if exists $v->{MINP};
+            $v->{MINP} = $v->{P};
+        }
+        push @ignored, "K=$v->{K}" if exists $v->{K};
         drop($cv, $r, 'not used for a fixed flow: ' . join(' ', @ignored)) if @ignored;
-        return join ' ', 'Flow    ', @tk[0, 1], key_fields($v, 'Q');
+        return join ' ', 'Flow    ', @tk[0, 1], key_fields($v, qw(Q MINP Z));
     }
     fail_at($r, 'discharge type %s has no .phc command (SPRINKLER, HYDRANT, '
               . 'HOSEREEL and FIXEDFLOW do)', $tk[2]) unless $OUTLET{$ty};
