@@ -22,6 +22,10 @@
 #   5. THE SHEET.  The PDF is well formed, one page, the typeface embedded;
 #      the plot, the curves, the duty points and their table are where the
 #      figures put them.
+#   6. UNITS.  The same supply in L/s and bar.
+#   7. IN A MODEL'S REPORT.  SUPPLYGRAPH adds the sheet: an appendix to the
+#      text, a page after it in the PDF, numbered with the report; a graph
+#      that cannot be read is a warning, and the report is still written.
 #==============================================================================
 use strict;
 use warnings;
@@ -275,6 +279,56 @@ print "6. UNITS - the same supply in L/s and bar\n";
     is('an unknown unit is refused with its line', !$r && $@ =~ /^LINE 1: UNITS TAKES FLOW/, $@);
 }
 sub slurp_lines { open my $f, '<', shift or die; local $/; <$f> }
+
+print "7. IN A MODEL'S REPORT - SUPPLYGRAPH\n";
+{
+    require HardyCross::Phc;
+    require HardyCross::Report;
+    require File::Copy;
+    my $dir = tempdir(CLEANUP => 1);
+    File::Copy::copy($EX, "$dir/town.phg") or die;
+    my $model = slurp_lines("$FindBin::Bin/../examples/01_single_branch.phc");
+    my $write = sub { open my $f, '>', "$dir/m.phc" or die; print $f $model, @_; close $f; "$dir/m.phc" };
+    my $net = HardyCross::Phc::read_model($write->("SUPPLYGRAPH town.phg\n"));
+    HardyCross::solve_model($net);
+    is('SUPPLYGRAPH town.phg: read from the model\'s folder, no warning',
+       @{ $net->{graph_sheets} || [] } == 1 && !grep { /supply graph/ } @{ $net->{warnings} });
+    my $rep = HardyCross::Report::write_report($net, 1, 'm.phc');
+    my $sr = HardyCross::Graph::series(HardyCross::Graph::check($net->{graph_sheets}[0]{graph}));
+    my %d = map { $_->{label} => $_ } @{ $sr->{duty} };
+    is('   the text report has it as APPENDIX A, before the end',
+       $rep =~ /APPENDIX A\. SUPPLY GRAPH - TOWN\.PHG.*END OF CALCULATION/s);
+    is(sprintf('   with each duty against E: 1 has %.1f, margin %.1f', $d{1}{avail}, $d{1}{margin}),
+       $rep =~ /^ 1\s+1500\s+700\s+\Q@{[ sprintf '%.4g', $d{1}{avail} ]}\E\s+\Q@{[ sprintf '%.4g', $d{1}{margin} ]}\E\s+SPRINKLERS/m);
+    is('   and stays 7-bit ASCII', $rep !~ /[^\x0A\x20-\x7E]/);
+    my ($with, $without) = ("$dir/with.pdf", "$dir/without.pdf");
+    HardyCross::Report::write_pdf_report($net, 1, "$dir/m.phc", $with);
+    my $plain = HardyCross::Phc::read_model($write->(''));
+    HardyCross::solve_model($plain);
+    HardyCross::Report::write_pdf_report($plain, 1, "$dir/m.phc", $without);
+    my ($pw, $po) = map { my $b = do { open my $f, '<:raw', $_ or die; local $/; <$f> }; $b } $with, $without;
+    my ($nw) = $pw =~ m{/Type /Pages .*?/Count (\d+)}s;
+    my ($no) = $po =~ m{/Type /Pages .*?/Count (\d+)}s;
+    is("   the PDF has one page more: $no without, $nw with", $nw == $no + 1);
+    my $streams = () = $pw =~ /PHCP-SHEET PLOT/g;
+    is('   the sheet is drawn once, framed as the last page of the report',
+       $streams == 1 && $pw =~ /\(Page $nw of $nw\)/ && $po =~ /\(Page $no of $no\)/);
+    $net = HardyCross::Phc::read_model($write->("SUPPLYGRAPH none.phg\n"));
+    my ($w) = grep { /supply graph/ } @{ $net->{warnings} };
+    is('a graph that cannot be read: a warning naming it and its line, nothing more',
+       $net && ($w // '') =~ /^supply graph none\.phg \(line \d+\) is not in the report: CANNOT READ/ && !$net->{graph_sheets}, $w);
+    open my $b, '>', "$dir/bad.phg" or die; print $b "A 0 500\nDUTY 100 200 1\n"; close $b;
+    $net = HardyCross::Phc::read_model($write->("SUPPLYGRAPH bad.phg\n"));
+    ($w) = grep { /supply graph/ } @{ $net->{warnings} };
+    is('a graph its own tab would refuse: a warning with the reason', ($w // '') =~ /^supply graph bad\.phg .*: \S/, $w);
+    $net = HardyCross::Phc::read_string($model . "SUPPLYGRAPH town.phg\n");
+    is('read without a folder (a re-read for a re-solve): no sheets, no warning',
+       !$net->{graph_sheets} && !grep { /supply graph/ } @{ $net->{warnings} });
+    my $a = HardyCross::Phc::analyse('SUPPLYGRAPH');
+    is('the line checker asks for the FILE', $a->{status} eq 'incomplete' && $a->{msg} =~ /FILE/);
+    $a = HardyCross::Phc::analyse('SUPPLYGRAPH My Graphs/Town Main.phg');
+    is('   and keeps a file name with spaces as typed', $a->{status} eq 'ok' && $a->{text} eq 'My Graphs/Town Main.phg');
+}
 
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);

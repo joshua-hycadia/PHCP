@@ -113,8 +113,8 @@ is('flat: no bevel on the buttons or the editor',
    !grep({ $main::btn{$_}->cget(-relief) ne 'flat' || $main::btn{$_}->cget(-borderwidth) != 0 } keys %main::btn)
    && $main::ed->cget(-borderwidth) == 0);
 my @strip = main::strip_commands();
-is('the command strip lists the 21 network commands (PUMPDUTY and AREA among them), no settings',
-   @strip == 21 && grep({ $_ eq 'PUMPDUTY' } @strip) && $strip[0] eq 'USE' && $strip[-1] eq 'AREA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
+is('the command strip lists the 22 network commands (PUMPDUTY, AREA, SUPPLYGRAPH among them), no settings',
+   @strip == 22 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' } @strip) == 2 && $strip[0] eq 'USE' && $strip[-1] eq 'SUPPLYGRAPH' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
 is('NETWORK, PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
    join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS DATABASE'

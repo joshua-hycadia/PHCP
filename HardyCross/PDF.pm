@@ -308,7 +308,10 @@ sub load_font {
 #   %meta: title, job, revision, date, designer, model, program, and graphs --
 #   the supply graphs' numbers (HardyCross::Report::supply_graph_data), in
 #   the order the graphs appear in the text, which draw each graph in place of
-#   the report's character drawing.  (graph, one set, is still taken.)
+#   the report's character drawing.  (graph, one set, is still taken.)  And
+#   sheets: pages added after the text, each a sub given (page, pages) that
+#   returns its content stream -- a supply graph sheet (SUPPLYGRAPH), numbered
+#   with the report.
 #------------------------------------------------------------------------------
 sub write_pdf {
     my ($text, $path, %meta) = @_;
@@ -316,11 +319,12 @@ sub write_pdf {
 
     my $graphs = $meta{graphs} || ($meta{graph} ? [ $meta{graph} ] : []);
     my $pages = paginate($text, $graphs);
-    my $n = @$pages;
+    my @sheets = @{ $meta{sheets} || [] };
+    my $n = @$pages + @sheets;
 
     # Build each page's content stream.
     my @streams;
-    for my $p (0 .. $n - 1) {
+    for my $p (0 .. $#$pages) {
         my $s = frame($p + 1, $n, %meta);
 
         # The body, one Tj per line, bold only for section titles.  A rule is
@@ -353,6 +357,7 @@ sub write_pdf {
         $s .= draw_graph($_->[1], $_->[0] + $LEADING * 0.6, $GRAPH_LINES * $LEADING) for @gy;
         push @streams, $s;
     }
+    push @streams, $sheets[$_]->(@$pages + $_ + 1, $n) for 0 .. $#sheets;
 
     return write_pages(\@streams, $path, $reg, $bold, %meta);
 }

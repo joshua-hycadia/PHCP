@@ -362,7 +362,10 @@ sub colour_spans {
 #------------------------------------------------------------------------------
 sub solve_text {
     my ($text, $path) = @_;
-    my $net = eval { HardyCross::Phc::read_string($text) };
+    # A supply graph (SUPPLYGRAPH) is found from the model's folder, or the
+    # current one for a model not yet saved.
+    require File::Basename;
+    my $net = eval { HardyCross::Phc::read_string($text, defined $path ? File::Basename::dirname($path) : '.') };
     return error_result($@) unless $net;
     my $conv = eval { HardyCross::solve_model($net) };
     return error_result($@) unless defined $conv;

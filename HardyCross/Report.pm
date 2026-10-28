@@ -748,6 +748,19 @@ sub write_report {
     push @w, 'No warnings.' unless @w;
     for my $i (0 .. $#w) { $out .= wrap(sprintf(' %2d  ', $i + 1), $w[$i]) }
 
+    #------------------------------------------- appendices: supply graphs
+    # A water supply graph made by hand (SUPPLYGRAPH): its figures and duty
+    # points; the PDF draws the sheet as well, on a page of its own.
+    my @gs = @{ $net->{graph_sheets} || [] };
+    for my $i (0 .. $#gs) {
+        require HardyCross::Graph;
+        $out .= title(sprintf 'APPENDIX %s. SUPPLY GRAPH - %s', chr(65 + $i), uc $gs[$i]{file});
+        $out .= wrap(' ', "A Q^1.85 water supply graph from $gs[$i]{file}, attached by SUPPLYGRAPH on line "
+            . "$gs[$i]{line} of the model.  The PDF report draws the sheet on a page of its own, after this text.")
+            . "\n";
+        $out .= "$_\n" for HardyCross::Graph::text_sheet($gs[$i]{graph});
+    }
+
     $out .= "\n" . rule() . " END OF CALCULATION\n" . rule();
 
     # The guarantee: nothing but printable ASCII leaves this module.
@@ -998,7 +1011,13 @@ sub write_pdf_report {
         designer => $pj->{DESIGNER} // '',
         model    => $model,
         program  => "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program",
-        graphs   => $net->{supply_graphs} || []);
+        graphs   => $net->{supply_graphs} || [],
+        # Each supply graph sheet (SUPPLYGRAPH) drawn on a page after the text.
+        sheets   => [ map { my $g = $_->{graph}; sub {
+            require HardyCross::Graph;
+            (HardyCross::Graph::sheet($g, $_[0], $_[1], model => $model,
+                program => "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program"))[0] } }
+            @{ $net->{graph_sheets} || [] } ]);
 }
 
 #------------------------------------------------------------------------------
