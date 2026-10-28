@@ -76,6 +76,7 @@ A stale README is a defect.
 
 ```
 perl tools/test_phc.pl              # .phc language and converter (--full also solves 04)
+perl tools/test_curves.pl           # supply, pump and loss curves
 perl tools/test_pipedata.pl         # pipe and fitting database, 35 checks
 perl tools/test_report_checks.pl    # report hand-checks across the examples
 perl tools/test_pdf.pl              # PDF structure checks

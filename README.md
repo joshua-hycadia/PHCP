@@ -464,6 +464,24 @@ exact format the routine writes, proven to solve in PHCP.  The routine itself
 has not yet been run inside AutoCAD.  Its output is `.hcx`, which `phcp.pl`
 still reads; making it write `.phc` is planned (`PLAN.md`, PR 4).
 
+## Supply, pump and loss curves
+
+A `WATER` supply with flow/pressure points, a `PUMP` or `BP`, and a `BFP` or
+`PRV` with more than one point are curves.  The curve passes exactly through
+every point entered; between two points pressure is linear in Q^1.85 - the
+scale water supply test results are plotted on, since a main loses pressure to
+friction and Hazen-Williams friction goes as Q^1.85.  Beyond the last point,
+and below the first, it continues in a straight line at the end slope, so a
+solve that overshoots still has a well-behaved curve to work on.  The report
+states this in Section 4 whenever a model has a curve.
+
+Until 28 October 2026 a curve was a single quadratic: exact through two
+points, but a least-squares fit through three or more that did not pass
+through the points entered.  The change moved the results of every example
+with a curve: example 02's town main by 232 L/min and 30 kPa (its supply has
+three points), examples 03, 05 and 08 by under 8 L/min and 1 kPa.
+`tools/test_curves.pl` checks the curves directly.
+
 ## Settings
 
 `OPTION VEL_LIMIT 6` (`.hcx`: `OPTIONS VEL_LIMIT 6`) sets the velocity flagged
@@ -483,12 +501,13 @@ others on the page, and the report says which check to make.
 
 | suite | result |
 |---|---|
-| EPANET 2.3.5, 100 cases | 100 / 100 |
-| robustness, 387 cases incl. 300 fuzz | 0 problems |
-| extreme conditions, 44 cases | 0 problems |
-| direct comparison with the C++ engine | worst 0.005 L/min, 0.0049 kPa |
+| EPANET 2.3.5, 100 cases (before the Q^1.85 curves - not re-run) | 100 / 100 |
+| robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
+| extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
+| direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
 | `.phc` language and line checker | 247 / 247 |
+| supply, pump and loss curves | 14 / 14 |
 | spreadsheet load, save and undo | 12 / 12 |
 | spreadsheet editing and cell validation | 18 / 18 |
 | invariance stress | 9 574 / 9 574 |
@@ -526,8 +545,9 @@ solves in seconds; a 1000-node gridded system is beyond PHCP's practical limit
 
 Loops come from a spanning tree grown from a central node.  PHCP builds that
 tree exactly as the C++ reference does -- neighbours visited in reverse element
-order, the lowest-numbered farthest node taken as the centre -- and so takes
-IDENTICAL iteration counts on every model compared:
+order, the lowest-numbered farthest node taken as the centre -- and so took
+IDENTICAL iteration counts on every model compared (before the Q^1.85 curves,
+which change the iterations of models with curves - example 02 now takes 7):
 
     10x10 grid 146   16x16 grid 600   5x5 grid 138   pump case 12
     01 5   02 9   03 11   05 19   06 2
