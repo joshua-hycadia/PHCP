@@ -21,6 +21,8 @@
 ;;;   PHCPHEAD      nominate discharging heads -- place new, or tag existing
 ;;;   PHCPCHECK     check the drawing without exporting; faults are selected
 ;;;   PHCPEXPORT    check, then write the .phc file
+;;;   PHCPSOLVE     export beside the drawing, run phcp.exe --json on it, and
+;;;                 show the result: the governing outlet, any that fail
 ;;;   PHCPINFO      list the PHCP data on an object you pick
 ;;;
 ;;; ---------------------------------------------------------------------------
@@ -840,5 +842,69 @@
           (princ "\nOpen it in PHCP to solve and report.")))))
   (princ))
 
-(princ "\nPHCP export loaded.  Commands: PHCPSETUP PHCPPROJECT PHCPSUPPLY PHCPPIPE PHCPELEV PHCPHEAD PHCPCHECK PHCPEXPORT PHCPINFO")
+;;;============================================================================
+;;; SOLVING FROM AUTOCAD
+;;;
+;;; PHCPSOLVE exports the drawing to a .phc beside it, runs
+;;;   phcp.exe --json model.phc
+;;; and shows the result.  phcp.exe prints its results as JSON, one value to a
+;;; line, and always includes a "summary": a few lines in capitals saying
+;;; whether it converged, which outlet governs and with what margin, which
+;;; outlets fail, and whether the supply meets the demand.  Those lines are
+;;; all this command needs, so it reads them line by line and needs no JSON
+;;; reader.  The full report is the PHCP editor's or phcp.exe's job.
+;;;
+;;; Where phcp.exe is, is asked for once and remembered (setenv PHCP_EXE).
+;;;============================================================================
+
+;; The path of phcp.exe: remembered, or asked for.
+(defun phcp:exe ( / p)
+  (setq p (getenv "PHCP_EXE"))
+  (if (not (and p (findfile p)))
+    (progn
+      (setq p (getfiled "Where is phcp.exe?" "phcp.exe" "exe" 0))
+      (if p (setenv "PHCP_EXE" p))))
+  p)
+
+;; The "summary" lines of phcp.exe's JSON output, read from a file.
+(defun phcp:summary (fname / f l in out)
+  (if (setq f (open fname "r"))
+    (progn
+      (while (setq l (read-line f))
+        (setq l (vl-string-trim " \t" l))
+        ;; In a wcmatch pattern [ is special, so it is escaped with a backquote.
+        (cond ((wcmatch l "\"summary\"*`[") (setq in T))
+              ((and in (= (substr l 1 1) "]")) (setq in nil))
+              (in (setq out (append out (list (vl-string-trim "\"" (vl-string-right-trim "," l))))))))
+      (close f)))
+  out)
+
+(defun c:PHCPSOLVE ( / exe uf res phc out ws code lines)
+  (phcp:ensure)
+  (if (not (setq exe (phcp:exe)))
+    (progn (princ "\n*** phcp.exe was not found; nothing solved.") (exit)))
+  (setq uf (phcp:settings))
+  (setq res (phcp:analyse *phcp-tol* *phcp-zdef* uf))
+  (if (and (nth 4 res) (phcp:report (nth 4 res)))
+    (princ "\n*** Not solved: fix the errors above, then run PHCPSOLVE again.")
+    (progn
+      (setq phc (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME")) ".phc")
+            out (vl-filename-mktemp "phcp" nil ".json"))
+      (phcp:write phc res uf *phcp-tol*)
+      ;; Run hidden (window style 0) and wait for it to finish (true).
+      (setq ws (vlax-create-object "WScript.Shell"))
+      (setq code (vlax-invoke ws 'Run
+                   (strcat "cmd /c \"\"" exe "\" --json \"" phc "\" > \"" out "\"\"") 0 :vlax-true))
+      (vlax-release-object ws)
+      (setq lines (phcp:summary out))
+      (vl-file-delete out)
+      (if (null lines)
+        (princ (strcat "\n*** phcp.exe gave no result (exit " (itoa code) ")."))
+        (progn
+          (princ (strcat "\nPHCP: " phc))
+          (foreach l lines (princ (strcat "\n  " l)))
+          (alert (apply 'strcat (mapcar '(lambda (l) (strcat l "\n")) lines)))))))
+  (princ))
+
+(princ "\nPHCP export loaded.  Commands: PHCPSETUP PHCPPROJECT PHCPSUPPLY PHCPPIPE PHCPELEV PHCPHEAD PHCPCHECK PHCPEXPORT PHCPSOLVE PHCPINFO")
 (princ)

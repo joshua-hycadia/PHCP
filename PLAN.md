@@ -2,8 +2,8 @@
 
 Status: PR 1, PR 2 (`.phc` language, positional layout) and PR 3 (text editor)
 merged.  Open for review: the editor fixes from the Windows run, the drawn
-supply graph and PDF typeface, the DATABASE tab, and PR 4 (one file type).
-PR 5 not started.
+supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
+PR 5 (the JSON interface).
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -269,27 +269,25 @@ the user never sees it.  `tools/stress_invariance.pl` builds its networks as
 
 ## PR 5 - the phcp.exe JSON interface
 
-Branch: `phc-json`.  Decided by Joshua: other programs call `phcp.exe`, not a
-DLL.  AutoCAD first, possibly Revit later.
+Decided by Joshua: other programs call `phcp.exe`, not a DLL.  AutoCAD first,
+possibly Revit later.
 
     phcp.exe --json model.phc          results as JSON on standard output
     phcp.exe --json -                  the model read from standard input
     phcp.exe --json model.phc --report out.pdf
 
-- Output: status, converged, iterations, units, every element (id, kind,
-  nodes, flow, velocity for a pipe), every node (elevation, pressure), outlet
-  compliance including fixed flows, the governing outlet, the demand point,
-  and errors with their `.phc` line numbers.  Values in the model's units,
-  the units named in the output.
-- Exit status as now: 0 converged, 1 not converged, 2 input error - and the
-  JSON is written in every case, so a caller always has something to read.
-- JSON::PP, which is core Perl.  The contract is documented in the README
-  with an example, and versioned (`"interface": 1`) so a caller can check it.
-- `tools/test_json.pl`: every example, the JSON parsed back and checked
-  against the solved network; an input error; standard input.
-- The AutoCAD exporter gains a SOLVE command that runs `phcp.exe --json` and
-  shows the governing outlet and any failing outlets; it has not been run
-  inside AutoCAD until Joshua runs it.
+| file | change |
+|---|---|
+| `HardyCross/Json.pm` | the results as one JSON object, versioned (`"interface": 1`), the contract described at its head |
+| `phcp.pl` | `--json`, `-` for standard input, `--report`; the plain output unchanged without `--json` |
+| `autocad/phcp_export.lsp` | PHCPSOLVE: export, run `phcp.exe --json`, show the summary |
+| `tools/test_json.pl` | every example's JSON against the plain output of the same solve; input error, `.hcx`, no convergence; standard input; `--report`; the summary read line by line as AutoCAD reads it |
+| `build_windows.bat` | packs `HardyCross::Json` and `JSON::PP`; smoke test of `--json` |
+
+- Exit status as before - 0 converged, 1 not converged, 2 input error - and
+  the JSON written in every case.
+- JSON::PP, which is core Perl.  Written one value to a line in a fixed key
+  order, so AutoLISP can find the summary lines without a JSON reader.
 
 ## Definition of done, each PR
 
@@ -320,5 +318,5 @@ DLL.  AutoCAD first, possibly Revit later.
 - [x] Editor fixes from the Windows run: sharp at 150 %, draggable dividers, wheel under the pointer, HIDE counts, option labels
 - [x] PR 4 - AutoCAD exporter writes `.phc`; `.phc` the one file type
 - [ ] PR 4 - exporter run inside AutoCAD by Joshua
-- [ ] PR 5 - `phcp.exe --json`, documented and tested
+- [x] PR 5 - `phcp.exe --json`, documented and tested
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua
