@@ -158,6 +158,9 @@ my %CMD = (
     PUMPDUTY  => { kind => 'duty', fixed => [ [ 'PUMP', 'pipe' ], [ 'FLOW', 'flow' ], [ 'PRESSURE', 'pressure' ] ] },
     PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
                    opt => [ [ 'MININLET', 'pressure' ], [ 'BAND', 'num' ] ] },
+    # A water supply graph made in the GRAPH tab (.phg), added to the report:
+    # the rest of the line is its file, from the model's folder.
+    SUPPLYGRAPH => { kind => 'graph', fixed => [ [ 'FILE', 'text' ] ] },
     # A design area: the outlets that flow together (HardyCross::Areas).  More
     # than one line of the same name adds to the area.
     AREA      => { kind => 'area', fixed => [ [ 'NAME', 'new' ] ], rest => 'outlets' },
@@ -173,7 +176,7 @@ our @COMMAND_GROUPS = (
     [qw(USE PIPE PC CHANGEPIPE EQV)],
     [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
     [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA)],
-    [qw(AREA)],
+    [qw(AREA SUPPLYGRAPH)],
 );
 our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
 
@@ -324,7 +327,7 @@ sub analyse {
 
     #---------------------------------------------------------- TITLE, PROJECT
     # The value is the rest of the raw line, so a title keeps its spacing.
-    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT') {
+    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT' || $a{key} eq 'SUPPLYGRAPH') {
         (my $t = $code) =~ s/^\s*\S+\s*//;
         if ($a{key} eq 'PROJECT') {
             return $more->('FIELD') unless @tk > 1;
@@ -334,7 +337,7 @@ sub analyse {
             $t =~ s/^\S+\s*//;
         }
         $t =~ s/\s+\z//;
-        return $more->('TEXT') unless length $t;
+        return $more->('%s', $c->{fixed}[-1][0]) unless length $t;
         $a{text} = $t;
         return \%a;
     }
@@ -585,7 +588,7 @@ sub translate {
     # Nodes, pipes and elements are collected first and written afterwards,
     # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
     # before or after the thing it refers to.
-    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty, %area, @area_order);
+    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty, %area, @area_order, @graphs);
     my $use = { type => 'BORE' };
     my $define_node = sub {
         my ($name, $n, $def) = @_;
@@ -645,6 +648,8 @@ sub translate {
         } elsif ($k eq 'FIXEDFLOW' || $k eq 'PUMP') {
             $define_name->($p[0], $n);
             push @items, [ $k, $p[0], $n, $a ];
+        } elsif ($k eq 'SUPPLYGRAPH') {
+            push @graphs, [ $a->{text}, $n ];
         } elsif ($k eq 'AREA') {
             # A second line of the same name adds its outlets to the area.
             push @area_order, $p[0] unless $area{ $p[0] };
@@ -823,7 +828,7 @@ sub translate {
                 (map { [ 'NODES', @$_ ] } @nodes_out),
                 @elems);
     my $areas = { list => [ map { { name => $_, line => $area{$_}{line}, outlets => $area{$_}{outlets} } } @area_order ],
-                  design => $design ? $design->[0] : undef };
+                  design => $design ? $design->[0] : undef, graphs => \@graphs };
     return (\@built, \%units, $areas);
 }
 
@@ -932,7 +937,7 @@ sub pipe_size {
 # top-of-band solve re-read it.
 #==============================================================================
 sub read_string {
-    my $text = shift;
+    my ($text, $dir) = @_;
     my ($rows, $units, $areas) = translate($text);
     my $net = HardyCross::Parse::new_net();
     for my $r (@$rows) {
@@ -963,6 +968,26 @@ sub read_string {
     # (OPTION DESIGN_AREA), if any: HardyCross::Areas.
     $net->{areas}       = $areas->{list} if @{ $areas->{list} };
     $net->{design_area} = $areas->{design};
+    # The supply graph sheets (SUPPLYGRAPH), read from the model's folder.
+    # Only when the folder is given: a re-read for a re-solve does not need
+    # them.  One that cannot be read is a warning, not a failure.
+    if (defined $dir) {
+        $net->{model_dir} = $dir;
+        require File::Spec;
+        require HardyCross::Graph;
+        for (@{ $areas->{graphs} }) {
+            my ($f, $n) = @$_;
+            my $p = File::Spec->file_name_is_absolute($f) ? $f : File::Spec->catfile($dir, $f);
+            my $g = eval { HardyCross::Graph::read_file($p) };
+            my $why = $g ? join('; ', map { $_->[1] } @{ HardyCross::Graph::check($g)->{errors} }) : $@;
+            $why =~ s/\s+\z//;
+            if (length $why) {
+                push @{ $net->{warnings} }, "supply graph $f (line $n) is not in the report: $why";
+            } else {
+                push @{ $net->{graph_sheets} }, { file => $f, path => $p, line => $n, graph => $g };
+            }
+        }
+    }
     # An assumed roughness is flagged wherever the warnings go: the editor's
     # WARNINGS list, the report's warnings and the JSON.
     push @{ $net->{warnings} }, HardyCross::Parse::roughness_warning($net);
@@ -979,7 +1004,8 @@ sub read_model {
     # database load -- see HardyCross::Parse::read_model.
     my $text = do { local $/; <$fh> };
     close $fh;
-    return read_string($text);
+    require File::Basename;
+    return read_string($text, File::Basename::dirname($path));
 }
 
 #==============================================================================

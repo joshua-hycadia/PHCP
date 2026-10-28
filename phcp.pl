@@ -73,7 +73,8 @@ my $net = eval {
     if ($model eq '-') {
         my $text = do { local $/; <STDIN> };
         require HardyCross::Phc;
-        HardyCross::Phc::read_string($text);
+        # A supply graph (SUPPLYGRAPH) is then found from the current folder.
+        HardyCross::Phc::read_string($text, '.');
     } else {
         HardyCross::Parse::read_model($model);
     }
