@@ -316,13 +316,16 @@ there and selects it.
 | proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it |
 | pick list | Ctrl+Space in a `USE` type or a pipe's fittings lists the codes with descriptions |
 | ERRORS / WARNINGS / NODES | live as you type: lines the reader refuses; the last calculation's warnings; nodes undefined or unconnected.  A click goes to the line, or to the PROJECT tab field |
-| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (METHOD and the options; a blank option takes its default).  Text is kept in capitals |
+| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (each option with a plain label, its `.phc` name beside it, and a line saying what it does and what a blank means; the rarely needed ones under SOLVER - ADVANCED).  Text is kept in capitals; the tab scrolls |
 | PIPES | 21 columns: NAME, SNODE, ENODE, NOM, I.D., MAT, C (C factor, or absolute roughness under `METHOD DW`), L, F, T, FIT K, Q, PF, PF/M, PE, PS (loss across a device in the pipe), PV, VEL, RE, F (Darcy) and FORMULA.  A right click on the headings opens the column chooser; NAME to PF, PS and VEL are shown at first |
 | NODES, OUTLETS | every node with its type, elevation, pressure, discharge, requirement and margin; every outlet and fixed flow with the required and achieved flow and pressure, the margin and PASS or FAIL |
 | sorting | a click on a heading sorts on it, a second click reverses; the heading shows the direction |
-| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES |
+| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES, each with the count of rows it would hide beside it - (NONE), and greyed, when every pipe flows or every node is active |
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
+| dividers | the grey bands between the editor, the lists and the results can be dragged |
+| mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
+| sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -333,7 +336,8 @@ refuses.  `tools/test_editor.pl` checks those decisions headless;
 `tools/test_editor_window.pl` drives the window itself under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
-Linux with Tk 804.036; the window has not yet been run on Windows.
+Linux with Tk 804.036.  The window has been run on Windows 11 by Joshua
+(see Windows below); the test suites themselves have been run on Linux only.
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
 tests, and Tk::TableMatrix is no longer needed.
@@ -482,7 +486,13 @@ packaged `phcp_editor` opened its window with a model loaded.  That run found
 and fixed a defect - the packaged editor exited without opening a window.  It
 was run again after the editor's layout changed, with the new Tk modules in
 the list.
-The Windows build itself has not yet been run.
+Joshua ran the Windows build on 28 October 2026 (Strawberry Perl 5.42.3, GCC
+13.2.0): Tk compiled from the patched release, both programs built, and the
+smoke test solved the examples and wrote a PDF.  The editor ran on Windows 11
+at 150 % display scaling; what that run showed - blurred text, dividers too
+thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
+The script now also packs Win32::API, which the editor uses to be sharp on a
+scaled display; the build has not been re-run since that line was added.
 
 ## AutoCAD
 
@@ -539,8 +549,8 @@ others on the page, and the report says which check to make.
 | supply, pump and loss curves | 14 / 14 |
 | report hand-checks, 14 models | 659 / 659 |
 | PDF structure, 14 models | 98 / 98 |
-| text editor logic, headless | 114 / 114 |
-| text editor window, under Xvfb | 92 / 92 |
+| text editor logic, headless | 117 / 117 |
+| text editor window, under Xvfb | 100 / 100 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing
