@@ -17,29 +17,29 @@
 #     FIXEDFLOW HOSE  2105  1900  250
 #
 # THIS MODULE TRANSLATES; IT DOES NOT RE-IMPLEMENT.  Every command becomes the
-# .hcx rows that mean the same thing, the rows are assembled into .hcx text,
-# and that text is read by HardyCross::Parse::read_string -- the code that
-# reads a .hcx file.  Every hydraulic check and default therefore lives in one
-# place.  What is done HERE is what belongs to the language: the command words
+# rows that mean the same thing -- a section word (NODES, PIPES, SUPPLIES ...)
+# and its tokens -- and each row is added to the network by
+# HardyCross::Parse::parse_row, the network builder.  Every hydraulic check and
+# default therefore lives in one place.  What is done HERE is what belongs to the language: the command words
 # and their fields, numbers, units, that every node is defined once and every
 # node used is defined, the copy and change commands, and devices placed in
 # pipes.
 #
 # Units are the one thing converted here.  A .phc file chooses a unit for each
-# quantity separately (pipe lengths in mm, elevations in m ...), and the .hcx
-# parser has a single length unit, so lengths and elevations are written to it
-# in metres.  Flow and pressure factors come from the engine's own unit table
+# quantity separately (pipe lengths in mm, elevations in m ...), and the
+# network builder has a single length unit, so lengths and elevations are
+# given to it in metres.  Flow and pressure factors come from the engine's own unit table
 # (HardyCross::set_unit), so there is still one table of those.
 #
-# Every error carries the .phc line number it came from.  The .hcx parser
-# numbers its own errors by .hcx line; read_string below maps those back.
+# Every error carries the .phc line number it came from: each row keeps the
+# line it was made from, and read_string below names that line.
 #
 # How the file is laid out:
 #   vocabulary          commands, fields, units, fitting short forms
 #   values              lengths with units, sizes, ratios, K-factor units
 #   analyse             the syntax of one line
-#   translate           a whole file to .hcx text, with the line map
-#   pipe_row/device_row the .hcx rows for a pipe and for a device in a pipe
+#   translate           a whole file to rows, each with its .phc line
+#   pipe_row/device_row the rows for a pipe and for a device in a pipe
 #   read_string/model   a .phc model read into a network
 #   check_line etc.     the editor's checks of one line, without Tk
 
@@ -55,10 +55,10 @@ use HardyCross::PipeData;
 # The vocabulary.
 #==============================================================================
 
-# Solver options, as the .hcx OPTIONS block takes them (METHOD has its own
-# command).  The .hcx parser silently ignores an unknown option name; in .phc
-# it is an error, so a setting that does nothing cannot look as if it works.
-our @OPTIONS = qw(PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
+# Solver options, as the network builder takes them (METHOD has its own
+# command).  The builder silently ignores an unknown option name; in .phc it
+# is an error, so a setting that does nothing cannot look as if it works.
+our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
                   VEL_LIMIT FITTING_BASIS ORIF_STEP);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
@@ -77,7 +77,7 @@ our %UNIT_CHOICES = (
     FLOW      => [qw(LPM LPS M3H GPM)],
     KFACTOR   => [qw(LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI)],
 );
-# The office defaults (Joshua, 28 October 2026).  The K-factor default is the
+# The office defaults (decided 28 October 2026).  The K-factor default is the
 # unit the office's existing data is written in: K 8 for a K80 head.
 our %UNIT_DEFAULT = (LENGTH => 'MM', ELEVATION => 'M', SIZE => 'MM',
                      PRESSURE => 'KPA', FLOW => 'LPM', KFACTOR => 'LPM/KPA');
@@ -106,7 +106,7 @@ our %FIT_SHORT = (G => 'GV', C => 'CV', B => 'BV');
 #   opt    fields that may follow, each [label, type]
 #   rest   what may follow those: fittings, pairs, copies (PC), names (NC)
 #   min    for pairs: how many at least
-#   otype  for an outlet, the .hcx discharge type
+#   otype  for an outlet, the network builder's discharge type
 # Field types:
 #   text field         free text; a PROJECT field name
 #   quantity unit      a UNITS quantity and its unit
@@ -252,8 +252,8 @@ sub unit_factor {
     return $q eq 'FLOW' ? $net->{f_flow} : $net->{f_pres};
 }
 
-# k_factor_to_model -- a K given in the KFACTOR unit, as the K the .hcx parser
-# expects: the model's flow unit per square root of its pressure unit.
+# k_factor_to_model -- a K given in the KFACTOR unit, as the K the network
+# builder expects: the model's flow unit per square root of its pressure unit.
 # K = Q / sqrt(P), so K scales as (flow factor) / sqrt(pressure factor).
 sub k_factor_to_model {
     my ($k, $units) = @_;
@@ -263,7 +263,7 @@ sub k_factor_to_model {
     return $k * $qf / sqrt($pf);
 }
 
-# fmt -- a computed number for a .hcx row: ten significant figures, enough
+# fmt -- a computed number for a row: ten significant figures, enough
 # that the rounding never shows in a result.
 sub fmt { sprintf '%.10g', shift }
 
@@ -297,8 +297,8 @@ sub analyse {
     my $bad  = sub { %a = (%a, status => 'error',      msg => sprintf(shift, @_)); \%a };
     my $more = sub { %a = (%a, status => 'incomplete', msg => sprintf(shift, @_)); \%a };
 
-    # '!' and '#' start a comment in the .hcx tokeniser this reader shares, so
-    # a line holding one would be cut short without a word.  They are refused.
+    # '!' and '#' start a comment in the tokeniser this reader shares with the
+    # network builder, so a line holding one would be cut short without a word.  They are refused.
     return $bad->("'%s' CANNOT BE USED IN A .PHC LINE; COMMENTS START WITH //", $1)
         if $code =~ /([!#])/;
     my @tk = HardyCross::Parse::tokenize($code);
@@ -322,7 +322,7 @@ sub analyse {
         if ($a{key} eq 'PROJECT') {
             return $more->('FIELD') unless @tk > 1;
             push @{ $a{pos} }, uc $tk[1];
-            # END would end the .hcx PROJECT block the field is written into.
+            # END is a reserved word, never a name or a field.
             return $bad->('END CANNOT BE A PROJECT FIELD') if uc $tk[1] eq 'END';
             $t =~ s/^\S+\s*//;
         }
@@ -446,8 +446,6 @@ sub check_field {
             return "$o VALUE '$v' IS NOT A NUMBER" unless $is_num;
             return $push->($v);
         }
-        # The .hcx parser acts on PROFILE EPANET and ignores any other value.
-        return 'PROFILE TAKES EPANET' if $o eq 'PROFILE' && uc $v ne 'EPANET';
         return $push->(uc $v);
     }
     if ($type eq 'pipetype') {
@@ -519,11 +517,15 @@ sub setting_keys {
 }
 
 #==============================================================================
-# translate -- .phc text to .hcx text.
+# translate -- .phc text to the rows the network is built from.
 #
-# Returns (hcx text, line map, units), where $map->[n] is the .phc line that
-# .hcx line n (from 1) came from.  Fails, naming the .phc line, on anything
-# the language itself does not allow.
+# Returns (rows, units).  Each row is [ section, text, line ]: which part of
+# the network it builds (UNITS, OPTIONS, NODES, PIPES, PUMPS, SUPPLIES,
+# DISCHARGES, DEVICES, or PROJECT for the cover sheet), the row's fields as
+# HardyCross::Parse::parse_row takes them, and the .phc line it came from.
+# Fails, naming the .phc line, on anything the language itself does not
+# allow; parse_row then makes the hydraulic checks, and read_string names the
+# .phc line for those too.
 #==============================================================================
 sub translate {
     my $text = shift // '';
@@ -670,8 +672,8 @@ sub translate {
 
     #---------------------------------------------------- every node defined
     # A node named by an element but defined nowhere is an error naming the
-    # node and the first line that uses it.  (.hcx would create it at
-    # elevation 0 without a word, so a mistyped name became a new node.)
+    # node and the first line that uses it.  (The network builder would create
+    # it at elevation 0 without a word, so a mistyped name became a new node.)
     my (%first_use, @used);
     my $need = sub {
         my ($name, $n) = @_;
@@ -692,7 +694,7 @@ sub translate {
               @used ? ' (ALSO ' . join(', ', map { "$_ ON LINE $first_use{$_}" } @used) . ')' : '');
     }
 
-    #---------------------------------------------------- the .hcx rows
+    #---------------------------------------------------- the rows
     my (@nodes_out, @elems);
     my $z = sub { fmt(length_metres($node{ $_[0] }{z}, $units{ELEVATION})) };
     push @nodes_out, [ "$_ " . $z->($_), $node{$_}{line} ] for @node_order;
@@ -734,40 +736,26 @@ sub translate {
         }
     }
 
-    #---------------------------------------------------- assemble
-    my (@out, @map);
-    my $emit = sub { push @out, $_[0]; $map[ scalar @out ] = $_[1] };
-    my $block = sub {
-        my ($name, $rows) = @_;
-        return unless @$rows;
-        $emit->($name, undef);
-        $emit->("  $_->[0]", $_->[1]) for @$rows;
-        $emit->('END', undef);
-    };
-    $block->('PROJECT', \@project);
-    # Lengths and elevations are written in metres and diameters in mm; flow
-    # and pressure stay in the file's own units, which the parser converts.
-    $block->('UNITS', [ [ "FLOW $units{FLOW}", $seen{'UNITS FLOW'} ],
-                        [ "PRESSURE $units{PRESSURE}", $seen{'UNITS PRESSURE'} ],
-                        [ 'LENGTH M', undef ], [ 'DIAMETER MM', undef ] ]);
-    $block->('OPTIONS', [ ($method ? [ "METHOD $method->[0]", $method->[1] ] : ()), @options ]);
-    $block->('NODES', \@nodes_out);
-    my $open = '';
-    for my $e (@elems) {
-        my ($blk, $row, $n) = @$e;
-        if ($blk ne $open) {
-            $emit->('END', undef) if $open;
-            $emit->($blk, undef);
-            $open = $blk;
-        }
-        $emit->("  $row", $n);
-    }
-    $emit->('END', undef) if $open;
-    return (join("\n", @out) . "\n", \@map, \%units);
+    #---------------------------------------------------- in order
+    # The rows in the order the network is built in: the cover sheet, the
+    # units, the options, every node, then the elements as the file gives
+    # them.  Lengths and elevations are written in metres and diameters in
+    # mm; flow and pressure stay in the file's own units, which the network
+    # builder converts.  Each row carries the .phc line it came from (undef
+    # for one the reader adds itself).
+    my @built = ((map { [ 'PROJECT', @$_ ] } @project),
+                [ 'UNITS', "FLOW $units{FLOW}", $seen{'UNITS FLOW'} ],
+                [ 'UNITS', "PRESSURE $units{PRESSURE}", $seen{'UNITS PRESSURE'} ],
+                [ 'UNITS', 'LENGTH M', undef ], [ 'UNITS', 'DIAMETER MM', undef ],
+                ($method ? [ 'OPTIONS', "METHOD $method->[0]", $method->[1] ] : ()),
+                (map { [ 'OPTIONS', @$_ ] } @options),
+                (map { [ 'NODES', @$_ ] } @nodes_out),
+                @elems);
+    return (\@built, \%units);
 }
 
 #------------------------------------------------------------------------------
-# pipe_row -- the .hcx PIPES row for one pipe.
+# pipe_row -- the PIPES row for one pipe.
 #
 #   $p      { line, use, start, end, len, size, fits }
 #   $from   the node the pipe starts at when a device takes its start, or undef
@@ -865,25 +853,39 @@ sub pipe_size {
 #==============================================================================
 # read_string / read_model -- a .phc model read into a network.
 #
-# The network is what HardyCross::Parse::read_string builds from the
-# translated .hcx text, so the solver, report and demand calculation see no
-# difference.  Its source_text is that .hcx text: the demand calculation
-# re-reads it at trial supply pressures.
+# Each translated row is added to the network by HardyCross::Parse::parse_row.
+# An error names the .phc line the row came from.  The network keeps the .phc
+# text as source_text: the demand calculation and the pressure ratio valve's
+# top-of-band solve re-read it.
 #==============================================================================
 sub read_string {
     my $text = shift;
-    my ($hcx, $map, $units) = translate($text);
-    my $net = eval { HardyCross::Parse::read_string($hcx) };
-    unless ($net) {
+    my ($rows, $units) = translate($text);
+    my $net = HardyCross::Parse::new_net();
+    for my $r (@$rows) {
+        my ($section, $row, $n) = @$r;
+        if ($section eq 'PROJECT') {
+            # A cover-sheet field: the value is the rest of the line as typed.
+            my ($f, $v) = split ' ', $row, 2;
+            ($v //= '') =~ s/[^\x20-\x7E]//g;
+            $v =~ s/\s+\z//;
+            $net->{project}{ uc $f } = $v;
+            next;
+        }
+        my $ok = eval { HardyCross::Parse::parse_row($net, $section, [ HardyCross::Parse::tokenize($row) ]); 1 };
+        next if $ok;
         my $e = $@;
         die $e unless HardyCross::is_model_error($e);
-        if ($e->{msg} =~ /^line (\d+): (.*)\z/s && defined $map->[$1]) {
-            HardyCross::fail("line %d: %s", $map->[$1], uc $2);
-        }
-        die $e;
+        HardyCross::fail(defined $n ? "line %d: %s" : '%s', (defined $n ? $n : ()), uc $e->{msg});
     }
-    $net->{phc_text}  = $text;
-    $net->{phc_units} = $units;
+    HardyCross::fail('THE FILE HOLDS NO MODEL: NO NODES AND NO PIPES')
+        if @{ $net->{nodes} } <= 2 && @{ $net->{elems} } <= 1;
+    # The .phc text is kept so the demand point and the ratio valve band can
+    # re-solve the model from exactly what was read (HardyCross::Demand,
+    # HardyCross::Report).
+    $net->{source_text} = $text;
+    $net->{phc_text}    = $text;
+    $net->{phc_units}   = $units;
     return $net;
 }
 
@@ -1000,8 +1002,8 @@ sub propose {
 # Returns { status, message, template => { command, text, fields, current },
 # choices => [ [code, description] ], proposal, undefined => [ nodes ] }.
 #
-# A PIPE, outlet, PUMP or WATER line the language accepts is also parsed as
-# its .hcx row by the .hcx parser itself, so a DN the pipe type does not make
+# A PIPE, outlet, PUMP or WATER line the language accepts is also built as its
+# row by the network builder itself, so a DN the pipe type does not make
 # or a fitting the database lacks is an error as it is typed -- by the same
 # rule and in the same words as when the model is solved.
 #------------------------------------------------------------------------------

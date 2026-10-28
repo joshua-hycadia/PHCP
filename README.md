@@ -25,9 +25,7 @@ perl tools/stress_invariance.pl 60       # invariance stress on 60 random networ
 
 One file type: `.phc`, the command language described below.  `phcp.pl`, the
 editor, the viewer and the AutoCAD exporter all read or write it, and a file of
-any other type is refused with the reason.  (`.hcx`, the block format of the
-prototype, is gone as a user format; its files are kept in `tools/baseline/`
-as the independent description each example is tested against.)
+any other type is refused with the reason.
 
 ## The .phc command language
 
@@ -116,7 +114,7 @@ The valve holds its ratio only to within a band - "within +/- 5% of the inlet
 pressure" in the manufacturer's data - so 1500 kPa into a 3:1 valve gives
 anywhere from 425 to 575 kPa.  The calculation uses the BOTTOM of the band,
 outlet = inlet x (1/ratio - band), so every outlet downstream is checked
-against the least pressure the valve can be relied on to give (Joshua, 28
+against the least pressure the valve can be relied on to give (decided 28
 October 2026).  Section 10 shows each valve's band, and the report solves the
 network once more with every valve at the TOP of its band and states the
 highest pressure that gives downstream, for the pipe, fitting and head
@@ -146,17 +144,17 @@ default.  Velocity is reported in m/s.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `2.5CM`,
 `14'3"`.  The K-factor default is the unit the office's existing data uses
-(K 8 for a K80 head), confirmed as the default by Joshua on 28 October 2026.
+(K 8 for a K80 head), confirmed as the default on 28 October 2026.
 
-**How it is read.**  Each `.phc` command is translated into rows of the
-prototype's `.hcx` block syntax that mean the same thing, and the rows are read
-by that syntax's parser (`HardyCross/Phc.pm`, `HardyCross/Parse.pm`) - an
+**How it is read.**  Each `.phc` command is translated into internal rows
+that mean the same thing, and each row is added to the network by one network
+builder (`HardyCross/Phc.pm` translates, `HardyCross/Parse.pm` builds) - an
 internal step a user never sees.  Every hydraulic check and default
 therefore exists once.  The `.phc` reader checks the language itself - command
 words, fields, numbers, units, names - and converts lengths and elevations to
 metres, using the engine's own unit factors for everything else.  Every error
-carries the `.phc` line number, including the parser's own, mapped back from
-the translated row.
+carries the `.phc` line number, including the network builder's own, named
+from the line the row was made from.
 
 **Fixed flows.**  A `FIXEDFLOW` takes exactly its FLOW whatever the pressure -
 it is a nodal demand, outside every loop - and its MINPRESSURE is the pressure
@@ -175,12 +173,13 @@ thrown away.)  Solved flows and
 pressures are unchanged by it; the compliance rows, and the demand point of a
 model whose fixed flow governs, are new.
 
-**Examples.**  Every example is supplied as `.phc`, with its `.hcx` original
-kept as the baseline in `tools/baseline/`: `tools/test_phc.pl` solves both and
-requires the same pipe flows and node pressures.  In `.phc` a supply or outlet takes its node's
-name, a device sits in a pipe of no length where the `.hcx` had it between two
-nodes, and example 04's sprinkler on the supply node has a node of its own -
-so the reports differ in those names, not in the numbers.
+**Examples.**  Every example is supplied as `.phc`.  Its solved pipe flows and
+node pressures are frozen in `tools/baseline/<example>.expected`, taken from an
+independent description of the same network solved at tight tolerances, and
+`tools/test_phc.pl` requires the example to reproduce them to 1e-4.  Example 04,
+the 1000-node grid, has only its pipe and node names frozen: its solve takes many
+minutes, so it is checked to hold every pipe and node, and solved only with
+`--full`.
 
 **Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
 typed, without Tk, for the text editor: whether it is complete, the command's
@@ -374,7 +373,7 @@ refuses.  `tools/test_editor.pl` checks those decisions headless;
 `tools/test_editor_window.pl` drives the window itself under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
-Linux with Tk 804.036.  The window has been run on Windows 11 by Joshua
+Linux with Tk 804.036.  The window has been run on Windows 11
 (see Windows below); the test suites themselves have been run on Linux only.
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
@@ -539,18 +538,26 @@ packaged `phcp_editor` opened its window with a model loaded.  That run found
 and fixed a defect - the packaged editor exited without opening a window.  It
 was run again after the editor's layout changed, with the new Tk modules in
 the list.
-Joshua ran the Windows build on 28 October 2026 (Strawberry Perl 5.42.3, GCC
+The Windows build was run on 28 October 2026 (Strawberry Perl 5.42.3, GCC
 13.2.0): Tk compiled from the patched release, both programs built, and the
 smoke test solved the examples and wrote a PDF.  The editor ran on Windows 11
 at 150 % display scaling; what that run showed - blurred text, dividers too
 thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
-The script now also packs Win32::API, which the editor uses to be sharp on a
-scaled display; the build has not been re-run since that line was added.
+The script also packs Win32::API, which the editor uses to be sharp on a
+scaled display.
+
+**The icon.**  `data/phcp.ico` - a blue tile with a two-loop pipe network and
+a red sprinkler at the far node - is written into both `.exe` files by pp,
+which needs Win32::Exe (the script installs it; without it the programs keep
+the default icon).  The editor also sets the same picture on its window and
+taskbar button itself, from PNG data held in `phcp_editor.pl`, so it shows
+when run from source too.  The build has not been re-run since the icon was
+added.
 
 ## Calling PHCP from another program
 
 Other programs run `phcp.exe` and read what it prints - a program to call,
-not a library to link (Joshua, 28 October 2026).  AutoCAD does so now (see
+not a library to link (decided 28 October 2026).  AutoCAD does so now (see
 below); Revit could later.
 
 ```
@@ -653,7 +660,6 @@ others on the page, and the report says which check to make.
 
 | suite | result |
 |---|---|
-| EPANET 2.3.5, 100 cases (before the Q^1.85 curves - not re-run) | 100 / 100 |
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
@@ -665,9 +671,9 @@ others on the page, and the report says which check to make.
 | report hand-checks, 7 models | 351 / 351 |
 | PDF structure, typeface and graph, 7 models | 93 / 93 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 116 / 116 |
+| text editor window, under Xvfb | 117 / 117 |
 | database editing and location | 37 / 37 |
-| invariance stress | 9 574 / 9 574 |
+| invariance stress | 9 584 / 9 584 |
 
 ## Stress testing
 
@@ -680,8 +686,8 @@ fitting strings.
 
 | run | result |
 |---|---|
-| 60 random networks x 7 transforms + resolver fuzz | 9 574 checks, 0 failed |
-| worst disagreement, any transform | 8e-6 L/min |
+| 60 random networks x 7 transforms + resolver fuzz | 9 584 checks, 0 failed |
+| worst disagreement, any transform | 2e-5 L/min |
 
 ### Scale
 
@@ -719,7 +725,7 @@ not the method.
 
 AS 1074 Medium as the basis bore for AS 2118.1 Table 14.11.1 is an office
 assumption; the Standard does not state one.  Orifice sizing uses a fitted
-model, not the standard's tables.  Agreement with EPANET and with other
+model, not the standard's tables.  Agreement with other
 implementations does not validate a reading of a standard.  The database is
 user editable: a value changed in it is only as good as the source it was
 taken from.

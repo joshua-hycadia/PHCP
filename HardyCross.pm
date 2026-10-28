@@ -93,7 +93,7 @@ sub set_unit {
 # is the scale water supply test results are plotted on in sprinkler practice,
 # because a main's pressure falls with friction and Hazen-Williams friction
 # goes as Q^1.85 -- so a supply given by its static and one residual point is
-# reproduced the way the flow test is read.  (Joshua's decision, 28 October
+# reproduced the way the flow test is read.  (decided 28 October
 # 2026.  The curve used to be one quadratic: exact through two points, but a
 # least-squares fit through three or more that did NOT pass through the
 # points entered.)
@@ -283,9 +283,9 @@ sub elem_hf {
         # into an HW calculation is not how the method is meant to be used.
         # K belongs with Darcy-Weisbach.
         #
-        # The engine nevertheless applies K under BOTH formulas, because
-        # EPANET does, and matching EPANET is the only way the validation
-        # suite means anything.  The place to enforce the engineering rule is
+        # The engine nevertheless applies K under BOTH formulas, as general
+        # network solvers do, so that a model means the same thing whichever
+        # formula it is solved with.  The place to enforce the engineering rule is
         # the front end -- offer K on the Darcy-Weisbach path and equivalent
         # length on the Hazen-Williams one -- not here, where silently
         # dropping a term the user wrote would make the two engines disagree
@@ -359,9 +359,10 @@ sub elem_hf {
     # used to fall through to the default at the bottom of this routine and
     # contribute ZERO, so the first solve ran as if the plate were absent, the
     # plate was then sized against that wrong duty, and the answer came out one
-    # rounding step off -- 34.0 mm where the correct duty gives 33.5.  EPANET
-    # validation could not catch it, because EPANET has no concept of sizing a
-    # plate; only the direct comparison against the C++ engine did.
+    # rounding step off -- 34.0 mm where the correct duty gives 33.5.  A
+    # comparison with a general network solver could not catch it, because
+    # such a solver has no concept of sizing a plate; only the direct
+    # comparison against the C++ engine did.
     if ($k eq 'FIXED_DROP' || $k eq 'ORIFICE_REQUIRED' || $k eq 'RATIO') {
         # Contributes to the loop sum but not to the denominator.  A pressure
         # ratio valve's drop is set from its inlet pressure by the outer loop
@@ -851,7 +852,7 @@ sub pump_status {
 # pressure to within +/- 5% of the inlet pressure": at 1500 kPa in, a 3:1
 # valve gives anywhere from 500 - 75 = 425 to 500 + 75 = 575 kPa.  The design
 # must hold wherever in that band the valve sits, so the calculation uses the
-# BOTTOM of the band (Joshua, 28 October 2026):
+# BOTTOM of the band (decided 28 October 2026):
 #
 #     outlet = inlet x (1/ratio - band)      drop = inlet - outlet
 #
