@@ -342,6 +342,14 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `phcp_viewer.pl` | removed: the editor's results tables do what it did |
 | `phcp_editor.pl`, `HardyCross/Window/*.pm` | the editor split one file to a tab (PROJECT, GRAPH, QUICK TOOLS, DATABASE, results), all in package main; moved, not changed |
 
+## v1.1 - fittings, and units in the tools
+
+| file | change |
+|---|---|
+| `HardyCross/Tools.pm` | units: each calculator reads its fields in the PROJECT tab's units (the model's own factors) and gives answers back for show(); `fittings`: equivalent lengths by the database look-up a model's pipe uses; the K tools in every K unit |
+| `HardyCross/Window/Tools.pm` | a FITTINGS calculator; every field and answer named in the units chosen |
+| `HardyCross/Graph.pm`, `HardyCross/Window/Graph.pm` | a graph's flow and pressure units, chosen under SHEET (the PROJECT tab's to begin), saved in the `.phg` as UNITS lines, named on the tab and the sheet |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -384,3 +392,4 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 - [x] v1.1 - Darcy-Weisbach takes the database roughness for a pipe type; an assumed 0.045 mm is flagged (engine change, approved 28 October 2026)
 - [x] v1.1 - CI on Linux and Windows, releases with the programs attached; icon on the .exe files; viewer retired
 - [x] v1.1 - editor split, one file to a tab
+- [x] v1.1 - QUICK TOOLS: fittings; units in QUICK TOOLS and GRAPH
