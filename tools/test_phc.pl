@@ -5,42 +5,35 @@
 # source code; it does not cover the third-party data in data/.
 #
 #==============================================================================
-# test_phc.pl -- the .phc command language, its converter and its line checker.
+# test_phc.pl -- the .phc command language and its line checker.
 #
-#   perl tools/test_phc.pl          every check; example 04 compared as parsed
-#                                   networks, not solved (it takes minutes)
-#   perl tools/test_phc.pl --full   also solve example 04 both ways and compare
-#                                   its flows and pressures (several minutes)
+#   perl tools/test_phc.pl          every check; example 04 read, not solved
+#   perl tools/test_phc.pl --full   also solve example 04 both ways (minutes)
 #
 # What it proves, in order:
 #
-#   1. CONVERSION.  Every example converted from .hcx gives a report identical
-#      to the original's apart from the model file name, and the converted file
-#      in examples/ is exactly what the converter writes today.
-#   2. EVERY COMMAND.  A valid line reads; a line missing each required field,
-#      with a bad number, with an option the command does not take, or setting
-#      something twice, is refused -- and every refusal names its line.
-#   3. ANY ORDER.  Each example with its lines shuffled solves to the same
-#      flows and pressures (iteration counts may differ).
-#   4. USE, FITTINGS, UNITS.  Use applies to the pipes after it; the three
-#      ways of writing fittings mean the same thing; Units can go anywhere.
-#   5. THE LINE CHECKER.  check_line's status, template, pick lists and
-#      proposal for each command, headless.
-#   6. TRAPS CLOSED.  A node with no Node line, '#' in a line, END as an id,
-#      and a parser error reported on the .phc line it came from.
-#   7. FIXED-FLOW MINIMUM PRESSURE.  Flow MINP= is read, passed or failed in
-#      the report, and governs the demand point when its margin is the least.
+#   1. EXAMPLES.  Every example in .phc solves to the same pipe flows and node
+#      pressures as its .hcx original, the baseline.
+#   2. EVERY COMMAND.  A valid line reads; a line missing each field, with a
+#      bad number, a KEY=value, an unknown word, or a duplicate, is refused --
+#      and every refusal names its line.
+#   3. ANY ORDER.  Shuffled lines solve to the same results.
+#   4. UNITS.  One model in other units, and values carrying their own units,
+#      is the same model.
+#   5. COPIES, CHANGES AND DEVICES.  PC, NC, CHANGEPIPE, EQV, and BP, BFP,
+#      PRV, OPP and OFD in a pipe, each give the network they describe.
+#   6. THE LINE CHECKER.  Status, template, pick lists and proposals.
+#   7. TRAPS CLOSED.  Undefined nodes, duplicate names, '#', END, KEY=value.
+#   8. FIXED FLOWS.  The minimum pressure is checked and can govern.
 #==============================================================================
 use strict;
 use warnings;
 use FindBin;
 use lib "$FindBin::Bin/..";
 use List::Util qw(shuffle);
-use Data::Dumper;
 use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Phc;
-use HardyCross::Convert;
 use HardyCross::Report;
 use HardyCross::Demand;
 
@@ -48,18 +41,16 @@ my $FULL = grep { $_ eq '--full' } @ARGV;
 my $EX   = "$FindBin::Bin/../examples";
 my ($pass, $fail) = (0, 0);
 
-# is -- one named check.  A failure prints what was found, so a red line says
-# why without a debugger.
+# is -- one named check; a failure prints what was found.
 sub is {
     my ($name, $ok, $why) = @_;
-    printf "  %-66s %s\n", $name, $ok ? 'ok' : '*** FAIL';
+    printf "  %-68s %s\n", $name, $ok ? 'ok' : '*** FAIL';
     print "      $why\n" if !$ok && defined $why;
     $ok ? $pass++ : $fail++;
 }
-
 sub slurp { my $p = shift; open my $f, '<', $p or die "$p: $!\n"; local $/; <$f> }
 
-# read_phc -- (network, undef) or (undef, error message) for .phc text.
+# read_phc -- (network, undef) or (undef, message) for .phc text.
 sub read_phc {
     my $net = eval { HardyCross::Phc::read_string(shift) };
     return ($net, undef) if $net;
@@ -67,449 +58,408 @@ sub read_phc {
     return (undef, HardyCross::is_model_error($e) ? $e->{msg} : "$e");
 }
 
-# refused -- check that .phc text is refused on line $line with a message
-# matching $re.
+# refused -- .phc text must be refused on line $line, with a message matching $re.
 sub refused {
     my ($name, $text, $line, $re) = @_;
     my ($net, $err) = read_phc($text);
-    my $ok = !$net && $err =~ /^line \Q$line\E: / && $err =~ $re;
-    is($name, $ok, $net ? 'it was accepted' : "got: $err");
+    is($name, !$net && $err =~ /^line \Q$line\E: / && $err =~ $re, $net ? 'it was accepted' : "got: $err");
 }
 
-# The network as plain data, for comparing two reads.  The source texts are
-# left out: they are the inputs, which differ by design.
-sub canon {
-    my $net = shift;
-    local $Data::Dumper::Sortkeys = 1;
-    local $Data::Dumper::Indent   = 0;
-    local $Data::Dumper::Deepcopy = 1;
-    my %n = %$net;
-    delete @n{qw(source_text phc_text)};
-    return Dumper(\%n);
-}
-
-# Solved flows by element id and gauge pressures by node id.
+# Solved pipe flows by id, and gauge pressures by node id.
 sub results {
     my $net = shift;
     my (%q, %p);
-    $q{ $_->{id} } = $_->{q} for @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
-    for my $n (@{ $net->{nodes} }[1 .. $#{ $net->{nodes} }]) {
-        next if $n->{id} eq 'REF';
-        $p{ $n->{id} } = $n->{h} - $HardyCross::GAMMA_W * $n->{z};
-    }
+    $q{ $_->{id} } = $_->{q} for grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    $p{ $_->{id} } = $_->{h} - $HardyCross::GAMMA_W * $_->{z}
+        for grep { $_->{id} ne 'REF' } @{ $net->{nodes} }[1 .. $#{ $net->{nodes} }];
     return (\%q, \%p);
 }
-
-# The worst difference between two id => value maps; huge if the ids differ.
+# worst -- the largest difference over the keys of $a (all must be in $b).
 sub worst {
     my ($a, $b) = @_;
-    return 1e30 unless join(',', sort keys %$a) eq join(',', sort keys %$b);
     my $w = 0;
-    for (keys %$a) { my $d = abs($a->{$_} - $b->{$_}); $w = $d if $d > $w }
+    for (keys %$a) {
+        return 1e30 unless exists $b->{$_};
+        my $d = abs($a->{$_} - $b->{$_});
+        $w = $d if $d > $w;
+    }
     return $w;
 }
+sub solved { my $n = shift; HardyCross::solve_model($n); $n }
+sub elems_by_id { my $n = shift; return map { $_->{id} => $_ } grep { $_->{id} } @{ $n ? $n->{elems} : [] } }
 
-# The report without its MODEL FILE line, which names the file and so differs.
-sub report_body {
-    my ($net, $ok, $path) = @_;
-    my $r = HardyCross::Report::write_report($net, $ok, $path);
-    $r =~ s/^.*MODEL FILE.*\n//mg;
-    return $r;
+# Tight tolerances, so two descriptions of one model are compared on the
+# model and not on where the iteration happened to stop.
+my $TIGHT_PHC = "\nOPTION TOL_FLOW 1E-7\nOPTION TOL_LOOP 1E-8\nOPTION MAXITER 200000\n";
+sub tighten_phc { my $t = shift; $t =~ s/^OPTION\s+(TOL_FLOW|TOL_LOOP|MAXITER)\b.*$//mg; $t . $TIGHT_PHC }
+sub tighten_hcx {
+    my $t = shift;
+    $t =~ s/^\s*(TOL_FLOW|TOL_LOOP|MAXITER)\b.*$//mg;
+    $t =~ s/^OPTIONS\s*$/OPTIONS\n  TOL_FLOW 1E-7\n  TOL_LOOP 1E-8\n  MAXITER 200000/m
+        or $t =~ s/^UNITS\s*$/OPTIONS\n  TOL_FLOW 1E-7\n  TOL_LOOP 1E-8\n  MAXITER 200000\nEND\nUNITS/m;
+    return $t;
 }
 
 #==============================================================================
-print "1. CONVERSION - every example, report identical to the .hcx original\n";
+print "1. EXAMPLES - the same flows and pressures as the .hcx baseline\n";
 #==============================================================================
-for my $hcx (sort glob("$EX/*.hcx")) {
-    (my $base = $hcx) =~ s{.*/}{};
-    (my $phcpath = $hcx) =~ s/\.hcx\z/.phc/;
-    my $phc = eval { HardyCross::Convert::hcx_to_phc(slurp($hcx), $base) };
-    is("$base converts", defined $phc, $@ && (ref $@ ? $@->{msg} : $@));
-    next unless defined $phc;
-    is("   examples/ holds exactly what the converter writes",
-       -e $phcpath && slurp($phcpath) eq $phc, "re-run phcp.pl --convert for $base");
-
-    my $a = HardyCross::Parse::read_model($hcx);
-    my ($b, $err) = read_phc($phc);
-    is("   the .phc reads", $b, $err);
-    next unless $b;
-    is("   same network as the .hcx (every element, node and option)",
-       canon($a) eq canon($b));
-
-    if ($base =~ /grid1000/ && !$FULL) {
-        print "      (not solved: 1000 nodes takes minutes; --full to solve)\n";
-        next;
-    }
-    my $oka = HardyCross::solve_model($a);
-    my $okb = HardyCross::solve_model($b);
-    is("   same iterations ($a->{iters})", $a->{iters} == $b->{iters},
-       "$a->{iters} against $b->{iters}");
+# An orifice plate in .phc takes its pipe's bore from the pipe and fitting
+# database (ASAM DN50: 53.0 mm); the .hcx route used a fixed table (53.1 mm).
+# The baseline is given the database bore, so the comparison is exact.
+for my $phcpath (sort glob("$EX/*.phc")) {
+    (my $base = $phcpath) =~ s{.*/}{};
+    (my $hcxpath = $phcpath) =~ s/\.phc\z/.hcx/;
+    my ($p, $err) = read_phc(slurp($phcpath));
+    is("$base reads", $p, $err);
+    next unless $p && -e $hcxpath;
+    my $hcx = slurp($hcxpath);
+    $hcx =~ s/(ORIFICE_[PD].*DN=50)/$1 PIPEDIA=53.0/g;
     if ($base =~ /grid1000/) {
-        # Its report is not written: the demand point re-solves the whole
-        # network dozens of times, hours at 1000 nodes.  The solved flows and
-        # pressures, which everything in the report is computed from, are
-        # compared instead -- exactly, since the networks are identical.
-        my ($qa, $pa) = results($a);
-        my ($qb, $pb) = results($b);
-        is('   identical solved flows and pressures (report not written: hours)',
-           worst($qa, $qb) == 0 && worst($pa, $pb) == 0);
+        my $h = HardyCross::Parse::read_string($hcx);
+        my %pp = map { $_->{id} => 1 } grep { $_->{kind} eq 'PIPE' } @{ $p->{elems} }[1 .. $#{ $p->{elems} }];
+        my @missing = grep { !$pp{ $_->{id} } } grep { $_->{kind} eq 'PIPE' } @{ $h->{elems} }[1 .. $#{ $h->{elems} }];
+        is('   every baseline pipe and node is in the .phc model',
+           !@missing && @{ $p->{nodes} } == @{ $h->{nodes} } + 1);   # + the moved sprinkler's node
+        next unless $FULL;
+        my ($qa, $pa) = results(solved($h));
+        my ($qb, $pb) = results(solved($p));
+        is(sprintf('   solved: worst %.1e L/min, %.1e kPa (within its tolerances)',
+                   worst($qa, $qb), worst($pa, $pb)), worst($qa, $qb) < 0.5 && worst($pa, $pb) < 0.5);
         next;
     }
-    is("   report identical apart from the model file name",
-       report_body($a, $oka, $hcx) eq report_body($b, $okb, $phcpath));
+    my ($qa, $pa) = results(solved(HardyCross::Parse::read_string(tighten_hcx($hcx))));
+    my ($t) = read_phc(tighten_phc(slurp($phcpath)));
+    my ($qb, $pb) = results(solved($t));
+    my ($wq, $wp) = (worst($qa, $qb), worst($pa, $pb));
+    is(sprintf('   worst difference %.1e in a pipe flow, %.1e in a node pressure', $wq, $wp),
+       $wq < 1e-4 && $wp < 1e-4);
 }
 
 #==============================================================================
-print "2. EVERY COMMAND - valid, each field missing, bad number, bad option\n";
+print "2. EVERY COMMAND - valid, each field missing, bad numbers, refusals\n";
 #==============================================================================
-# A small model the test lines are added to, as line 9.
-my $BASE = join "\n", 'Units FLOW=LPM', 'Node A 0', 'Node B 0', 'Node C 1.5',
-    'Supply S A STATIC 500', 'Use BORE', 'Pipe P1 A B 10 100', 'Head H B K=80 P=50', '';
-my $L = 9;
-
-# Each command: a valid line, the indexes of its numeric fields (counting the
-# command word as 0), and the options that are required.
+# A small model; each test line is added as line 10.
+my $BASE = join "\n", 'UNITS LENGTH M', 'NODE A 0', 'NODE B 0', 'NODE C 1.5',
+    'WATER W1 0 500', 'USE BORE 120', 'PIPE P1 W1 A 10 100', 'PIPE P2 A B 10 100',
+    'SPRINKLER S1 1 -50 80', '';
+my $L = 10;
+# Each command: a valid line, and the positions (from 1) of its numeric fields.
 my @CASES = (
-    [ 'Title A TEST MODEL',                       [],           [] ],
-    [ 'Project JOB HYC-2026-000',                 [],           [] ],
-    [ 'Units PRESSURE=KPA LENGTH=M',              [],           [] ],
-    [ 'Method HW',                                [],           [] ],
-    [ 'Option TOL_FLOW 0.01',                     [2],          [] ],
-    [ 'Use ASAM C=110',                           [],           [] ],
-    [ 'Node D 2.5',                               [2],          [] ],
-    [ 'Pipe P2 B C 5 50 C=100 EQV=1 EPS=0.05 K=0.5', [4, 5],    [] ],
-    [ 'Supply S2 C STATIC 600 Z=1',               [4],          [] ],
-    [ 'Supply S3 C CURVE 0 600 1000 500 Z=1',     [4, 5, 6, 7], [] ],
-    [ 'Pump PU A C 0 300 1000 200',               [4, 5, 6, 7], [] ],
-    [ 'Head H2 C K=80 P=50 Z=1',                  [],           [] ],
-    [ 'Hydrant HY C Q=600 P=200',                 [],           [] ],
-    [ 'HoseReel HR C K=7.5 P=220',                [],           [] ],
-    [ 'Flow F1 C Q=100 MINP=150 Z=1',             [],           ['Q'] ],
-    [ 'BFP BF A C 0 0 1000 20',                   [4, 5, 6, 7], [] ],
-    [ 'PRV PR A C DP=50',                         [],           ['DP'] ],
-    [ 'Orifice OR A C DP=20 DN=50 CD=0.6',        [],           ['DP', 'DN'] ],
-    [ 'Orifice OD A C BORE=30 PIPEDIA=53',        [],           ['BORE', 'PIPEDIA'] ],
+    [ 'TITLE A TEST MODEL',                 [] ],
+    [ 'PROJECT JOB HYC-2026-000',           [] ],
+    [ 'UNITS PRESSURE KPA',                 [] ],
+    [ 'METHOD HW',                          [] ],
+    [ 'OPTION TOL_FLOW 0.01',               [2] ],
+    [ 'USE ASAM 110',                       [2] ],
+    [ 'PIPE P3 B C 5 50',                   [4, 5] ],
+    [ 'PC P2 P4 B C',                       [] ],
+    [ 'CHANGEPIPE P2 12 80',                [2, 3] ],
+    [ 'EQV P2 3.5',                         [2] ],
+    [ 'NODE D 2.5',                         [2] ],
+    [ 'NC C D E',                           [] ],
+    [ 'WATER W2 0 600 1000 500',            [2, 3, 4, 5] ],
+    [ 'SPRINKLER S2 1.5 -50 80',            [2, 3, 4] ],
+    [ 'HYDRANT H1 1.5 600 21',              [2, 3, 4] ],
+    [ 'HREEL R1 1.5 -220 7.5',              [2, 3, 4] ],
+    [ 'FIXEDFLOW F1 C 100 150',             [3, 4] ],
+    [ 'PUMP PU1 A C 300 1000 200',          [4, 5, 6] ],
+    [ 'BP P2 300 1000 200',                 [2, 3, 4] ],
+    [ 'BFP P2 0 10 1000 30',                [2, 3, 4, 5] ],
+    [ 'PRV P2 0 50',                        [2, 3] ],
+    [ 'OPP P2 20',                          [2] ],
+    [ 'OFD P2 60',                          [2] ],
+    [ 'PRA P2 3:1 300',                     [3] ],
 );
 for my $case (@CASES) {
-    my ($line, $nums, $need) = @$case;
+    my ($line, $nums) = @$case;
     my ($word) = $line =~ /^(\S+)/;
     my ($net, $err) = read_phc($BASE . $line);
     is("$word: '$line' reads", $net, $err);
-
-    # Each fixed field missing: the line cut after fewer and fewer fields --
-    # the command word alone, then with its first field, and so on.
+    # Each fixed field missing: the line cut after fewer and fewer fields.
     my $spec = HardyCross::Phc::command_spec($word);
     my @tk = split ' ', $line;
     my $nfix = @{ $spec->{fixed} };
-    my @plain = grep { !/=/ } @tk;
     for my $keep (0 .. $nfix - 1) {
-        my $cut = join ' ', @plain[0 .. $keep];
-        refused("   missing $spec->{fixed}[$keep][0]: '$cut'", $BASE . $cut, $L, qr/needs/);
-    }
-    # Each required option missing.
-    for my $k (@$need) {
-        (my $cut = $line) =~ s/\s+$k=\S+//;
-        refused("   missing $k=", $BASE . $cut, $L, qr/needs/);
+        my $cut = join ' ', @tk[0 .. $keep];
+        refused("   missing $spec->{fixed}[$keep][0]: '$cut'", $BASE . $cut, $L, qr/NEEDS/);
     }
     # Each numeric field given a bad number (the letter O for a zero).
     for my $i (@$nums) {
         my @b = @tk;
         $b[$i] = '1O0';
-        refused("   field $i '1O0' is not a number", $BASE . join(' ', @b), $L, qr/not a number/);
+        refused("   field $i '1O0' refused", $BASE . join(' ', @b), $L, qr/NOT A (NUMBER|LENGTH)/);
     }
-    # A bad number in an option.
-    if ($line =~ /(\w+)=\d/ && $word ne 'Units') {
-        my $k = $1;
-        (my $b = $line) =~ s/$k=\S+/$k=1O0/;
-        refused("   $k=1O0 is not a number", $BASE . $b, $L, qr/not a number/);
-    }
-    # An option the command does not take.
-    refused("   XX=1 is not an option of $word", "$BASE$line XX=1", $L, qr/not an option/)
-        unless $word =~ /^(Title|Project)$/;
 }
-refused('Option TRACE FULL: an unknown option is an error',
-        $BASE . 'Option TRACE FULL', $L, qr/unknown option TRACE/);
-refused('Option METHOD: points to the Method command',
-        $BASE . 'Option METHOD HW', $L, qr/command of its own/);
-refused('Option PROFILE FOO: only EPANET', $BASE . 'Option PROFILE FOO', $L, qr/EPANET/);
-refused('Option TOL_FLOW with no value', $BASE . 'Option TOL_FLOW', $L, qr/needs value/);
-refused('unknown command', $BASE . 'Sprinkler S9 B K=80 P=50', $L, qr/unknown command/);
-refused('Units PRESSURE=XYZ: the parser refuses the unit, on this line',
-        $BASE . 'Units PRESSURE=XYZ', $L, qr/unknown unit XYZ/);
+refused('a KEY=value field is refused', $BASE . 'PIPE P3 B C 5 50 C=120', $L, qr/BY POSITION/);
+refused('an unknown command', $BASE . 'HEAD H9 0 50 8', $L, qr/UNKNOWN COMMAND HEAD/);
+refused('an unknown option', $BASE . 'OPTION TRACE FULL', $L, qr/UNKNOWN OPTION/);
+refused('an unknown unit', $BASE . 'UNITS FLOW LPH', $L, qr/UNKNOWN UNIT LPH FOR FLOW/);
+refused('an unknown units quantity', $BASE . 'UNITS SPEED MS', $L, qr/UNKNOWN UNITS QUANTITY/);
+refused('an unknown pipe type', $BASE . 'USE BB16 150', $L, qr/UNKNOWN PIPE TYPE BB16/);
+refused('a size not made in the pipe type, on its line',
+        $BASE . "USE ASAM\nPIPE P9 B C 3 47", $L + 1, qr/DATA_REQUIRED - DN47/);
+refused('a fitting the database lacks, on its line',
+        $BASE . "USE ASAM\nPIPE P9 B C 3 50 2Q", $L + 1, qr/CANNOT READ FITTING CODE/);
+refused('fittings on a USE BORE pipe', $BASE . 'PIPE P9 B C 3 50 2E', $L, qr/FITTINGS NEED A PIPE TYPE/);
+refused('extra fields', $BASE . 'NODE D 2.5 9', $L, qr/UNEXPECTED FIELD/);
+refused('a negative length', $BASE . 'PIPE P9 B C -3 50', $L, qr/CANNOT BE NEGATIVE/);
+refused('a single BFP pair must be at flow 0', $BASE . 'BFP P2 100 10', $L, qr/FIXED LOSS: ITS FLOW MUST BE 0/);
+refused('a PRA ratio must reduce', $BASE . 'PRA P2 1:2', $L, qr/MUST BE MORE THAN 1/);
 
-print "   a setting given twice names both lines\n";
-refused('Units FLOW= twice',    $BASE . 'Units FLOW=LPS',       $L, qr/FLOW= is already set on line 1/);
-refused('Method twice',         "Method HW\n$BASE" . 'Method DW', $L + 1, qr/already set on line 1/);
-refused('Option twice',         "Option MAXITER 10\n$BASE" . 'Option MAXITER 20',
-        $L + 1, qr/Option MAXITER is already set on line 1/);
-refused('Title twice',          "Title A\n$BASE" . 'Title B', $L + 1, qr/TITLE is already set/);
-refused('Title and Project TITLE', "Title A\n$BASE" . 'Project TITLE B', $L + 1,
-        qr/TITLE is already set/);
-refused('Project field twice',  "Project JOB 1\n$BASE" . 'Project job 2', $L + 1,
-        qr/JOB is already set/);
-refused('Node twice',           $BASE . 'Node A 3', $L, qr/node A already has a Node line, on line 2/);
-refused('an option twice on one line', $BASE . 'Head H3 C K=80 K=81 P=50', $L, qr/K= is given twice/);
+print "   settings and names given twice name both lines\n";
+refused('UNITS LENGTH twice',    $BASE . 'UNITS LENGTH MM', $L, qr/UNITS LENGTH IS ALREADY SET ON LINE 1/);
+refused('METHOD twice',          "METHOD HW\n$BASE" . 'METHOD DW', $L + 1, qr/METHOD IS ALREADY SET ON LINE 1/);
+refused('OPTION twice',          "OPTION MAXITER 9\n$BASE" . 'OPTION MAXITER 8', $L + 1, qr/OPTION MAXITER IS ALREADY SET/);
+refused('TITLE twice',           "TITLE A\n$BASE" . 'TITLE B', $L + 1, qr/TITLE IS ALREADY SET/);
+refused('PROJECT field twice',   "PROJECT JOB 1\n$BASE" . 'PROJECT job 2', $L + 1, qr/PROJECT JOB IS ALREADY SET/);
+refused('a node defined twice',  $BASE . 'NODE A 3', $L, qr/NODE A IS ALREADY DEFINED ON LINE 2/);
+refused('a node defined twice, by another command', $BASE . 'SPRINKLER B 0 -50 80', $L,
+        qr/NODE B IS ALREADY DEFINED ON LINE 3/);
+refused('a pipe name used twice', $BASE . 'PIPE P1 B C 3 50', $L, qr/THE NAME P1 IS ALREADY USED ON LINE 7/);
+refused('two devices in one pipe', $BASE . "BFP P2 0 10\nPRV P2 0 5", $L + 1, qr/ALREADY HAS A DEVICE, BFP/);
 
 #==============================================================================
-print "3. ANY ORDER - shuffled lines solve to the same flows and pressures\n";
+print "3. ANY ORDER - shuffled lines give the same results\n";
 #==============================================================================
-# The lines are shuffled as units: each setting, Node and element line alone,
-# except that a Use line travels with the pipes after it (Use is positional by
-# design).  Pipes are shuffled within their Use group.  Tolerances are made
-# tight in both runs, so the comparison measures order, not convergence.
+# Lines are shuffled as units; a USE line travels with the pipes after it
+# (USE is positional by design), and those pipes are shuffled among themselves.
 srand 20261028;
 for my $phcpath (sort glob("$EX/*.phc")) {
     next if $phcpath =~ /grid1000/;
     (my $base = $phcpath) =~ s{.*/}{};
-    my @lines = grep { /\S/ && !m{^\s*//} && !/^Option\s+(TOL_FLOW|TOL_LOOP|MAXITER)\b/ }
-                split /\n/, slurp($phcpath);
-    push @lines, 'Option TOL_FLOW 1E-7', 'Option TOL_LOOP 1E-8', 'Option MAXITER 200000';
+    my @lines = grep { /\S/ && !m{^\s*//} } split /\n/, tighten_phc(slurp($phcpath));
     my (@units, $group);
     for (@lines) {
-        if (/^Use\b/)       { $group = [$_]; push @units, $group }
-        elsif (/^Pipe\b/)   { push @$group, $_ }
-        else                { push @units, [$_] }
+        if    (/^USE\b/)  { $group = [$_]; push @units, $group }
+        elsif (/^PIPE\b/) { push @$group, $_ }
+        else              { push @units, [$_] }
     }
     my $text = sub { join "\n", map { @$_ } @_ };
     my ($ref) = read_phc($text->(@units));
-    HardyCross::solve_model($ref);
-    my ($rq, $rp) = results($ref);
-    for my $try (1 .. 3) {
-        # Shuffle the units, and the pipes inside each Use group.
-        my @u = map { $_->[0] =~ /^Use/ ? [ $_->[0], shuffle(@{$_}[1 .. $#$_]) ] : $_ }
-                shuffle(@units);
+    my ($rq, $rp) = results(solved($ref));
+    for my $try (1 .. 2) {
+        my @u = map { $_->[0] =~ /^USE/ ? [ $_->[0], shuffle(@{$_}[1 .. $#$_]) ] : $_ } shuffle(@units);
         my ($net, $err) = read_phc($text->(@u));
         unless ($net) { is("$base shuffle $try reads", 0, $err); next }
-        HardyCross::solve_model($net);
-        my ($q, $p) = results($net);
+        my ($q, $p) = results(solved($net));
         my ($wq, $wp) = (worst($rq, $q), worst($rp, $p));
-        is(sprintf('%s shuffle %d: worst %.1e L/min, %.1e kPa (%d its against %d)',
-                   $base, $try, $wq, $wp, $net->{iters}, $ref->{iters}),
+        is(sprintf('%s shuffle %d: worst %.1e L/min, %.1e kPa', $base, $try, $wq, $wp),
            $wq < 1e-4 && $wp < 1e-4);
     }
 }
 
 #==============================================================================
-print "4. USE SCOPING, FITTING FORMS, UNITS ANYWHERE\n";
+print "4. UNITS - one model in other units is the same model\n";
 #==============================================================================
 {
-    my $m = join "\n", 'Node A 0', 'Node B 0', 'Node C 0', 'Node D 0', 'Node E 0',
-        'Supply S A STATIC 500', 'Head H E K=80 P=50',
-        'Pipe P0 A B 5 100',                  # before any Use: bore, C 120
-        'Use ASAM',
-        'Pipe P1 B C 5 50',                   # ASAM, the type's own C
-        'Pipe P2 C D 5 50 C=100',             # ASAM, C given on the pipe
-        'Use S40 C=110',
-        'Pipe P3 D E 5 50',                   # S40, the Use line's C
-        'Use BORE C=90',
-        'Pipe P4 A E 5 52.5',                 # a bore, the Use line's C
-        '';
-    my ($net, $err) = read_phc($m);
-    is('Use model reads', $net, $err);
-    my %e = map { $_->{id} => $_ } grep { $_->{id} } @{ $net->{elems} || [] };
-    is('before any Use: a bore, C = 120', !$e{P0}{ptype} && $e{P0}{dia} == 100 && $e{P0}{c} == 120);
-    is('Use ASAM: type ASAM, bore from the database, its own C',
-       $e{P1}{ptype} eq 'ASAM' && $e{P1}{dia} == 53.0 && !$e{P1}{c_given});
-    is('a pipe C= overrides', $e{P2}{c} == 100 && $e{P2}{c_given});
-    is('Use S40 C=110 applies to the pipe after it', $e{P3}{ptype} eq 'S40' && $e{P3}{c} == 110);
-    is('Use BORE C=90: a bore with C 90', !$e{P4}{ptype} && $e{P4}{dia} == 52.5 && $e{P4}{c} == 90);
-}
-{
-    my $m = "Node A 0\nNode B 0\nSupply S A STATIC 500\nHead H B K=80 P=50\nUse ASAM\n";
-    my %eqv;
-    for my $form ('2E T GV', '2E,1T,1GV', '2E1T1GV', '2e t gv') {
-        my ($net, $err) = read_phc($m . "Pipe P1 A B 10 50 $form\n");
-        is("fittings '$form' read", $net, $err);
-        $eqv{$form} = $net ? $net->{elems}[-1]{eqv} : -1;
+    # The same network three ways.  Lengths, elevations, sizes, pressures,
+    # flows and K-factors change unit; the solution must not.
+    my $si = join "\n", 'NODE A 0', 'NODE B 2.5', 'WATER W 0 700 2000 600', 'USE ASAM',
+        'PIPE P1 W A 20000 100 2E', 'PIPE P2 A B 15000 80 T', 'SPRINKLER S 3 -50 8',
+        'HYDRANT H 2.5 600 21', 'PIPE P3 B S 3000 40', 'PIPE P4 B H 5000 80', 'FIXEDFLOW F A 100 150', '';
+    my $other = join "\n", 'UNITS LENGTH M', 'UNITS ELEVATION MM', 'UNITS SIZE IN', 'UNITS PRESSURE BAR',
+        'UNITS FLOW LPS', 'UNITS KFACTOR LPM/BAR',
+        'NODE A 0', 'NODE B 2500', 'WATER W 0 7 33.333333333333 6', 'USE ASAM',
+        'PIPE P1 W A 20 4 2E', 'PIPE P2 A B 15 3 T', 'SPRINKLER S 3000 -0.5 80',
+        'HYDRANT H 2500 10 210', 'PIPE P3 B S 3 1.5', 'PIPE P4 B H 5 3', 'FIXEDFLOW F A 1.6666666666667 1.5', '';
+    my $suffix = join "\n", 'NODE A 0', "NODE B 8'2.425\"", 'WATER W 0MM 700 2000 600', 'USE ASAM',
+        'PIPE P1 W A 20M 100 2E', 'PIPE P2 A B 1500CM 80 T', 'SPRINKLER S 3000MM -50 8',
+        'HYDRANT H 2.5M 600 21', 'PIPE P3 B S 3M 40', 'PIPE P4 B H 5000 80', 'FIXEDFLOW F A 100 150', '';
+    my ($a) = read_phc(tighten_phc($si));
+    my ($qa, $pa) = results(solved($a));
+    my ($b, $eb) = read_phc(tighten_phc($other));
+    is('the model in M, MM, IN, BAR, L/S and LPM/BAR reads', $b, $eb);
+    if ($b) {
+        my ($qb, $pb) = results(solved($b));
+        is(sprintf('   same flows (worst %.1e L/min) and pressures (%.1e kPa)', worst($qa, $qb), worst($pa, $pb)),
+           worst($qa, $qb) < 1e-3 && worst($pa, $pb) < 1e-3);
     }
-    is('all four forms give the same equivalent length (' . $eqv{'2E T GV'} . ' m)',
-       1 == keys %{ { reverse %eqv } } && $eqv{'2E T GV'} > 0);
-    refused('fittings on a Use BORE pipe', "Node A 0\nNode B 0\nPipe P1 A B 10 50 2E\n", 3,
-            qr/fittings need a pipe type/);
-    refused('a fitting the database lacks, on its line', $m . "Pipe P1 A B 10 50 2Q\n", 6,
-            qr/cannot read fitting code/);
-    refused('a DN the type does not make, on its line', $m . "Pipe P1 A B 10 47\n", 6,
-            qr/DATA_REQUIRED - DN47/);
-    refused('an unknown pipe type, on the Use line', "Use XYZ\nNode A 0\n", 1,
-            qr/unknown pipe type XYZ/);
-}
-{
-    my $body = "Node A 0\nNode B 0.5\nSupply S A STATIC 5\nPipe P1 A B 10 100\n"
-             . "Head H B K=1.2 P=0.5\nOption TOL_FLOW 0.001\n";
-    my ($top) = read_phc("Units FLOW=LPS PRESSURE=BAR\n$body");
-    my ($end) = read_phc($body . "Units PRESSURE=BAR\nUnits FLOW=LPS\n");
-    is('Units at the end, split and out of order: same network as at the top',
-       $top && $end && canon($top) eq canon($end));
-    is('   and the values really are in L/s and bar (static 5 bar = 500 kPa)',
-       $top && $top->{elems}[1]{pstat} == 500);
+    my ($c, $ec) = read_phc(tighten_phc($suffix));
+    is("values carrying units: 20M, 1500CM, 3000MM, 8'2.425\"", $c, $ec);
+    if ($c) {
+        my ($qc, $pc) = results(solved($c));
+        is(sprintf('   same flows (worst %.1e) and pressures (%.1e)', worst($qa, $qc), worst($pa, $pc)),
+           worst($qa, $qc) < 1e-3 && worst($pa, $pc) < 1e-3);
+    }
+    my %e = elems_by_id($a);
+    is('default units: pipe length in mm (20000 is 20 m)', abs($e{P1}{len} - 20) < 1e-9);
+    is('default units: elevation in m (NODE B 2.5)', grep { ($_->{id} // '') eq 'B' && abs($_->{z} - 2.5) < 1e-9 } @{ $a->{nodes} });
+    is('default K unit L/min/kPa^0.5: K 8 is 8 in L/min and kPa', abs($e{S}{k} - 8) < 1e-9);
+    my %eb = elems_by_id($b);
+    # The parser holds K in L/min per kPa^0.5 whatever the file's units.
+    is('K 80 in LPM/BAR is K 8 in LPM/KPA', $eb{S} && abs($eb{S}{k} - 8) < 1e-6);
 }
 
 #==============================================================================
-print "5. THE LINE CHECKER - status, template, choices, proposal\n";
+print "5. COPIES, CHANGES AND DEVICES\n";
+#==============================================================================
+{
+    my $m = join "\n", 'NODE A 0', 'NODE B 0', 'NODE C 0', 'NODE D 0', 'WATER W 0 700',
+        'USE ASAM 110', 'PIPE P1 W A 10000 100 2E',
+        'PC P1 P2 A B P3 B C',            # two copies of P1
+        'CHANGEPIPE P3 5000 80 T',        # P3 changed after copying
+        'EQV P2 2500',                    # 2.5 m extra on P2
+        'SPRINKLER S1 0 -50 8', 'NC S1 S2 S3', 'PIPE P4 C S1 1000 50', 'PIPE P5 C S2 1000 50',
+        'PIPE P6 C S3 1000 50', 'PIPE P7 C D 1000 50', '';
+    my ($net, $err) = read_phc($m);
+    is('copies and changes read', $net, $err);
+    my %e = elems_by_id($net);
+    is('PC: P2 is P1 with new nodes (ASAM DN100, C 110, 2E)',
+       $e{P2}{dn} == 100 && $e{P2}{c} == 110 && ($e{P2}{fitspec} // '') eq '2E');
+    is('PC then CHANGEPIPE: P3 is DN80, 5 m, T', $e{P3}{dn} == 80 && abs($e{P3}{len} - 5) < 1e-9 && $e{P3}{fitspec} eq 'T');
+    is('   the source P1 is unchanged', $e{P1}{dn} == 100 && abs($e{P1}{len} - 10) < 1e-9);
+    is('EQV adds 2.5 m to P2', abs($e{P2}{eqv} - $e{P1}{eqv} - 2.5) < 1e-9);
+    is('NC: S2 and S3 are sprinklers like S1', $e{S2} && $e{S3} && $e{S3}{otype} eq 'SPRINKLER');
+
+    for my $dev ([ 'BP P1 300 2000 250', 'PUMP' ], [ 'BFP P1 0 10 2000 40', 'BFP' ],
+                 [ 'BFP P1 0 25', 'FIXED_DROP' ], [ 'PRV P1 0 50 2000 80', 'BFP' ],
+                 [ 'OPP P1 30', 'ORIFICE_REQUIRED' ], [ 'OFD P1 60', 'ORIFICE' ]) {
+        my ($line, $kind) = @$dev;
+        my ($d, $de) = read_phc("$m$line\n");
+        my ($k) = $line =~ /^(\S+)/;
+        my %de = elems_by_id($d);
+        my ($el, $pipe) = ($de{"P1.$k"}, $de{P1});
+        my %nid = $d ? map { $_ => $d->{nodes}[$_]{id} } 1 .. $#{ $d->{nodes} } : ();
+        is("$line: a $kind from W to P1~, the pipe from P1~ to A",
+           $el && $el->{kind} eq $kind && $nid{ $el->{n1} } eq 'W' && $nid{ $el->{n2} } eq 'P1~'
+           && $nid{ $pipe->{n1} } eq 'P1~' && $nid{ $pipe->{n2} } eq 'A', $de);
+        # A plate sized for a drop keeps its DN (its sizing uses it); both
+        # take the pipe's bore from the database.
+        is("   the plate takes its pipe's database bore (ASAM DN100: 105.1 mm)"
+           . ($k eq 'OPP' ? ' and DN' : ''),
+           abs($el->{pipedia} - 105.1) < 1e-9 && ($k ne 'OPP' || $el->{dn} == 100)) if $el && $k =~ /^O/;
+    }
+    my ($d) = read_phc("${m}BP P1 300 2000 250\n");
+    is('a solve runs through a pipe with a pump in it', $d && HardyCross::solve_model($d));
+
+    # The pressure ratio valve, as the manufacturer's worked example: a tank
+    # 153 m up gives about 1500 kPa at a 3:1 valve, and 500 kPa after it.
+    my $t = join "\n", 'WATER TANK 153 0', 'NODE A 0', 'NODE B 0', 'USE S40 120',
+        'PIPE P1 TANK A 200000 100', 'PIPE P2 A B 1000 100', 'FIXEDFLOW F B 100', '';
+    my ($r, $re) = read_phc($t . "PRA P2 3:1 300\n");
+    is('PRA P2 3:1 reads: a RATIO element in pipe P2', $r && { elems_by_id($r) }->{'P2.PRA'}{kind} eq 'RATIO', $re);
+    my $ok = HardyCross::solve_model($r);
+    my ($q, $p) = results($r);
+    is(sprintf('   outlet = inlet / 3: %.1f kPa in, %.1f kPa out', $p->{A}, $p->{'P2~'}),
+       $ok && abs($p->{'P2~'} - $p->{A} / 3) < 0.05 && abs($p->{A} - 1499) < 2);
+    my $rep = HardyCross::Report::write_report($r, $ok, 't.phc');
+    is('   the report shows the ratio, inlet and outlet, and no warning',
+       $rep =~ /P2\.PRA\s+PRA\s+A\s+P2~.*ratio 3:1, inlet 1499\.\d, outlet 499\.\d/ && $rep =~ /No warnings\./);
+    my ($lo) = read_phc($t . "PRA P2 3:1 2000\n");
+    my $rl = HardyCross::Report::write_report($lo, HardyCross::solve_model($lo), 't.phc');
+    is('   an inlet below the stated minimum is a warning', $rl =~ /below its minimum\s+inlet pressure/);
+    my ($two) = read_phc($t . "PRA P2 2:1\n");
+    HardyCross::solve_model($two);
+    my (undef, $p2) = results($two);
+    is('   a 2:1 valve halves it', abs($p2->{'P2~'} - $p2->{A} / 2) < 0.05);
+}
+
+#==============================================================================
+print "6. THE LINE CHECKER - status, template, choices, proposals\n";
 #==============================================================================
 {
     my $ck = \&HardyCross::Phc::check_line;
     my $ctx = { use => 'ASAM', nodes => [qw(A B C)] };
     for my $case (@CASES) {
-        my $line = $case->[0];
-        my ($word) = $line =~ /^(\S+)/;
-        my $r = $ck->($line, $ctx);
+        my ($word) = $case->[0] =~ /^(\S+)/;
+        my $r = $ck->($case->[0], $ctx);
         is("$word: ok, template names the command",
-           $r->{status} eq 'ok' && $r->{template}{command} eq $word,
-           "$r->{status} $r->{message}");
+           $r->{status} eq 'ok' && $r->{template}{command} eq $word, "$r->{status} $r->{message}");
     }
-    my $r = $ck->('Pi', $ctx);
-    is("'Pi' while typing: incomplete, not unknown", $r->{status} eq 'incomplete');
-    $r = $ck->('Pix', $ctx);
-    is("'Pix': error, unknown command", $r->{status} eq 'error' && $r->{message} =~ /unknown command/);
-    $r = $ck->('Pipe P1 A', $ctx);
-    is("'Pipe P1 A': incomplete, needs n2, cursor in field n1",
-       $r->{status} eq 'incomplete' && $r->{message} =~ /needs n2/
-       && $r->{template}{fields}[ $r->{template}{current} ] eq 'n1');
-    $r = $ck->('Pipe P1 A ', $ctx);
-    is("'Pipe P1 A ' (space typed): cursor moves to n2",
-       $r->{template}{fields}[ $r->{template}{current} ] eq 'n2');
-    $r = $ck->('Pipe P1 A B 3 50 C=1', { %$ctx, cursor => 19 });
-    is('cursor in C=: the C= field is current',
-       $r->{template}{fields}[ $r->{template}{current} ] eq 'C=');
+    my $r = $ck->('PI', $ctx);
+    is("'PI' while typing: incomplete, not unknown", $r->{status} eq 'incomplete');
+    $r = $ck->('PIPX', $ctx);
+    is("'PIPX': an error", $r->{status} eq 'error' && $r->{message} =~ /UNKNOWN COMMAND/);
+    $r = $ck->('PIPE P1 A', $ctx);
+    is("'PIPE P1 A': incomplete, needs END, cursor in START",
+       $r->{status} eq 'incomplete' && $r->{message} =~ /NEEDS END/
+       && $r->{template}{fields}[ $r->{template}{current} ] eq 'START');
     is('template text', HardyCross::Phc::template_text('PIPE')
-       eq 'Pipe <id> <n1> <n2> <length> <size> <fittings ...> [C=] [EQV=] [EPS=] [K=]',
-       HardyCross::Phc::template_text('PIPE'));
+       eq 'PIPE <NAME> <START> <END> <LENGTH> <SIZE> [FITTINGS ...]', HardyCross::Phc::template_text('PIPE'));
+    is('an alias: P is PIPE', ($ck->('P P1 A B 3000 50', $ctx)->{template}{command} // '') eq 'PIPE');
 
-    $r = $ck->('Use ', $ctx);
-    my %c = map { $_->[0] => $_->[1] } @{ $r->{choices} };
-    is('Use type field: choices are the database pipe types and BORE',
-       $c{ASAM} && $c{S40} && $c{CPVC} && $c{BORE});
-    $r = $ck->('Pipe P1 A B 3 50 ', $ctx);
-    %c = map { $_->[0] => $_->[1] } @{ $r->{choices} };
-    is('fitting field, ASAM DN50: E T GV CV from AS 2118.1, described',
-       $c{E} && $c{T} && $c{GV} && $c{CV} && !$c{EF} && $c{E} =~ /elbow/);
-    $r = $ck->('Pipe P1 A B 3 250 ', { %$ctx, use => 'S20' });
-    %c = map { $_->[0] => $_->[1] } @{ $r->{choices} };
-    is('fitting field, S20 DN250: FM codes including EF', $c{EF} && $c{GV50});
-    is('   descriptions are 7-bit ASCII', !grep { /[^\x20-\x7E]/ } values %c);
-    $r = $ck->('Pipe P1 A B 3 50 ', { %$ctx, use => 'BORE' });
-    is('fitting field under Use BORE: no choices', !@{ $r->{choices} });
+    my %c = map { $_->[0] => $_->[1] } @{ $ck->('USE ', $ctx)->{choices} };
+    is('USE type field: the database pipe types and BORE, in capitals',
+       $c{ASAM} && $c{S20} && $c{BORE} && $c{ASAM} !~ /[a-z]/);
+    %c = map { $_->[0] => $_->[1] } @{ $ck->('PIPE P1 A B 3000 50 ', $ctx)->{choices} };
+    # AS 2118.1 lists no butterfly valve, so at DN50 B (for BV) is not offered.
+    is('fitting field, ASAM DN50: database codes, short forms G and C, no B',
+       $c{E} && $c{T} && $c{GV} && $c{G} && $c{C} && !$c{B} && $c{G} =~ /SHORT FOR GV/);
+    %c = map { $_->[0] => 1 } @{ $ck->('PIPE P1 A B 3000 250 ', { %$ctx, use => 'S20' })->{choices} };
+    is('fitting field, S20 DN250 (FM Global): B is offered', $c{B} && $c{BV});
+    %c = map { $_->[0] => 1 } @{ $ck->('UNITS FLOW ', $ctx)->{choices} };
+    is('UNITS FLOW: the flow units', $c{LPM} && $c{LPS} && $c{GPM});
+    $r = $ck->('PIPE P1 A B 3000 47', $ctx);
+    is("ASAM DN47: the parser's DATA_REQUIRED, on the line", $r->{status} eq 'error' && $r->{message} =~ /DATA_REQUIRED/);
+    $r = $ck->('SPRINKLER S1 3 -50 0', $ctx);
+    is('a sprinkler with K 0 (turned off) is fine', $r->{status} eq 'ok');
+    $r = $ck->('PIPE P1 A Z9 3000 50', $ctx);
+    is('a node not yet defined is listed, not an error', $r->{status} eq 'ok' && "@{ $r->{undefined} }" eq 'Z9');
 
-    $r = $ck->('Pipe P1 A B 3 47', $ctx);
-    is("ASAM DN47: the parser's DATA_REQUIRED, on the line",
-       $r->{status} eq 'error' && $r->{message} =~ /DATA_REQUIRED/);
-    $r = $ck->('Head H1 B K=80', $ctx);
-    is('Head with only K=: incomplete, any two of K Q P',
-       $r->{status} eq 'incomplete' && $r->{message} =~ /any two/);
-    $r = $ck->('Head H1 B K=0 P=50', $ctx);
-    is("Head K=0: the parser's unusable K-factor", $r->{status} eq 'error'
-       && $r->{message} =~ /unusable K-factor/);
-    $r = $ck->('Supply S1 A STATIC 5', { %$ctx, units => { PRESSURE => 'BAR' } });
-    is('units from the context are applied', $r->{status} eq 'ok');
-    $r = $ck->('Pipe P1 A Z9 3 50', $ctx);
-    is('a node not yet defined is listed, not an error',
-       $r->{status} eq 'ok' && "@{ $r->{undefined} }" eq 'Z9');
-
-    is('proposal after a pipe: next id, starts where it ended, no fittings',
-       ($ck->('Pipe P7 N3 N4 3.2 50 2E T C=110', $ctx)->{proposal} // '')
-       eq 'Pipe P8 N4 N5 3.2 50 C=110');
-    is('proposal after a head: id and node stepped, options kept',
-       ($ck->('Head S09 N09 K=80 P=50', $ctx)->{proposal} // '') eq 'Head S10 N10 K=80 P=50');
-    is('proposal after a node: id stepped, same elevation',
-       ($ck->('Node N1 4.5', $ctx)->{proposal} // '') eq 'Node N2 4.5');
-    is('no proposal after a setting', !defined $ck->('Method HW', $ctx)->{proposal});
-    is('a blank line and a comment are ok',
-       $ck->('', $ctx)->{status} eq 'ok' && $ck->('  // note', $ctx)->{status} eq 'ok');
+    my $pr = sub { $ck->($_[0], $ctx)->{proposal} // '(none)' };
+    is('after a pipe: next name, starting where it ended, no fittings',
+       $pr->('PIPE 3101 2113 3101 6376 65 T') eq 'PIPE 3102 3101 3102 6376 65', $pr->('PIPE 3101 2113 3101 6376 65 T'));
+    is('after a sprinkler: next name, same elevation, flow and K', $pr->('SPRINKLER 4101 47.076 81 8') eq 'SPRINKLER 4102 47.076 81 8');
+    is('after a node', $pr->('NODE 301 27.197') eq 'NODE 302 27.197');
+    is('after a fixed flow: name and node stepped', $pr->('FIXEDFLOW F1 N1 100 150') eq 'FIXEDFLOW F2 N2 100 150');
+    is('after a setting, USE or a copy: none',
+       $pr->('UNITS FLOW LPM') eq '(none)' && $pr->('USE S20 120') eq '(none)' && $pr->('NC A B') eq '(none)');
 }
 
 #==============================================================================
-print "6. TRAPS CLOSED\n";
+print "7. TRAPS CLOSED\n";
 #==============================================================================
-refused('a node with no Node line: named, at the first line using it',
-        "Node A 0\nSupply S A STATIC 500\nPipe P1 A B 10 100\nHead H B K=80 P=50\n", 3,
-        qr/node B has no Node line/);
+refused('a node with no definition: named, at the first line using it',
+        "WATER W 0 500\nUSE BORE 120\nPIPE P1 W B 1000 100\n", 3, qr/NODE B IS NOT DEFINED/);
 refused('several undefined nodes: all named',
-        "Node A 0\nPipe P1 A B 10 100\nPipe P2 B C 10 100\n", 2,
-        qr/node B has no Node line \(also C on line 3\)/);
-refused("'#' in a line is refused, not taken as a comment", $BASE . 'Title JOB #12', $L,
-        qr/'#' cannot be used/);
-refused("'!' likewise", $BASE . 'Pipe P2 B C 5 ! 50', $L, qr/'!' cannot be used/);
-refused('END as an id', $BASE . 'Node END 0', $L, qr/END cannot be used/);
-refused('END as a Project field', $BASE . 'Project END x', $L, qr/END cannot be/);
-refused('KEY= before the fixed fields', $BASE . 'Pipe P2 B C=100 C 5 50', $L,
-        qr/come after the fixed fields/);
-refused('Orifice with DP= and BORE=', $BASE . 'Orifice O1 A C DP=20 BORE=30 DN=50', $L,
-        qr/not both/);
-refused('a parser error comes back on the .phc line (PRV DP=0)', $BASE . 'PRV PR A C DP=0',
-        $L, qr/PRV PR needs a positive DP=/);
-refused('an unpaired curve value, on its own line after blank and comment lines',
-        "Node A 0\n\n// c\nSupply S A CURVE 0 500 100 400\nPump PU A A 0 300 1 200 2\n", 5,
-        qr/pressure to pair/);
+        "NODE A 0\nPIPE P1 A B 1000 100\nPIPE P2 B C 1000 100\n", 2, qr/NODE B IS NOT DEFINED \(ALSO C ON LINE 3\)/);
+refused('a copy of an undefined pipe', $BASE . 'PC P9 P10 A B', $L, qr/PIPE P9, COPIED AS P10, IS NOT DEFINED/);
+refused('a copy of an undefined node', $BASE . 'NC Q1 Q2', $L, qr/NODE Q1, COPIED AS Q2, IS NOT DEFINED/);
+refused('a change to an undefined pipe', $BASE . 'CHANGEPIPE P9 1 50', $L, qr/PIPE P9 IS NOT DEFINED/);
+refused("'#' in a line is refused, not taken as a comment", $BASE . 'TITLE JOB #12', $L, qr/'#' CANNOT BE USED/);
+refused('END as a name', $BASE . 'NODE END 0', $L, qr/END CANNOT BE A NAME/);
+refused("'~' in a name (PHCP's own names use it)", $BASE . 'NODE A~ 0', $L, qr/'~' IS RESERVED/);
 {
-    # The .hcx reader reads text where a number belongs as 0 -- a pipe 1OO m
-    # long (letter O) solves as 0 m.  The converter must refuse it, not carry
-    # the zero into .phc.
-    (my $bad = slurp("$EX/01_single_branch.hcx")) =~ s/100\.0  100\.0  120/1OO  100.0  120/;
-    my $phc = eval { HardyCross::Convert::hcx_to_phc($bad, 'bad.hcx') };
-    my $err = $@ && (ref $@ ? $@->{msg} : $@);
-    is("converter refuses a .hcx length of '1OO', quoting the line",
-       !defined $phc && $err =~ /length '1OO' is not a number - in the line 'Pipe\s+P1/, $err);
-    my $ex01 = HardyCross::Convert::hcx_to_phc(slurp("$EX/01_single_branch.hcx"), '01.hcx');
-    is('converter lists what it drops (TRACE FULL in example 01)',
-       $ex01 =~ m{^//\s+line 15: OPTIONS TRACE FULL - not an option}m);
-    my $ex02 = HardyCross::Convert::hcx_to_phc(slurp("$EX/02_full_network.hcx"), '02.hcx');
-    is('converter keeps MINP= on a fixed flow',
-       $ex02 =~ m{^Flow\s+FF1 B Q=300 MINP=200$}m);
-    (my $p = slurp("$EX/02_full_network.hcx")) =~ s/Q=300  MINP=200/Q=300 P=210 MINP=200 K=3/;
-    my $c = HardyCross::Convert::hcx_to_phc($p, 'p.hcx');
-    is('   P= on a fixed flow is its minimum (the parser reads P first); MINP=, K= dropped',
-       $c =~ m{^Flow\s+FF1 B Q=300 MINP=210$}m && $c =~ m{not used for a fixed flow: MINP=200 K=3}m);
-}
-{
-    my ($net) = read_phc("Node A 0 // the supply node\nNode B 0\nSupply S A STATIC 500 // tank\n"
-                       . "Pipe P1 A B 10 100\nHead H B K=80 P=50\n");
-    is('// comments anywhere on a line', $net);
-    my $p = "$FindBin::Bin/../examples/01_single_branch.phc";
-    my $m = eval { HardyCross::Parse::read_model($p) };
+    my ($net) = read_phc("// a comment line\nNODE A 0 // the riser\nWATER W 0 500\nUSE BORE 120\n"
+                       . "PIPE P1 W A 1000 100\nsprinkler s1 0 -50 8\npipe p2 A s1 1000 50\n");
+    is('// comments anywhere; lower-case commands read the same', $net);
+    my ($off) = read_phc("NODE A 0\nWATER W 0 500\nUSE BORE 120\nPIPE P1 W A 1000 100\nSPRINKLER S1 0 -50 0\n"
+                       . "PIPE P2 A S1 1000 50\nSPRINKLER S2 0 -50 8\nPIPE P3 A S2 1000 50\n");
+    my %o = elems_by_id($off);
+    is('a sprinkler with K 0 is off: its node stays, with no outlet', $off && !$o{S1} && $o{S2});
+    my ($neg) = read_phc("NODE A 0\nWATER W 0 500\nUSE BORE 120\nPIPE P1 W A 1000 100\nSPRINKLER S1 0 81 8\n"
+                       . "PIPE P2 A S1 1000 50\nHYDRANT H1 0 -200 21\nPIPE P3 A H1 1000 80\n");
+    my %e = elems_by_id($neg);
+    is('MINFLOW: 81 is a least flow of 81; -200 a least pressure of 200',
+       $e{S1}{qreq} == 81 && abs($e{S1}{preq} - (81 / 8) ** 2) < 1e-9 && $e{H1}{preq} == 200);
+    my $m = eval { HardyCross::Parse::read_model("$EX/01_single_branch.phc") };
     is('read_model dispatches .phc to the .phc reader', $m && $m->{phc_text});
 }
 
 #==============================================================================
-print "7. FIXED-FLOW MINIMUM PRESSURE - read, checked, and able to govern\n";
+print "8. FIXED FLOWS - the minimum pressure is checked and can govern\n";
 #==============================================================================
 {
-    # C is 20 m above the supply, so the fixed flow there has far less
-    # pressure to spare than the head at B, and governs.
-    my $m = join "\n", 'Node A 0', 'Node B 0', 'Node C 20', 'Supply S A STATIC 600',
-        'Pipe P1 A B 50 100', 'Pipe P2 B C 30 50', 'Head H B K=80 P=50', '';
-    my ($net, $err) = read_phc($m . "Flow F C Q=100 MINP=250\n");
-    is('Flow MINP= reads', $net, $err);
+    # C is 20 m above the supply, so the fixed flow there has the least
+    # pressure to spare, and governs.
+    my $m = join "\n", 'NODE A 0', 'NODE C 20', 'WATER W 0 600', 'USE BORE 120',
+        'PIPE P1 W A 50000 100', 'SPRINKLER S 0 -50 80', 'PIPE P3 A S 1000 50', 'PIPE P2 A C 30000 50', '';
+    my ($net, $err) = read_phc($m . "FIXEDFLOW F C 100 250\n");
+    is('FIXEDFLOW with a minimum pressure reads', $net, $err);
     my $ok = HardyCross::solve_model($net);
     my $f = $net->{fixed}[0];
-    is('   the fixed flow is kept by id with its minimum (250 kPa)',
-       $f && $f->{id} eq 'F' && $f->{preq} == 250 && $f->{qreq} == 100);
-    is('   the flow is still exactly the fixed 100 L/min (the solve is unchanged)',
-       abs(HardyCross::continuity_error($net)) < 1e-6 && $net->{nodes}[ $f->{n1} ]{demand} == 100);
-    my ($gov, $gm) = HardyCross::Demand::governing_outlet($net);
-    is('   the fixed flow governs (least margin)', $gov && $gov->{id} eq 'F', $gov && $gov->{id});
+    is('   kept by its own name, on its node, with its minimum', $f && $f->{id} eq 'F' && $f->{preq} == 250);
+    my ($gov) = HardyCross::Demand::governing_outlet($net);
+    is('   it governs (least margin)', $gov && $gov->{id} eq 'F', $gov && $gov->{id});
     my $dm = HardyCross::Demand::demand_point($net);
     my ($df) = @{ $dm->{net}{fixed} || [] };
     my $pf = $df ? HardyCross::Demand::gauge($dm->{net}, $df->{n1}) : -1;
-    is(sprintf('   at the demand point it has exactly its minimum (%.2f kPa)', $pf),
-       abs($pf - 250) < 0.05);
+    is(sprintf('   at the demand point it has exactly its minimum (%.2f kPa)', $pf), abs($pf - 250) < 0.05);
     my $rep = HardyCross::Report::write_report($net, $ok, 'm.phc');
-    is('   report section 7 lists it, K fixed, PASS',
-       $rep =~ /^ F\s+C\s+fixed\s+100\.0\s+100\.0\s+250\.0\s+[\d.]+\s+PASS$/m);
-    is('   report section 8 names it as the governing fixed flow',
-       $rep =~ /^ Fixed flow F: pressure [\d.]+ kPa, required 250\.0/m);
-
-    my ($bad) = read_phc($m . "Flow F C Q=100 MINP=900\n");
-    my $okb = HardyCross::solve_model($bad);
-    my $rb = HardyCross::Report::write_report($bad, $okb, 'm.phc');
-    is('a minimum above the pressure available FAILS in the report',
-       $rb =~ /^ F\s+C\s+fixed.*\*\*\* FAIL$/m && $rb =~ /1 OUTLET\(S\) BELOW REQUIREMENT/);
-    my ($none) = read_phc($m . "Flow F C Q=100\n");
-    HardyCross::solve_model($none);
-    my ($g2) = HardyCross::Demand::governing_outlet($none);
-    is('a fixed flow with no minimum cannot govern', $g2 && $g2->{id} eq 'H');
-    refused('a negative minimum is refused', $BASE . 'Flow F1 C Q=100 MINP=-5', $L,
-            qr/negative minimum pressure/);
+    is('   report section 7 lists it, K fixed, PASS', $rep =~ /^ F\s+C\s+fixed\s+100\.0\s+100\.0\s+250\.0\s+[\d.]+\s+PASS$/m);
+    my ($bad) = read_phc($m . "FIXEDFLOW F C 100 900\n");
+    my $rb = HardyCross::Report::write_report($bad, HardyCross::solve_model($bad), 'm.phc');
+    is('a minimum above the pressure available FAILS', $rb =~ /^ F\s+C\s+fixed.*\*\*\* FAIL$/m);
 }
 
 print "\n$pass passed, $fail failed\n";

@@ -1,36 +1,42 @@
-// 03_dw_altunits.hcx - converted from .hcx by PHCP 1.0.0.
-// Comments in the .hcx file are not carried over.
-// Dropped from the .hcx because they had no effect on the result:
-//   line 18: OPTIONS TRACE SUMMARY - not an option the .hcx reader acts on
+// 03 - DARCY-WEISBACH WITH ALTERNATIVE USER UNITS
+// 
+// SAME PHYSICAL GRID AS EXAMPLE 02 BUT EXPRESSED IN L/S AND BAR, SOLVED WITH
+// COLEBROOK-WHITE INSTEAD OF HAZEN-WILLIAMS.  ROUGHNESS EPS IS IN THE DECLARED
+// DIAMETER UNIT (MM HERE).
 
-Units    FLOW=LPS PRESSURE=BAR LENGTH=M DIAMETER=MM
-Method   DW
-Option   NU 1.004E-6
-Option   TOL_FLOW 0.001
-Option   TOL_LOOP 0.0001
-Option   MAXITER 3000
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE BAR
+UNITS     FLOW LPS
+UNITS     KFACTOR LPS/BAR
+METHOD    DW
+OPTION    NU 1.004E-6
+OPTION    TOL_FLOW 0.001
+OPTION    TOL_LOOP 0.0001
+OPTION    MAXITER 3000
 
-Node     TM 0.0
-Node     K1 0.0
-Node     A 10.0
-Node     B 10.0
-Node     C 10.0
-Node     D 10.0
-Node     HY 10.0
+WATER     TM 0.0 10.0 50 7.0 100 3.0
+NODE      K1 0.0
+HREEL     A 10.0 -2.2 0.395
+NODE      B 10.0
+NODE      C 10.0
+NODE      D 10.0
+HYDRANT   HY 10.0 20 12.64911064
 
-Use      BORE
-Pipe     M2 K1 B 60.0 150.0 EQV=12.0 EPS=0.045
-Pipe     G1 A B 40.0 100.0 EPS=0.045
-Pipe     G2 B C 40.0 100.0 EPS=0.045
-Pipe     G3 C D 40.0 100.0 EPS=0.045
-Pipe     G4 D A 40.0 100.0 EPS=0.045
-Pipe     G5 A C 55.0 80.0 EPS=0.045
-Pipe     BR3 C HY 15.0 100.0 EPS=0.045
+USE       BORE 0.045
+PIPE      M2 K1 B 60.0 150.0
+EQV       M2 12.0
+PIPE      G1 A B 40.0 100.0
+PIPE      G2 B C 40.0 100.0
+PIPE      G3 C D 40.0 100.0
+PIPE      G4 D A 40.0 100.0
+PIPE      G5 A C 55.0 80.0
+PIPE      BR3 C HY 15.0 100.0
 
-Supply   SUP2 TM CURVE 0 10.0 50 7.0 100 3.0
+FIXEDFLOW FF1 B 5.0 2.0
 
-PRV      PRV1 TM K1 DP=1.5
-
-Hydrant  HYD1 HY Q=20 P=2.5
-HoseReel HR1 A K=0.395 P=2.2
-Flow     FF1 B Q=5.0 MINP=2.0
+// PRV1 SITS IN A PIPE OF NO LENGTH FROM TM TO K1
+USE       BORE 120
+PIPE      PRV1 TM K1 0 150
+PRV       PRV1 0 1.5
