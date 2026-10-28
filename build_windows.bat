@@ -109,7 +109,7 @@ if "!BUILT!"=="no" (
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
+    set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M HardyCross::Window::Project -M HardyCross::Window::Tools -M HardyCross::Window::Graph -M HardyCross::Window::Database -M HardyCross::Window::Results -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
     set BUILT=no
     if "!ICON!"=="yes" (
         perl tools\pack_with_icon.pl data\phcp.ico gui phcp_editor.exe -I . !EDMODS! %DATA% phcp_editor.pl && set BUILT=yes

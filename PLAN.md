@@ -340,6 +340,7 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `tools/pack_with_icon.pl`, `build_windows.bat` | the icon on the `.exe` files, set on a copy of the packager's loader; the plain build if that fails |
 | `release_notes/` | the notes for each release, read by the release job |
 | `phcp_viewer.pl` | removed: the editor's results tables do what it did |
+| `phcp_editor.pl`, `HardyCross/Window/*.pm` | the editor split one file to a tab (PROJECT, GRAPH, QUICK TOOLS, DATABASE, results), all in package main; moved, not changed |
 
 ## Definition of done, each PR
 
@@ -382,3 +383,4 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 - [x] v1.1 - QUICK TOOLS tab: velocity, K-factor, K-factor converter, pressure loss (HW and DW)
 - [x] v1.1 - Darcy-Weisbach takes the database roughness for a pipe type; an assumed 0.045 mm is flagged (engine change, approved 28 October 2026)
 - [x] v1.1 - CI on Linux and Windows, releases with the programs attached; icon on the .exe files; viewer retired
+- [x] v1.1 - editor split, one file to a tab
