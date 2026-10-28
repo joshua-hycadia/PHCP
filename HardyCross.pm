@@ -86,85 +86,52 @@ sub set_unit {
 }
 
 # ---------------------------------------------------------------------------
-# Curves for supplies, pumps and backflow preventer losses.
+# Curves for supplies, pumps and loss devices (backflow preventers, PRVs).
 #
-# Two points fit P = a0 + a2 Q^2 exactly; three or more are least squares
-# quadratic.  Outside the fitted window the curve continues LINEARLY at the end
-# slope, so P and P' stay finite and monotone everywhere -- which is what keeps
-# the loop correction well posed when an iterate overshoots past runout.
+# The curve passes EXACTLY through every point given, interpolated piecewise
+# on a Q^1.85 scale: between two points, pressure is linear in Q^1.85.  That
+# is the scale water supply test results are plotted on in sprinkler practice,
+# because a main's pressure falls with friction and Hazen-Williams friction
+# goes as Q^1.85 -- so a supply given by its static and one residual point is
+# reproduced the way the flow test is read.  (Joshua's decision, 28 October
+# 2026.  The curve used to be one quadratic: exact through two points, but a
+# least-squares fit through three or more that did NOT pass through the
+# points entered.)
+#
+# Outside the points the curve continues LINEARLY at the end slope, so P and
+# P' stay finite and monotone everywhere -- which keeps the loop correction
+# well posed when an iterate overshoots past the last point, or flow runs
+# backwards through a supply.
+#
+# The curve record holds the points sorted by flow, q[] and p[], their Q^1.85
+# values x[], and the guarded end slopes slo and shi.
 # ---------------------------------------------------------------------------
-sub solve3 {
-    my ($m, $b) = @_;
-    my @a = map { [@$_] } @$m;
-    my @v = @$b;
-    for my $k (0 .. 2) {
-        my $piv = $k;
-        for my $i ($k + 1 .. 2) {
-            $piv = $i if abs($a[$i][$k]) > abs($a[$piv][$k]);
-        }
-        return undef if abs($a[$piv][$k]) < 1e-30;
-        if ($piv != $k) {
-            @a[$k, $piv] = @a[$piv, $k];
-            @v[$k, $piv] = @v[$piv, $k];
-        }
-        for my $i ($k + 1 .. 2) {
-            my $f = $a[$i][$k] / $a[$k][$k];
-            $a[$i][$_] -= $f * $a[$k][$_] for $k .. 2;
-            $v[$i] -= $f * $v[$k];
-        }
-    }
-    my @x = (0, 0, 0);
-    for my $i (reverse 0 .. 2) {
-        my $s = $v[$i];
-        $s -= $a[$i][$_] * $x[$_] for $i + 1 .. 2;
-        $x[$i] = $s / $a[$i][$i];
-    }
-    return \@x;
-}
+my $CURVE_N = 1.85;
 
 sub fit_curve {
     my ($c, $rising) = @_;
-    my @q = @{ $c->{q} };
-    my @p = @{ $c->{p} };
-    fail("curve needs at least 2 points") if @q < 2;
-
-    if (@q == 2) {
-        my $det = $q[1] ** 2 - $q[0] ** 2;
-        fail("curve points have identical flow") if abs($det) < $D_TINY;
-        $c->{a2} = ($p[1] - $p[0]) / $det;
-        $c->{a1} = 0;
-        $c->{a0} = $p[0] - $c->{a2} * $q[0] ** 2;
-    } else {
-        my ($s1, $s2, $s3, $s4, $t0, $t1, $t2) = (0) x 7;
-        for my $i (0 .. $#q) {
-            my ($qq, $pp) = ($q[$i], $p[$i]);
-            $s1 += $qq; $s2 += $qq ** 2; $s3 += $qq ** 3; $s4 += $qq ** 4;
-            $t0 += $pp; $t1 += $pp * $qq; $t2 += $pp * $qq ** 2;
-        }
-        my $sol = solve3([[scalar @q, $s1, $s2], [$s1, $s2, $s3], [$s2, $s3, $s4]],
-                         [$t0, $t1, $t2]);
-        fail("curve fit singular - check for duplicate flows") unless $sol;
-        ($c->{a0}, $c->{a1}, $c->{a2}) = @$sol;
+    my @pt = sort { $a->[0] <=> $b->[0] } map { [ $c->{q}[$_], $c->{p}[$_] ] } 0 .. $#{ $c->{q} };
+    fail("curve needs at least 2 points") if @pt < 2;
+    for my $i (1 .. $#pt) {
+        fail("curve points have identical flow") if abs($pt[$i][0] - $pt[$i - 1][0]) < $D_TINY;
     }
+    fail("curve flows cannot be negative") if $pt[0][0] < 0;
+    $c->{q} = [ map { $_->[0] } @pt ];
+    $c->{p} = [ map { $_->[1] } @pt ];
+    $c->{x} = [ map { $_->[0] ** $CURVE_N } @pt ];
+    $c->{qlo} = $c->{q}[0];
+    $c->{qhi} = $c->{q}[-1];
+    $c->{plo} = $c->{p}[0];
+    $c->{phi} = $c->{p}[-1];
+    $c->{slo} = curve_inner_slope($c, $c->{qlo});
+    $c->{shi} = curve_inner_slope($c, $c->{qhi});
 
-    my ($qlo, $qhi) = (0, $q[0]);
-    for (@q) { $qlo = $_ if $_ < $qlo; $qhi = $_ if $_ > $qhi }
-    $qhi = $qlo + 1 if $qhi <= $qlo;
-    $c->{qlo} = $qlo;
-    $c->{qhi} = $qhi;
-
-    my $at    = sub { $c->{a0} + $c->{a1} * $_[0] + $c->{a2} * $_[0] ** 2 };
-    my $slope = sub { $c->{a1} + 2 * $c->{a2} * $_[0] };
-    $c->{plo} = $at->($qlo);
-    $c->{phi} = $at->($qhi);
-    $c->{slo} = $slope->($qlo);
-    $c->{shi} = $slope->($qhi);
-
-    # Guard the extrapolation slopes so the Jacobian cannot degenerate: a zero
-    # slope puts a zero in the denominator of the loop correction the first
-    # time an iterate wanders outside the fitted range.
-    my $span  = ($qhi - $qlo) > $D_TINY ? ($qhi - $qlo) : $D_TINY;
-    my $chord = 2 * ($c->{phi} - $c->{plo}) / $span;
+    # Guard the end slopes so the Jacobian cannot degenerate: at zero flow the
+    # Q^1.85 scale has zero slope, and a zero puts a zero in the denominator
+    # of the loop correction the first time an iterate wanders outside the
+    # points.  The chord over the whole curve stands in, as before.
+    my $span  = ($c->{qhi} - $c->{qlo}) > $D_TINY ? ($c->{qhi} - $c->{qlo}) : $D_TINY;
+    my $chord = ($c->{phi} - $c->{plo}) / $span;
     if ($rising) {
         $c->{slo} = ($chord > $D_TINY ? $chord : $D_TINY) if $c->{slo} < $D_TINY;
         $c->{shi} = ($chord > $D_TINY ? $chord : $D_TINY) if $c->{shi} < $D_TINY;
@@ -175,18 +142,42 @@ sub fit_curve {
     return $c;
 }
 
+# curve_segment -- the index i of the segment [q[i], q[i+1]] holding $q.
+sub curve_segment {
+    my ($c, $q) = @_;
+    my $n = $#{ $c->{q} };
+    for my $i (0 .. $n - 2) { return $i if $q <= $c->{q}[ $i + 1 ] }
+    return $n - 1;
+}
+
+# curve_inner_slope -- dP/dQ inside the points: linear in x = Q^1.85, so
+# dP/dQ = (dP/dx) * 1.85 Q^0.85.  At the last point the last segment's slope
+# is used; at the first, the first's.
+sub curve_inner_slope {
+    my ($c, $q) = @_;
+    my $i = curve_segment($c, $q);
+    my $m = ($c->{p}[ $i + 1 ] - $c->{p}[$i]) / ($c->{x}[ $i + 1 ] - $c->{x}[$i]);
+    return $m * $CURVE_N * ($q > 0 ? $q ** ($CURVE_N - 1) : 0);
+}
+
 sub curve_eval {
     my ($c, $q) = @_;
     return $c->{plo} + $c->{slo} * ($q - $c->{qlo}) if $q < $c->{qlo};
     return $c->{phi} + $c->{shi} * ($q - $c->{qhi}) if $q > $c->{qhi};
-    return $c->{a0} + $c->{a1} * $q + $c->{a2} * $q ** 2;
+    my $i = curve_segment($c, $q);
+    my ($x0, $x1) = ($c->{x}[$i], $c->{x}[ $i + 1 ]);
+    return $c->{p}[$i] + ($c->{p}[ $i + 1 ] - $c->{p}[$i]) * ($q ** $CURVE_N - $x0) / ($x1 - $x0);
 }
 
 sub curve_slope {
     my ($c, $q) = @_;
     return $c->{slo} if $q < $c->{qlo};
     return $c->{shi} if $q > $c->{qhi};
-    return $c->{a1} + 2 * $c->{a2} * $q;
+    my $s = curve_inner_slope($c, $q);
+    # The same guard inside the points: the Q^1.85 scale is flat at zero flow,
+    # and the loop correction divides by this slope.
+    return $c->{slo} if abs($s) < $D_TINY;
+    return $s;
 }
 
 # ---------------------------------------------------------------------------
@@ -371,8 +362,10 @@ sub elem_hf {
     # rounding step off -- 34.0 mm where the correct duty gives 33.5.  EPANET
     # validation could not catch it, because EPANET has no concept of sizing a
     # plate; only the direct comparison against the C++ engine did.
-    if ($k eq 'FIXED_DROP' || $k eq 'ORIFICE_REQUIRED') {
-        # Contributes to the loop sum but not to the denominator.
+    if ($k eq 'FIXED_DROP' || $k eq 'ORIFICE_REQUIRED' || $k eq 'RATIO') {
+        # Contributes to the loop sum but not to the denominator.  A pressure
+        # ratio valve's drop is set from its inlet pressure by the outer loop
+        # (ratio_valves), and held fixed while the loops balance.
         return ($sg * $e->{dp}, 0);
     }
     if ($k eq 'ORIFICE') {
@@ -844,6 +837,54 @@ sub pump_status {
     return 1;
 }
 
+#------------------------------------------------------------------------------
+# ratio_valves -- set each pressure ratio valve's drop from its inlet pressure.
+#
+# A pressure ratio valve holds its outlet at its inlet pressure divided by its
+# ratio: a 3:1 valve with 1500 kPa upstream gives 500 kPa downstream, so it
+# drops 1500 x (1 - 1/3) = 1000 kPa.  The drop depends on a PRESSURE, which the
+# loop balance does not know until it has converged, so it is set here from
+# the converged inlet pressure and the network solved again, until the drops
+# stop changing.  (The valve holds the ratio to +/- 5 % of the inlet pressure
+# in the manufacturer's data; the nominal ratio is used.)
+#
+# Returns true if any drop moved by more than the loop tolerance.
+#------------------------------------------------------------------------------
+sub ratio_valves {
+    my $net = shift;
+    my $tol = $net->{opts}{tol_loop} // 0.01;
+    my $changed = 0;
+    for my $e (grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my $n   = $net->{nodes}[ $e->{n1} ];
+        my $pin = $n->{h} - $GAMMA_W * $n->{z};
+        my $dp  = $pin > 0 ? $pin * (1 - 1 / $e->{ratio}) : 0;
+        if (abs($dp - $e->{dp}) > $tol) {
+            $e->{dp} = $dp;
+            $changed = 1;
+        }
+        $e->{pin} = $pin;
+    }
+    return $changed;
+}
+
+# ratio_warnings -- what a solve must say about its pressure ratio valves.
+sub ratio_warnings {
+    my ($net, $settled) = @_;
+    my @w;
+    for my $e (grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        push @w, "pressure ratio valve $e->{id}: flow runs backwards through it, which a ratio "
+               . 'valve does not pass - the model needs another route for that water'
+            if $e->{q} < -$Q_TINY;
+        push @w, sprintf('pressure ratio valve %s: inlet pressure %.1f kPa is below its minimum '
+                       . 'inlet pressure of %.1f kPa; it will not hold its ratio', $e->{id},
+                         $e->{pin} // 0, $e->{mininlet})
+            if defined $e->{mininlet} && ($e->{pin} // 0) < $e->{mininlet};
+    }
+    push @w, 'the pressure ratio valve drops had not settled when the solve stopped; '
+           . 'the results must be checked' unless $settled;
+    return @w;
+}
+
 sub solve_model {
     my $net = shift;
     build_tree($net);
@@ -853,20 +894,25 @@ sub solve_model {
         maxiter  => $net->{opts}{maxiter},
         tol_flow => $net->{opts}{tol_flow},
         tol_loop => $net->{opts}{tol_loop});
-    # Outer loop: size orifice plates and settle pump check valves, re-solving
-    # after either changes anything.  Both are discrete decisions taken on a
-    # converged answer, so they cannot live inside the Hardy Cross iteration.
-    # Bounded: each settles in a pass or two, and an unbounded loop would hang
-    # on a duty that cannot be met.
-    for (1 .. 25) {
+    # Outer loop: size orifice plates, settle pump check valves and set
+    # pressure ratio valve drops, re-solving after any of them changes
+    # anything.  Each is decided on a converged answer, so none can live
+    # inside the Hardy Cross iteration.  Bounded: plates and pumps settle in a
+    # pass or two and ratio valves in a few; an unbounded loop would hang on a
+    # duty that cannot be met.
+    my $settled = 0;
+    for (1 .. 60) {
         my $sized  = size_orifices($net);
         my $pumped = pump_status($net);
-        last unless $sized || $pumped;
+        my $ratio  = ratio_valves($net);
+        unless ($sized || $pumped || $ratio) { $settled = 1; last }
         $ok = solve_network($net,
             maxiter  => $net->{opts}{maxiter},
             tol_flow => $net->{opts}{tol_flow},
             tol_loop => $net->{opts}{tol_loop});
     }
+    push @{ $net->{warnings} }, ratio_warnings($net, $settled)
+        if grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     return $ok;
 }
 

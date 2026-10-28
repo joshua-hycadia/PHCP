@@ -1,0 +1,42 @@
+// 03 - Darcy-Weisbach with alternative user units
+// 
+// Same physical grid as example 02 but expressed in L/s and bar, solved with
+// Colebrook-White instead of Hazen-Williams.  Roughness EPS is in the declared
+// diameter unit (mm here).
+
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE BAR
+UNITS     FLOW LPS
+UNITS     KFACTOR LPS/BAR
+METHOD    DW
+OPTION    NU 1.004E-6
+OPTION    TOL_FLOW 0.001
+OPTION    TOL_LOOP 0.0001
+OPTION    MAXITER 3000
+
+WATER     TM 0.0 10.0 50 7.0 100 3.0
+NODE      K1 0.0
+HREEL     A 10.0 -2.2 0.395
+NODE      B 10.0
+NODE      C 10.0
+NODE      D 10.0
+HYDRANT   HY 10.0 20 12.64911064
+
+USE       BORE 0.045
+PIPE      M2 K1 B 60.0 150.0
+EQV       M2 12.0
+PIPE      G1 A B 40.0 100.0
+PIPE      G2 B C 40.0 100.0
+PIPE      G3 C D 40.0 100.0
+PIPE      G4 D A 40.0 100.0
+PIPE      G5 A C 55.0 80.0
+PIPE      BR3 C HY 15.0 100.0
+
+FIXEDFLOW FF1 B 5.0 2.0
+
+// PRV1 sits in a pipe of no length from TM to K1
+USE       BORE 120
+PIPE      PRV1 TM K1 0 150
+PRV       PRV1 0 1.5

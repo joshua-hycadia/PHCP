@@ -1,0 +1,33 @@
+// 05 - independent cross-check case
+// Two loops, two supplies (static + falling curve), three pressure-dependent
+// sprinklers and one fixed-flow outlet.  Solved independently by a nodal
+// Newton method in tools/crosscheck.py to verify the Hardy Cross result.
+
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE KPA
+UNITS     FLOW LPM
+UNITS     KFACTOR LPM/KPA
+METHOD    HW
+OPTION    TOL_FLOW 0.0005
+OPTION    TOL_LOOP 0.0002
+OPTION    MAXITER 20000
+
+WATER     A 0.0 950
+NODE      B 2.0
+SPRINKLER C 2.0 -50 80
+WATER     D 4.0 900 2000 780 5000 400
+SPRINKLER E 4.0 -50 115
+SPRINKLER F 6.0 -50 80
+
+USE       BORE 120
+PIPE      P1 A B 25.0 150.0
+PIPE      P2 B C 30.0 100.0
+PIPE      P3 C D 22.0 100.0
+PIPE      P4 D B 35.0 80.0
+PIPE      P5 C E 18.0 80.0
+PIPE      P6 E D 20.0 65.0
+PIPE      P7 E F 15.0 50.0
+
+FIXEDFLOW F1 B 400 200
