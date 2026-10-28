@@ -69,7 +69,7 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP` |
+| `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
@@ -84,6 +84,7 @@ line that uses it.  Every pipe name is unique.
 | `FIXEDFLOW` | NAME NODE FLOW [MINPRESSURE] |
 | `PUMP` | NAME IN OUT CHURN FLOW PRESSURE [FLOW PRESSURE ...] |
 | `BP` | PIPE CHURN FLOW PRESSURE [...] - a pump in a pipe |
+| `PUMPDUTY` | PUMP FLOW PRESSURE - the rated duty of a `PUMP` (its name) or a `BP` (its pipe), checked against its curve |
 | `BFP` | PIPE FLOW LOSS [FLOW LOSS ...] - a backflow preventer in a pipe |
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
@@ -787,6 +788,29 @@ checked without it is, by `tools/check_lisp.pl` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 
+## Pump checks and the hose allowance
+
+**Pump checks.**  `PUMPDUTY <pump> <flow> <pressure>` gives a pump its rated
+duty; for a `BP` the pump is named by its pipe.  The report's PUMP CURVES
+section then reads each pump's curve, as the solver reads it, at three flows:
+
+| check | rule | source |
+|---|---|---|
+| AT DUTY | the curve at the duty flow gives at least the duty pressure | the duty itself |
+| SHUT-OFF | the curve at no flow is at most 140 % of the duty pressure | AS 2941-2013 (Pump Industry Australia fire pump checklist, "Shut-off Pressure < 140% of duty head") |
+| 150 % FLOW | the curve at 150 % of the duty flow gives at least 65 % of the duty pressure | NFPA 20, 6.2; not confirmed in AS 2941, so FOR INFORMATION only and never a failure |
+
+A failed AT DUTY or SHUT-OFF check is also a warning.  A reading beyond the
+last curve point entered is marked EXTRAPOLATED.  A pump without a duty is
+listed with its shut-off pressure only; the duty is never guessed.
+
+**Hose stream allowance.**  `OPTION HOSE_ALLOWANCE <flow>` (HOSE STREAM
+ALLOWANCE in the PROJECT tab), in the model's flow unit, is added to the
+system flow at the supply: the demand point is then SYSTEM FLOW plus the
+allowance, at the system's pressure, and the supply is read at that flow.
+The report shows the system flow, the allowance and the demand, and states
+in its notes whether an allowance is included.
+
 ## Supply, pump and loss curves
 
 A `WATER` supply with flow/pressure points, a `PUMP` or `BP`, and a `BFP` or
@@ -827,8 +851,8 @@ others on the page, and the report says which check to make.
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
-| pipe and fitting database | 37 / 37 |
-| `.phc` language, line checker, pressure ratio valves and roughness | 275 / 275 |
+| pipe and fitting database | 39 / 39 |
+| `.phc` language, line checker, pressure ratio valves and roughness, pump checks and hose allowance | 292 / 292 |
 | AutoCAD exporter, structure | 5 / 5 |
 | JSON interface | 81 / 81 |
 | supply, pump and loss curves, and supplies combined | 18 / 18 |

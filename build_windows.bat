@@ -88,7 +88,7 @@ perl -MWin32::Exe -e1 >nul 2>&1 && set ICON=yes
 
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
 rem so it is listed here by name rather than left to the dependency scan.
-set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M JSON::PP
+set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M HardyCross::PumpCheck -M JSON::PP
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
 rem The PDF report's typeface goes beside it, in lib\data\fonts.
