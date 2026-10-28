@@ -475,6 +475,15 @@ point a full solve), the demand point and the operating point.  With more than
 one supply a single demand point is not defined, and the report says so rather
 than inventing one.
 
+With more than one supply, each supply has a graph of its own instead: its
+curve, its system curve and its operating point, with no demand point.  The
+system curve is the system as that supply sees it - the whole network re-solved
+with this supply held at each of a range of pressures and the other supplies
+connected as modelled.  Only solves that converge with water leaving this
+supply are plotted: near no flow, with the other supplies pushing back, the
+network may not settle.  Beside each graph the key gives the supply's
+operating flow and pressure and its share of the flow of all the supplies.
+
 The graph is worked out once and drawn twice from the same numbers.  The text
 report draws it in characters.  The PDF draws it on flow^1.85 graph paper:
 gridlines at round flows crowding to the right as on printed hydraulic graph
@@ -482,8 +491,8 @@ paper, the supply as a solid line (straight between its entered points, which
 are marked), the system curve dashed through its solved points, D and O
 marked, the margin dimensioned at the demand flow, and beside it a key and the
 four figures of Section 9.  Black on white in the report's typeface.
-`tools/test_pdf.pl` checks that D and O sit where the report's own figures put
-them - worked independently from the printed numbers - and that every flow
+`tools/test_pdf.pl` checks that there is one drawn graph for each in the text,
+that D and O sit where the report's own figures put them - worked independently from the printed numbers - and that every flow
 label is at its place on the q^1.85 axis and clear of the next.
 
 **Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
@@ -667,7 +676,7 @@ others on the page, and the report says which check to make.
 | JSON interface | 72 / 72 |
 | supply, pump and loss curves | 14 / 14 |
 | report hand-checks, 7 models | 351 / 351 |
-| PDF structure, typeface and graph, 7 models | 93 / 93 |
+| PDF structure, typeface and graphs, 7 models | 115 / 115 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 117 / 117 |
 | database editing and location | 37 / 37 |

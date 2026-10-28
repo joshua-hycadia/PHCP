@@ -571,10 +571,27 @@ sub write_report {
     my $dm = HardyCross::Demand::demand_point($net);
     if ($dm->{reason}) {
         $out .= wrap(' ', 'A demand point is not reported: ' . $dm->{reason} . '.');
-        for my $s (grep { $_->{kind} =~ /^SUPPLY_/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my @sup = grep { $_->{kind} =~ /^SUPPLY_/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+        for my $s (@sup) {
             $out .= sprintf " %-12s operating at %9.1f %s and %8.1f %s\n", $s->{id},
                 abs($s->{q}) / $uf, sym($net->{u_flow}),
                 HardyCross::Demand::gauge($net, $s->{n2}) / $up, sym($net->{u_pres});
+        }
+        # With more than one supply, each has a graph of its own: its curve,
+        # the system as it sees it, and where it operates.
+        if (@sup > 1 && $net->{source_text}) {
+            $out .= "\n" . wrap(' ', 'Each supply is graphed below with the other supplies connected as '
+                . 'modelled.  Its system curve is the whole network re-solved with this supply held at '
+                . 'a range of pressures, the others unchanged, and its flow read from each solve; only '
+                . 'solves that converge with water leaving this supply are plotted.  The operating '
+                . 'point is where that curve meets the supply.');
+            my $q_all = 0;
+            $q_all += abs $_->{q} for @sup;
+            for my $s (@sup) {
+                $out .= supply_graph($net, { supply => $s, shared => 1, q_oper => abs $s->{q},
+                                             p_oper => HardyCross::Demand::gauge($net, $s->{n2}),
+                                             q_all => $q_all });
+            }
         }
     } else {
         my $s = $dm->{supply};
@@ -912,7 +929,7 @@ sub cover_sheet {
 #------------------------------------------------------------------------------
 sub write_pdf_report {
     my ($net, $ok, $model_path, $pdf_path) = @_;
-    delete $net->{supply_graph};
+    delete $net->{supply_graphs};
     my $text = write_report($net, $ok, $model_path);
     my $pj = $net->{project} || {};
     (my $model = $model_path // '') =~ s{.*[/\\]}{};
@@ -924,7 +941,7 @@ sub write_pdf_report {
         designer => $pj->{DESIGNER} // '',
         model    => $model,
         program  => "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program",
-        graph    => $net->{supply_graph});
+        graphs   => $net->{supply_graphs} || []);
 }
 
 #------------------------------------------------------------------------------
@@ -946,6 +963,12 @@ sub write_pdf_report {
 # supply_graph_data -- everything either drawing needs, in the network's
 # internal units (L/min, kPa); the display factors and unit names come with it.
 #
+# $dm is the demand point (HardyCross::Demand::demand_point) for a single
+# supply.  With several supplies there is none, and $dm is instead one supply
+# with shared => 1, its q_oper and p_oper, and q_all, the flow of all the
+# supplies together: the graph then has no demand point, and its system curve
+# is the network re-solved with this supply alone held at each pressure.
+#
 #   qmax, pmax    the axes' extents: 0 .. qmax flow, 0 .. pmax pressure
 #   avail         a sub: the supply's pressure at a flow
 #   supply        [ [q, p] ... ] the supply curve sampled evenly in q^1.85,
@@ -953,8 +976,10 @@ sub write_pdf_report {
 #   tests         [ [q, p] ... ] the points the supply curve was entered as
 #                 (none for a static supply)
 #   sys           [ [q, p] ... ] the system curve, each a full solve, by flow
-#   demand, oper  [ q, p ] the demand and operating points
-#   p_avail, margin   at the demand flow
+#   demand, oper  [ q, p ] the demand and operating points (no demand when
+#                 shared)
+#   p_avail, margin   at the demand flow (none when shared)
+#   shared        1 when other supplies share the load
 #   xticks, yticks    round values for the gridlines, in internal units
 #   uf, up, qu, pu    display factors and unit names
 #   kind, id, node    the supply
@@ -969,23 +994,41 @@ sub supply_graph_data {
              : HardyCross::curve_eval($s->{curve}, $q);
     };
 
+    my $shared = $dm->{shared} ? 1 : 0;
+
     # The system curve, one full solve per point.
     my @sys;
-    my $ptop = $dm->{p_oper} > $dm->{p_demand} ? $dm->{p_oper} : $dm->{p_demand};
-    for my $i (0 .. 9) {
-        my $p = $dm->{p_demand} * 0.5 + ($ptop * 1.05 - $dm->{p_demand} * 0.5) * $i / 9;
-        my (undef, $n) = HardyCross::Demand::margin_at($net->{source_text}, $s->{id}, $p);
-        next unless $n;
-        my ($x) = grep { ($_->{id} // '') eq $s->{id} } @{ $n->{elems} }[1 .. $#{ $n->{elems} }];
-        push @sys, [ abs $x->{q}, $p ] if $x;
+    if ($shared) {
+        # From half the operating pressure to a tenth above the supply's
+        # highest.  Near no flow, with the other supplies pushing back, the
+        # network may not settle; such solves, and any with water running
+        # back into this supply, are left off.
+        my $a0 = $avail->(0);
+        my ($plo, $phi) = ($dm->{p_oper} * 0.5, ($a0 > $dm->{p_oper} ? $a0 : $dm->{p_oper}) * 1.1);
+        for my $i (0 .. 11) {
+            my $p = $plo + ($phi - $plo) * $i / 11;
+            my ($ok, $n) = HardyCross::Demand::solve_at($net->{source_text}, $s->{id}, $p);
+            next unless $ok;
+            my ($x) = grep { ($_->{id} // '') eq $s->{id} } @{ $n->{elems} }[1 .. $#{ $n->{elems} }];
+            push @sys, [ $x->{q}, $p ] if $x && !$x->{closed} && $x->{q} > 0;
+        }
+    } else {
+        my $ptop = $dm->{p_oper} > $dm->{p_demand} ? $dm->{p_oper} : $dm->{p_demand};
+        for my $i (0 .. 9) {
+            my $p = $dm->{p_demand} * 0.5 + ($ptop * 1.05 - $dm->{p_demand} * 0.5) * $i / 9;
+            my (undef, $n) = HardyCross::Demand::margin_at($net->{source_text}, $s->{id}, $p);
+            next unless $n;
+            my ($x) = grep { ($_->{id} // '') eq $s->{id} } @{ $n->{elems} }[1 .. $#{ $n->{elems} }];
+            push @sys, [ abs $x->{q}, $p ] if $x;
+        }
     }
     @sys = sort { $a->[0] <=> $b->[0] } @sys;
 
-    my $qmax = $dm->{q_oper} > $dm->{q_demand} ? $dm->{q_oper} : $dm->{q_demand};
+    my $qmax = $shared || $dm->{q_oper} > $dm->{q_demand} ? $dm->{q_oper} : $dm->{q_demand};
     $qmax = $_->[0] for grep { $_->[0] > $qmax } @sys;
     $qmax *= 1.2;
     my $pmax = $avail->(0);
-    for my $v ($dm->{p_oper}, $dm->{p_demand}, map { $_->[1] } @sys) {
+    for my $v ($dm->{p_oper}, ($shared ? () : $dm->{p_demand}), map { $_->[1] } @sys) {
         $pmax = $v if $v > $pmax;
     }
     $pmax *= 1.1;
@@ -1002,25 +1045,29 @@ sub supply_graph_data {
     my @tests = $s->{kind} eq 'SUPPLY_STATIC' ? ()
               : map { [ $s->{curve}{q}[$_], $s->{curve}{p}[$_] ] } 0 .. $#{ $s->{curve}{q} };
 
+    my ($qu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my $at = sub { sprintf '%.1f %s', $_[0] / $_[1], $_[2] };
     return {
         qmax => $qmax, pmax => $pmax, avail => $avail, supply => \@supply,
-        tests => [ grep { $_->[0] <= $qmax } @tests ], sys => \@sys,
-        demand => [ $dm->{q_demand}, $dm->{p_demand} ], oper => [ $dm->{q_oper}, $dm->{p_oper} ],
+        tests => [ grep { $_->[0] <= $qmax } @tests ], sys => \@sys, shared => $shared,
+        demand => $shared ? undef : [ $dm->{q_demand}, $dm->{p_demand} ],
+        oper => [ $dm->{q_oper}, $dm->{p_oper} ],
         p_avail => $dm->{p_avail}, margin => $dm->{margin},
         xticks => [ map { $_ * $uf } nice_ticks($qmax / $uf, 10) ],
         yticks => [ map { $_ * $up } nice_ticks($pmax / $up, 8) ],
-        uf => $uf, up => $up, qu => sym($net->{u_flow}), pu => sym($net->{u_pres}),
+        uf => $uf, up => $up, qu => $qu, pu => $pu,
         kind => $s->{kind}, id => $s->{id}, node => $net->{nodes}[ $s->{n2} ]{id},
         # The key figures as Section 9 prints them, for the key beside the
         # drawn graph: [ label, flow or '', pressure ].
-        figures => [
-            [ 'DEMAND',    sprintf('%.1f %s', $dm->{q_demand} / $uf, sym($net->{u_flow})),
-                           sprintf('%.1f %s', $dm->{p_demand} / $up, sym($net->{u_pres})) ],
-            [ 'AVAILABLE', '', sprintf('%.1f %s', $dm->{p_avail} / $up, sym($net->{u_pres})) ],
-            [ $dm->{margin} >= 0 ? 'MARGIN' : 'SHORTFALL', '',
-                           sprintf('%.1f %s', abs($dm->{margin}) / $up, sym($net->{u_pres})) ],
-            [ 'OPERATING', sprintf('%.1f %s', $dm->{q_oper} / $uf, sym($net->{u_flow})),
-                           sprintf('%.1f %s', $dm->{p_oper} / $up, sym($net->{u_pres})) ],
+        figures => $shared ? [
+            [ 'OPERATING', $at->($dm->{q_oper}, $uf, $qu), $at->($dm->{p_oper}, $up, $pu) ],
+            [ 'SHARE OF ALL SUPPLIES', '',
+              sprintf('%.1f %%', $dm->{q_all} > 0 ? 100 * $dm->{q_oper} / $dm->{q_all} : 0) ],
+        ] : [
+            [ 'DEMAND',    $at->($dm->{q_demand}, $uf, $qu), $at->($dm->{p_demand}, $up, $pu) ],
+            [ 'AVAILABLE', '', $at->($dm->{p_avail}, $up, $pu) ],
+            [ $dm->{margin} >= 0 ? 'MARGIN' : 'SHORTFALL', '', $at->(abs($dm->{margin}), $up, $pu) ],
+            [ 'OPERATING', $at->($dm->{q_oper}, $uf, $qu), $at->($dm->{p_oper}, $up, $pu) ],
         ],
     };
 }
@@ -1048,7 +1095,7 @@ sub nice_ticks {
 sub supply_graph {
     my ($net, $dm) = @_;
     my $d = supply_graph_data($net, $dm) or return '';
-    $net->{supply_graph} = $d;          # for the PDF, drawn from the same numbers
+    push @{ $net->{supply_graphs} }, $d;    # for the PDF, drawn from the same numbers
     my ($qmax, $pmax, $uf, $up) = @{$d}{qw(qmax pmax uf up)};
     my ($W, $H) = (64, 16);
 
@@ -1066,11 +1113,13 @@ sub supply_graph {
         $put->($q, $pa, '*') if $pa >= 0;
     }
     $put->(@$_, '.') for @{ $d->{sys} };              # the system, solved point by point
-    $put->(@{ $d->{demand} }, 'D');
+    $put->(@{ $d->{demand} }, 'D') if $d->{demand};
     $put->(@{ $d->{oper} },   'O');
 
     my ($pu, $qu) = @{$d}{qw(pu qu)};
-    my $out = "\n SUPPLY GRAPH - pressure against flow^1.85\n\n";
+    my $out = $d->{shared}
+        ? "\n SUPPLY GRAPH - $d->{id} AT NODE $d->{node}, THE OTHER SUPPLIES CONNECTED - pressure against flow^1.85\n\n"
+        : "\n SUPPLY GRAPH - pressure against flow^1.85\n\n";
     for my $r (0 .. $H - 1) {
         my $label = ($r == 0 || $r == int(($H - 1) / 2) || $r == $H - 1)
             ? sprintf('%8.0f', $pmax * (1 - $r / ($H - 1)) / $up) : ' ' x 8;
@@ -1087,7 +1136,10 @@ sub supply_graph {
     $out .= "$line\n";
     $out .= sprintf " %8s   flow, %s, on a flow^1.85 scale\n\n", $pu, $qu;
     $out .= "   *  supply available          .  system curve, each point a full solve\n";
-    $out .= "   D  demand point              O  operating point\n";
+    $out .= $d->{shared}
+        ? sprintf("   O  operating point: %s at %s, %s of the flow of all the supplies\n",
+                  $d->{figures}[0][1], $d->{figures}[0][2], $d->{figures}[1][2])
+        : "   D  demand point              O  operating point\n";
     return $out;
 }
 

@@ -92,9 +92,9 @@ for my $m (@models) {
     # Rules are drawn, not typed; the supply graph's character drawing is
     # replaced by the drawn graph.  Neither is looked for as text.
     my @tl = split /\n/, $T;
-    my ($gs) = grep { $tl[$_] =~ /^ SUPPLY GRAPH/ } 0 .. $#tl;
+    my @gs = grep { $tl[$_] =~ /^ SUPPLY GRAPH/ } 0 .. $#tl;
     my %skip;
-    if (defined $gs) {
+    for my $gs (@gs) {
         my $ge = $gs;
         $ge++ while $ge < $#tl && $tl[$ge] !~ /O\s+operating point/;
         $skip{$_} = 1 for $gs + 1 .. $ge;
@@ -109,15 +109,25 @@ for my $m (@models) {
     ok("$name: the typeface is embedded (DejaVu Sans Mono, regular and bold)",
        $P =~ m{/BaseFont /DejaVuSansMono /} && $P =~ m{/BaseFont /DejaVuSansMono-Bold } && $P =~ m{/FontFile2 });
 
-    # The drawn graph, checked against the report's own figures by hand.
-    next unless defined $gs;
+    # The drawn graphs, each checked against the report's own figures by
+    # hand: one for a single supply, with its demand point; one per supply
+    # when several share the load, each with its operating point.
+    next unless @gs;
+    my @plots = split /(?=% PHCP-GRAPH PLOT )/, $streams;
+    shift @plots;
+    ok("$name: every supply graph is drawn (" . scalar(@gs) . ' in the text, ' . scalar(@plots) . ' drawn)',
+       @plots == @gs);
+    my @oper = $T =~ /^ (\S+)\s+operating at\s+([\d.]+) \S+ and\s+([\d.]+)/mg;
+    for my $k (0 .. $#plots) {
+    my $streams = $plots[$k];
+    my $gname = @plots > 1 ? "$name graph " . ($k + 1) : $name;
     my ($pl, $pb, $pw, $ph, $qmax, $pmax) = $streams =~ /% PHCP-GRAPH PLOT (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)/;
-    ok("$name: the supply graph is drawn", defined $pl);
     next unless defined $pl;
     my $X = sub { $pl + ($_[0] / $qmax) ** 1.85 * $pw };
     my $Y = sub { $pb + $_[0] / $pmax * $ph };
     my ($qd, $pd) = $T =~ /^\s+DEMAND\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
     my ($qo, $po) = $T =~ /^\s+OPERATING POINT\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
+    ($qo, $po) = @oper[3 * $k + 1, 3 * $k + 2] if @plots > 1;
     my ($dx, $dy) = $streams =~ /% PHCP-GRAPH D (\S+) (\S+)/;
     my ($ox, $oy) = $streams =~ /% PHCP-GRAPH O (\S+) (\S+)/;
     # The report prints to 0.1, so a figure read from it is good to 0.05 of
@@ -125,9 +135,13 @@ for my $m (@models) {
     # axis (more in bar than in kPa), plus rounding of the coordinates.
     my $tx = sub { (abs($X->($_[0] + 0.05) - $X->($_[0] > 0.05 ? $_[0] - 0.05 : 0))) / 2 + 0.01 };
     my $ty = 0.05 / $pmax * $ph + 0.01;
-    ok(sprintf("$name: D drawn at the demand point, x = %.2f + %.2f (%.1f/%.1f)^1.85", $pl, $pw, $qd, $qmax),
-       abs($dx - $X->($qd)) <= $tx->($qd) && abs($dy - $Y->($pd)) <= $ty);
-    ok("$name: O drawn at the operating point",
+    if (@plots == 1) {
+        ok(sprintf("$gname: D drawn at the demand point, x = %.2f + %.2f (%.1f/%.1f)^1.85", $pl, $pw, $qd, $qmax),
+           abs($dx - $X->($qd)) <= $tx->($qd) && abs($dy - $Y->($pd)) <= $ty);
+    } else {
+        ok("$gname: no demand point drawn for a supply that shares the load", !defined $dx);
+    }
+    ok("$gname: O drawn at the operating point",
        abs($ox - $X->($qo)) <= $tx->($qo) && abs($oy - $Y->($po)) <= $ty);
     my @xt = $streams =~ /% PHCP-GRAPH XTICK (\S+) (\S+)/g;
     my ($tbad, $prev) = (0, undef);
@@ -137,10 +151,11 @@ for my $m (@models) {
         $tbad++ if defined $prev && $x - $prev < 6;
         $prev = $x;
     }
-    ok("$name: every flow label at (q/qmax)^1.85 along the axis, none overlapping", @xt && !$tbad);
+    ok("$gname: every flow label at (q/qmax)^1.85 along the axis, none overlapping", @xt && !$tbad);
     my ($nsup) = $streams =~ /% PHCP-GRAPH SUPPLY (\d+)/;
-    ok("$name: the supply drawn as a line of $nsup points", ($nsup // 0) > 100);
-    ok("$name: the graph clears the page footer", $pb - 3 * 10.8 > 38);
+    ok("$gname: the supply drawn as a line of $nsup points", ($nsup // 0) > 100);
+    ok("$gname: the graph clears the page footer", $pb - 3 * 10.8 > 38);
+    }
 }
 printf "PDF report: %d checks across %d models, %d failed\n", $checks, scalar @models, $fails;
 exit($fails ? 1 : 0);
