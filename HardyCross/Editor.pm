@@ -25,8 +25,21 @@
 #   result_tables  the PIPES, NODES and OUTLETS tables under the editor
 #   pipe_columns   every pipe column, with which are shown by default
 #   sort_rows      a table sorted on one column, as a click on its heading does
-#   units_of / set_units   the file's units, read and written as UNITS lines
+#   units_of       the file's units, defaults filled in
 #   load_file / write_report_file
+#
+# And for the window, which keeps the settings apart from the network:
+#
+#   split_file     a .phc file as { settings, network }: TITLE, PROJECT,
+#                  UNITS, METHOD and OPTION lines go to the PROJECT tab, the
+#                  rest is the network the editor shows
+#   join_file      settings and network back into one .phc text
+#   doc_check / doc_diagnostics / doc_choices / doc_status / doc_solve
+#                  the checks above, on the network with the settings in force,
+#                  numbered by network line
+#   validate       every problem before a calculation: what is wrong, why,
+#                  and where - the line, the field and its columns, or the
+#                  PROJECT tab field
 #
 # Every check is made by HardyCross::Phc, the code that reads a .phc file for
 # a solve, so the editor cannot call a line good that the solver refuses.
@@ -285,17 +298,50 @@ sub status_at {
 }
 
 #------------------------------------------------------------------------------
-# colour_spans -- where the command word and the comment are on a line:
-# ( [start, end, 'command'], [start, end, 'comment'] ), columns, end exclusive.
-# The command word is coloured only when it IS a command.
+# colour_spans -- the syntax colouring of one line: ( [start, end, kind] ... ),
+# columns, end exclusive.  The kinds:
+#
+#   command   the command word, when it IS a command
+#   name      a name the line defines: a new pipe, node or element
+#   ref       a name the line refers to: a node or pipe defined elsewhere
+#   number    a number in a numeric field
+#   keyword   a pipe type, fitting code, unit, method or option name
+#   comment   from // to the end of the line
+#
+# The kind of each field comes from the command's field list, so P1 is a name
+# after PIPE and a reference after BFP.  Nothing is coloured on a line whose
+# first word is not a command.
 #------------------------------------------------------------------------------
+my %KEYWORD_TYPE = map { $_ => 1 } qw(pipetype quantity unit method option field);
 sub colour_spans {
     my $line = shift // '';
     my @s;
     my $cpos = index $line, '//';
     my $code = $cpos >= 0 ? substr($line, 0, $cpos) : $line;
-    if ($code =~ /^(\s*)(\S+)/ && HardyCross::Phc::command_spec($2)) {
-        push @s, [ length $1, length($1) + length($2), 'command' ];
+    my @tok;
+    push @tok, [ $-[0], $+[0], $1 ] while $code =~ /(\S+)/g;
+    my $c = @tok ? HardyCross::Phc::command_spec($tok[0][2]) : undef;
+    if ($c) {
+        push @s, [ $tok[0][0], $tok[0][1], 'command' ];
+        unless ($c->{name} eq 'TITLE' || $c->{name} eq 'PROJECT') {
+            my @types = map { $_->[1] } @{ $c->{fixed} }, @{ $c->{opt} || [] };
+            my $rest = $c->{rest} // '';
+            for my $i (1 .. $#tok) {
+                my ($a, $b, $t) = @{ $tok[$i] };
+                my $type = $types[ $i - 1 ];
+                my $j = $i - 1 - @types;                     # index into the rest
+                my $kind =
+                      defined $type ? ($type eq 'new' ? 'name'
+                                     : $type eq 'node' || $type eq 'pipe' ? 'ref'
+                                     : $KEYWORD_TYPE{$type} ? 'keyword'
+                                     : $t =~ /^[-+.]?\d/ ? 'number' : undef)
+                    : $rest eq 'fittings' ? 'keyword'
+                    : $rest eq 'pairs'    ? 'number'
+                    : $rest eq 'copies'   ? ($j % 3 ? 'ref' : 'name')
+                    : $rest eq 'names'    ? 'name' : undef;
+                push @s, [ $a, $b, $kind ] if $kind;
+            }
+        }
     }
     push @s, [ $cpos, length $line, 'comment' ] if $cpos >= 0;
     return @s;
@@ -600,34 +646,6 @@ sub sort_rows {
 sub units_of { return { %{ scan(shift)->{units} } } }
 
 #------------------------------------------------------------------------------
-# set_units -- the buffer with its UNITS lines set to %$units.
-#
-# Each quantity's UNITS line is rewritten where it stands; a quantity with no
-# line gets one at the top (after any leading comments), unless it is the
-# default, which needs no line.  The rest of the text is untouched.
-#------------------------------------------------------------------------------
-sub set_units {
-    my ($text, $units) = @_;
-    my (undef, @l) = lines($text);
-    my %done;
-    for my $i (0 .. $#l) {
-        my $a = HardyCross::Phc::analyse($l[$i]);
-        next unless $a->{status} eq 'ok' && $a->{key} eq 'UNITS';
-        my $q = $a->{pos}[0];
-        next unless $units->{$q};
-        $l[$i] = "UNITS     $q $units->{$q}";
-        $done{$q} = 1;
-    }
-    my @new = map { "UNITS     $_ $units->{$_}" }
-              grep { $units->{$_} && !$done{$_} && $units->{$_} ne $HardyCross::Phc::UNIT_DEFAULT{$_} }
-              @HardyCross::Phc::UNIT_QUANTITIES;
-    my $at = 0;
-    $at++ while $at < @l && $l[$at] =~ m{^\s*(//|$)};
-    splice @l, $at, 0, @new if @new;
-    return join "\n", @l;
-}
-
-#------------------------------------------------------------------------------
 # load_file -- { text, path } for a .phc file.  The editor works in .phc only;
 # a .hcx is refused with the reason.
 #------------------------------------------------------------------------------
@@ -652,6 +670,389 @@ sub write_report_file {
         close $fh;
     }
     return 1;
+}
+
+#==============================================================================
+# The document: settings kept apart from the network.
+#
+# The window shows only the network in its editor.  The title, the project
+# details, the units, the method and the options are set in the PROJECT tab.
+# The .phc file still holds them all, as lines at its head, so a file is
+# complete on its own and phcp.pl reads it unchanged.
+#
+# A document is { settings => {...}, network => text }.  The functions below
+# build the whole .phc text from it (join_file) and run the checks of this
+# module on that, then number what they find by NETWORK line - the line the
+# user sees in the editor - or, for a setting, by its PROJECT tab field.
+#==============================================================================
+
+# The PROJECT tab's fields, in the order shown: the report's cover sheet.
+our @PROJECT_FIELDS = qw(PROJECT JOB COMPANY ADDRESS LICENCE LOCATION DESIGNER CHECKER
+                         REVISION DATE STANDARD HAZARD DENSITY AREA_PER_SPRINKLER
+                         AREA_OF_OPERATION BASE_OF_RISER AUTHORITY AUTHORITY_PHONE DATA_SOURCE);
+our %PROJECT_LABEL = (DENSITY => 'DENSITY (MM/MIN)', AREA_PER_SPRINKLER => 'AREA PER SPRINKLER (M2)',
+                      AREA_OF_OPERATION => 'AREA OF OPERATION (M2)', BASE_OF_RISER => 'BASE OF RISER (NODE)',
+                      AUTHORITY_PHONE => 'AUTHORITY PHONE', DATA_SOURCE => 'PIPE DATA SOURCE');
+sub project_label { my $f = shift; return $PROJECT_LABEL{$f} // ($f =~ tr/_/ /r) }
+
+# new_settings -- an empty document's settings: the office defaults.
+sub new_settings {
+    return { title => '', project => {}, extra => [], units => { %HardyCross::Phc::UNIT_DEFAULT },
+             method => 'HW', options => {} };
+}
+
+#------------------------------------------------------------------------------
+# split_file -- a .phc text as { settings, network }.
+#
+# Every TITLE, PROJECT, UNITS, METHOD and OPTION line that reads cleanly goes
+# into the settings and out of the network.  A setting line in error, or one
+# repeating a setting already taken, stays in the network, where the checks
+# mark it, so nothing in the file is lost without the user seeing it.  Blank
+# lines left at the head and foot of the network are trimmed.
+#------------------------------------------------------------------------------
+sub split_file {
+    my $text = shift // '';
+    my $s = new_settings();
+    my (@net, %seen);
+    for my $line (split /\n/, $text, -1) {
+        my $a = HardyCross::Phc::analyse($line);
+        my $c = $a->{status} eq 'ok' && $a->{key} ? HardyCross::Phc::command_spec($a->{key}) : undef;
+        if ($c && $c->{kind} eq 'setting' && !grep { $seen{$_}++ } HardyCross::Phc::setting_keys($a)) {
+            my ($k, @p) = ($a->{key}, @{ $a->{pos} });
+            if    ($k eq 'TITLE')   { $s->{title} = uc $a->{text} }
+            elsif ($k eq 'PROJECT') { $s->{project}{ $p[0] } = uc $a->{text};
+                                      push @{ $s->{extra} }, $p[0] unless grep { $_ eq $p[0] } @PROJECT_FIELDS }
+            elsif ($k eq 'UNITS')   { $s->{units}{ $p[0] } = $p[1] }
+            elsif ($k eq 'METHOD')  { $s->{method} = $p[0] }
+            elsif ($k eq 'OPTION')  { $s->{options}{ $p[0] } = uc $p[1] }
+            next;
+        }
+        push @net, $line;
+    }
+    shift @net while @net && $net[0] =~ /^\s*$/;
+    pop @net   while @net && $net[-1] =~ /^\s*$/;
+    return { settings => $s, network => join("\n", @net) . (@net ? "\n" : '') };
+}
+
+#------------------------------------------------------------------------------
+# header_lines -- the settings as .phc lines, each with the PROJECT tab field
+# it came from: ( [ line, field ] ... ).  Every unit is written, defaults
+# included, so a file says its units plainly.  Values are in capitals.
+#------------------------------------------------------------------------------
+sub header_lines {
+    my $s = shift;
+    my $row = sub { [ sprintf('%-9s %s', $_[0], $_[1]), $_[2] ] };
+    my @h;
+    push @h, $row->('TITLE', uc $s->{title}, 'TITLE') if length($s->{title} // '');
+    for my $f (@PROJECT_FIELDS, @{ $s->{extra} || [] }) {
+        my $v = $s->{project}{$f} // '';
+        push @h, $row->('PROJECT', "$f " . uc $v, $f) if length $v;
+    }
+    push @h, $row->('UNITS', "$_ $s->{units}{$_}", $_) for @HardyCross::Phc::UNIT_QUANTITIES;
+    push @h, $row->('METHOD', $s->{method} // 'HW', 'METHOD');
+    for my $o (@HardyCross::Phc::OPTIONS) {
+        my $v = $s->{options}{$o} // '';
+        push @h, $row->('OPTION', "$o " . uc $v, $o) if length $v;
+    }
+    return @h;
+}
+
+#------------------------------------------------------------------------------
+# join_file -- the document as one .phc text.  Returns (text, H): H is the
+# number of lines before the network (the settings and one blank line), so
+# network line n is line n + H of the text.
+#------------------------------------------------------------------------------
+sub join_file {
+    my ($s, $network) = @_;
+    my @h = map { $_->[0] } header_lines($s);
+    my $text = join("\n", @h, '', '') . ($network // '');
+    return ($text, @h + 1);
+}
+
+# doc_text -- join_file for a document.
+sub doc_text { my $d = shift; return join_file($d->{settings}, $d->{network}) }
+
+# shift_lines -- "ON LINE n" in a message, renumbered from file to network line.
+sub shift_lines { my ($msg, $h) = @_; $msg =~ s/\bON LINE (\d+)/'ON LINE ' . ($1 - $h)/ge; return $msg }
+
+#------------------------------------------------------------------------------
+# doc_check -- check_buffer for a document, by network line.
+#
+# Returns check_buffer's result for the network lines, plus settings_problems
+# [ { field, message } ] for any setting the reader refuses.  A setting command
+# typed into the network is an error there: settings belong in the PROJECT tab.
+#------------------------------------------------------------------------------
+sub doc_check {
+    my ($d, $editing) = @_;
+    my ($full, $h) = doc_text($d);
+    my $r = check_buffer($full, defined $editing ? $editing + $h : undef);
+    my @hdr = header_lines($d->{settings});
+    my (undef, @nl) = lines($d->{network});
+    pop @nl if @nl && $nl[-1] eq '' && $d->{network} =~ /\n\z/;
+    my %o = (lines => [undef], problems => [], settings_problems => []);
+    for my $i (1 .. @nl) {
+        my $l = $r->{lines}[ $i + $h ] || { status => 'ok', message => '' };
+        my $a = HardyCross::Phc::analyse($nl[ $i - 1 ]);
+        my $c = $a->{key} ? HardyCross::Phc::command_spec($a->{key}) : undef;
+        $l = { status => 'error', message => "$c->{name} IS SET IN THE PROJECT TAB, NOT IN THE NETWORK" }
+            if $c && $c->{kind} eq 'setting';
+        $l = { status => $l->{status}, message => shift_lines($l->{message}, $h) };
+        push @{ $o{lines} }, $l;
+        next if $l->{status} eq 'ok';
+        next if $l->{status} eq 'incomplete' && defined $editing && $editing == $i;
+        push @{ $o{problems} }, { line => $i, message => $l->{message} };
+    }
+    for my $p (@{ $r->{problems} }) {
+        next if $p->{line} > $h || $p->{line} > @hdr;
+        push @{ $o{settings_problems} }, { field => $hdr[ $p->{line} - 1 ][1], message => $p->{message} };
+    }
+    for my $k (qw(undefined unused)) {
+        $o{$k} = [ map { { node => $_->{node}, line => $_->{line} - $h } } grep { $_->{line} > $h } @{ $r->{$k} } ];
+    }
+    return \%o;
+}
+
+#------------------------------------------------------------------------------
+# doc_diagnostics -- the ERRORS, WARNINGS and NODES lists, by network line.
+# A setting the reader refuses is listed in ERRORS with no line, naming its
+# PROJECT tab field.
+#------------------------------------------------------------------------------
+sub doc_diagnostics {
+    my ($d, $net, $editing) = @_;
+    my ($full, $h) = doc_text($d);
+    my $chk = doc_check($d, $editing);
+    my $dg = diagnostics($full, $net, $editing);
+    my $mv = sub { my $l = shift; defined $l && $l > $h ? $l - $h : undef };
+    return {
+        errors   => [ (map { { line => undef, field => $_->{field},
+                                   message => "PROJECT TAB, $_->{field}: $_->{message}" } }
+                       @{ $chk->{settings_problems} }), @{ $chk->{problems} } ],
+        warnings => [ map { { line => $mv->($_->{line}), message => $_->{message} } } @{ $dg->{warnings} } ],
+        nodes    => [ map { { line => $mv->($_->{line}), message => $_->{message} } } @{ $dg->{nodes} } ],
+    };
+}
+
+# doc_choices / doc_status -- choices and status_at for network line $n, with
+# the settings in force (the fittings offered depend on the SIZE unit).
+sub doc_choices { my ($d, $n, $col) = @_; my ($t, $h) = doc_text($d); return choices($t, $n + $h, $col) }
+sub doc_status  { my ($d, $n, $col) = @_; my ($t, $h) = doc_text($d); return status_at($t, $n + $h, $col) }
+
+# doc_solve -- solve_text for a document; an error's line is a network line,
+# or undef with the error in a setting.
+sub doc_solve {
+    my ($d, $path) = @_;
+    my ($t, $h) = doc_text($d);
+    my $r = solve_text($t, $path);
+    return $r if $r->{ok};
+    if (defined $r->{line}) {
+        my $n = $r->{line} - $h;
+        $r->{error} =~ s/^LINE \d+: /$n > 0 ? "LINE $n: " : 'PROJECT TAB: '/e;
+        $r->{error} = shift_lines($r->{error}, $h);
+        $r->{line} = $n > 0 ? $n : undef;
+    }
+    return $r;
+}
+
+#==============================================================================
+# Validation: every problem, with what is wrong, why, and where.
+#==============================================================================
+
+#------------------------------------------------------------------------------
+# validate -- check a document fully before a calculation.
+#
+# Returns { ok, items => [ { what, why, line, start, end, field, tab } ] }.
+#   line, start, end  the network line and the columns of the word at fault
+#                     (end exclusive); the whole line when no one word is
+#   field             the field's name: SIZE, START, ... or the PROJECT tab
+#                     field for a setting
+#   tab               'PROJECT' for a setting, otherwise undef
+#
+# In order: the settings; every network line (an incomplete line is an error
+# here, wherever the cursor is); nodes used but not defined; nodes nothing
+# connects to; then, when every line is good, the network read whole and its
+# structure checked as the solver will - one supply or outlet anchoring it,
+# every node connected.  ok is true only when nothing is found, and only then
+# may the window calculate.
+#------------------------------------------------------------------------------
+sub validate {
+    my $d = shift;
+    my ($full, $h) = doc_text($d);
+    my $chk = doc_check($d);
+    my (undef, @nl) = lines($d->{network});
+    my $u = $d->{settings}{units};
+    my @it;
+    for my $p (@{ $chk->{settings_problems} }) {
+        push @it, { what => $p->{message}, tab => 'PROJECT', field => $p->{field},
+                    why => why($p->{message}, undef, $u) };
+    }
+    for my $p (@{ $chk->{problems} }) {
+        my $line = $nl[ $p->{line} - 1 ];
+        my ($a, $b, $field, $key) = fault_span($line, $p->{message});
+        push @it, { what => $p->{message}, line => $p->{line}, start => $a, end => $b,
+                    field => $field, why => why($p->{message}, $key, $u) };
+    }
+    for my $n (@{ $chk->{undefined} }) {
+        my ($a, $b) = word_span($nl[ $n->{line} - 1 ], $n->{node});
+        push @it, { what => "NODE $n->{node} IS USED, BUT NOT DEFINED", line => $n->{line},
+                    start => $a, end => $b, field => 'NODE', why => why('NOT DEFINED', undef, $u) };
+    }
+    for my $n (@{ $chk->{unused} }) {
+        my ($a, $b) = word_span($nl[ $n->{line} - 1 ], $n->{node});
+        push @it, { what => "NOTHING CONNECTS TO NODE $n->{node}", line => $n->{line},
+                    start => $a, end => $b, field => 'NAME', why => why('NOTHING CONNECTS', undef, $u) };
+    }
+    unless (@it) {
+        my $scan = scan($full);
+        my $ok = eval { HardyCross::build_tree(HardyCross::Phc::read_string($full)); 1 };
+        unless ($ok) {
+            my $e = $@;
+            die $e unless HardyCross::is_model_error($e);
+            my $msg = uc $e->{msg};
+            my $line;
+            if ($msg =~ s/^LINE (\d+): //) { $line = $1 - $h }
+            elsif ($msg =~ /^NODE (\S+) IS NOT CONNECTED/) { $line = ($scan->{nodes}{$1} // 0) - $h }
+            $msg = shift_lines($msg, $h);
+            $line = undef unless defined $line && $line > 0;
+            my $node = $msg =~ /^NODE (\S+)/ ? $1 : undef;
+            my ($a, $b) = defined $line ? word_span($nl[ $line - 1 ], $node) : ();
+            push @it, { what => $msg, line => $line, start => $a, end => $b,
+                        field => defined $node ? 'NAME' : undef, why => why($msg, undef, $u) };
+        }
+    }
+    @it = sort { ($a->{tab} ? 0 : 1) <=> ($b->{tab} ? 0 : 1) || ($a->{line} // 0) <=> ($b->{line} // 0) } @it;
+    return { ok => !@it, items => \@it };
+}
+
+# words -- the words of a line's code part: ( [start, end, text] ... ).
+sub words {
+    my $line = shift // '';
+    my $cpos = index $line, '//';
+    my $code = $cpos >= 0 ? substr($line, 0, $cpos) : $line;
+    my @w;
+    push @w, [ $-[0], $+[0], $1 ] while $code =~ /(\S+)/g;
+    return @w;
+}
+
+# word_span -- the columns of a word on a line (the whole line if not found).
+sub word_span {
+    my ($line, $word) = @_;
+    my @w = words($line);
+    if (defined $word) {
+        my ($m) = grep { uc $_->[2] eq uc $word } @w[1 .. $#w];
+        return ($m->[0], $m->[1]) if $m;
+    }
+    return (@w ? $w[0][0] : 0, @w ? $w[-1][1] : length($line // ''));
+}
+
+#------------------------------------------------------------------------------
+# fault_span -- where on a line its problem is: (start, end, field, command).
+#
+# An unknown command is its first word.  A line that stops short points just
+# past its end, at the field it needs.  A value quoted in the message ('X')
+# is that word.  Otherwise the reader accepted as many fields as it put in
+# pos and opt, so the next one is at fault.  Failing all of those, the whole
+# line.
+#------------------------------------------------------------------------------
+sub fault_span {
+    my ($line, $msg) = @_;
+    my @w = words($line);
+    my $a = HardyCross::Phc::analyse($line);
+    my $c = $a->{key} ? HardyCross::Phc::command_spec($a->{key}) : undef;
+    my @fields = $c ? HardyCross::Phc::template_fields($c) : ();
+    my $fname = sub { my $i = shift; $i >= 1 && @fields ? $fields[ $i - 1 > $#fields ? $#fields : $i - 1 ] : undef };
+    return ($w[0][0], $w[0][1], 'COMMAND', undef) if @w && !$c;
+    my $key = $c ? $c->{name} : undef;
+    return ($w[0][0], $w[0][1], 'COMMAND', $key) if $c && $c->{kind} eq 'setting';
+    if ($a->{status} eq 'incomplete') {
+        my $e = @w ? $w[-1][1] : 0;
+        return ($e, $e + 1, $a->{msg}, $key);
+    }
+    if ($msg =~ /^(?:NODE|THE NAME) (\S+) IS ALREADY/) {
+        my ($x, $y) = word_span($line, $1);
+        return ($x, $y, 'NAME', $key);
+    }
+    if ($msg =~ /'([^']+)'/) {
+        my $q = $1;
+        for my $i (1 .. $#w) {
+            return ($w[$i][0], $w[$i][1], $fname->($i), $key) if uc $w[$i][2] eq uc $q;
+        }
+    }
+    if ($a->{status} eq 'error') {
+        my $i = 1 + @{ $a->{pos} } + @{ $a->{opt} };
+        return ($w[$i][0], $w[$i][1], $fname->($i), $key) if $i <= $#w;
+    }
+    if ($key && $key eq 'PIPE' && $msg =~ /DATA_REQUIRED|NOT IN THE DATABASE/ && $#w >= 5) {
+        return ($w[5][0], $w[5][1], 'SIZE', $key);
+    }
+    return (@w ? $w[0][0] : 0, @w ? $w[-1][1] : length $line, undef, $key);
+}
+
+#------------------------------------------------------------------------------
+# why -- the reason behind a problem, in plain words: what the program needs
+# and why, so the user can put it right without the manual.  Matched on the
+# message; a message not listed gets the command's field template, which says
+# what the line should hold.
+#------------------------------------------------------------------------------
+my @NETWORK_COMMANDS = map { @$_ } @HardyCross::Phc::COMMAND_GROUPS[1 .. $#HardyCross::Phc::COMMAND_GROUPS];
+sub why {
+    my ($msg, $key, $u) = @_;
+    $u ||= \%HardyCross::Phc::UNIT_DEFAULT;
+    my $tpl = sub { my $k = shift; $k ? "$k IS WRITTEN: " . HardyCross::Phc::template_text($k) . '.' : '' };
+    my @why = (
+        [ qr/^UNKNOWN COMMAND/,
+          'EVERY LINE STARTS WITH A COMMAND. THE NETWORK COMMANDS ARE: ' . join(' ', @NETWORK_COMMANDS) . '.' ],
+        [ qr/IS SET IN THE PROJECT TAB/,
+          'THE TITLE, PROJECT DETAILS, UNITS, METHOD AND OPTIONS ARE KEPT IN THE PROJECT TAB SO THE EDITOR HOLDS '
+          . 'ONLY THE NETWORK. SET IT THERE AND DELETE THIS LINE.' ],
+        [ qr/^(\S+) NEEDS (.+)/,
+          sub { "THE LINE ENDS BEFORE ITS $2. " . $tpl->($1) } ],
+        [ qr/^NODE \S+ IS ALREADY DEFINED/,
+          'A NODE IS DEFINED ONCE: A SECOND DEFINITION WOULD GIVE IT TWO ELEVATIONS. RENAME ONE OR DELETE THE REPEAT.' ],
+        [ qr/^THE NAME \S+ IS ALREADY USED/,
+          'PIPES, NODES AND ELEMENTS SHARE ONE SET OF NAMES, SO EVERY RESULT AND MESSAGE POINTS TO ONE THING. '
+          . 'GIVE THIS ONE A NAME OF ITS OWN.' ],
+        [ qr/IS ALREADY SET ON LINE/,
+          'A SETTING IS GIVEN ONCE; A SECOND WOULD SILENTLY REPLACE THE FIRST.' ],
+        [ qr/IS NOT A LENGTH/,
+          sub { "A LENGTH IS A NUMBER IN THE LENGTH UNIT ($u->{LENGTH}), OR CARRIES ITS OWN UNIT: 3.2M, 3200MM, 10'6\"." } ],
+        [ qr/RATIO .* IS NOT A RATIO|RATIO MUST BE/,
+          'A PRESSURE RATIO VALVE DIVIDES ITS INLET PRESSURE BY THE RATIO, SO IT IS WRITTEN 3:1 OR 3, AND IS MORE THAN 1.' ],
+        [ qr/IS NOT A NUMBER/,
+          'THIS FIELD TAKES A NUMBER, IN THE UNIT SET IN THE PROJECT TAB.' ],
+        [ qr/CANNOT BE NEGATIVE/,
+          'A NEGATIVE VALUE HAS NO MEANING HERE. (AN OUTLET\'S MINIMUM FLOW IS THE ONE FIELD THAT TAKES A '
+          . 'NEGATIVE NUMBER: -50 MEANS A MINIMUM PRESSURE OF 50.)' ],
+        [ qr/FIELDS GO BY POSITION/,
+          'EACH FIELD IS KNOWN BY ITS PLACE ON THE LINE, AS THE STATUS BAR SHOWS: WRITE THE VALUE ALONE, WITHOUT KEY=.' ],
+        [ qr/IS NOT A FITTING|CANNOT READ FITTING/,
+          'AFTER ITS SIZE A PIPE TAKES FITTING CODES, EACH WITH AN OPTIONAL COUNT (2E IS TWO ELBOWS). '
+          . 'CTRL+SPACE LISTS THE CODES FOR THE PIPE TYPE AND SIZE.' ],
+        [ qr/FITTINGS NEED A PIPE TYPE/,
+          'FITTING LOSSES COME FROM THE DATABASE FOR A PIPE TYPE; A PLAIN BORE HAS NONE TO LOOK UP. '
+          . 'PUT A USE LINE ABOVE, OR GIVE THE ALLOWANCE AS A LENGTH WITH EQV.' ],
+        [ qr/DATA_REQUIRED|NOT IN THE DATABASE/,
+          'THE PIPE TYPE IN FORCE (THE USE LINE ABOVE) HAS NO PIPE OF THIS SIZE IN THE DATABASE, AND A BORE IS '
+          . 'NEVER GUESSED. CHECK THE SIZE, OR THE USE LINE.' ],
+        [ qr/UNEXPECTED FIELD/,
+          sub { 'THE LINE HAS MORE FIELDS THAN ITS COMMAND TAKES. ' . $tpl->($key) } ],
+        [ qr/CANNOT BE USED IN A .PHC LINE/,
+          'THE CHARACTER IS RESERVED. A COMMENT STARTS WITH //.' ],
+        [ qr/NOT DEFINED/,
+          'A PIPE OR ELEMENT JOINS NODES THAT ARE DEFINED BY NODE, NC, WATER, SPRINKLER, HYDRANT OR HREEL. '
+          . 'DEFINE THE NODE, OR CORRECT THE NAME.' ],
+        [ qr/NOTHING CONNECTS|NOT CONNECTED/,
+          'EVERY NODE MUST BE JOINED TO THE REST OF THE NETWORK, OR ITS FLOWS CANNOT BE BALANCED. '
+          . 'CONNECT IT WITH A PIPE, OR DELETE IT.' ],
+        [ qr/NO SUPPLY AND NO DISCHARGE/,
+          'PRESSURES ARE WORKED OUT FROM A KNOWN PRESSURE. ADD A WATER SUPPLY, OR AN OUTLET.' ],
+        [ qr/UNKNOWN OPTION|VALUE .* IS NOT A NUMBER|FITTING_BASIS/,
+          'CHECK THE OPTION IN THE PROJECT TAB: LEAVE A FIELD BLANK FOR THE DEFAULT.' ],
+    );
+    for my $w (@why) {
+        next unless $msg =~ $w->[0];
+        return ref $w->[1] ? $w->[1]->() : $w->[1];
+    }
+    return $tpl->($key) || 'THE SOLVER CANNOT READ THIS AS WRITTEN.';
 }
 
 1;
