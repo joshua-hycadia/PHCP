@@ -320,4 +320,6 @@ possibly Revit later.
 - [ ] PR 4 - exporter run inside AutoCAD by Joshua
 - [x] PR 5 - `phcp.exe --json`, documented and tested
 - [x] Pressure ratio valve band: designed to the bottom of +/-5% of inlet, top of band reported (engine change, Joshua 28 October 2026)
+- [x] Report: the supply graph drawn in the PDF on q^1.85 graph paper, from the numbers the text graph uses (engine change, approved by Joshua 28 October 2026)
+- [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua

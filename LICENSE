@@ -36,6 +36,12 @@ material that belongs to others:
       the Plastics Pipe Institute Handbook of PE Pipe.  Those values remain
       the copyright of their publishers and are used under their terms.
 
+  data/fonts/DejaVuSansMono.ttf, data/fonts/DejaVuSansMono-Bold.ttf
+      The typeface the PDF report is set in, embedded in each PDF.  The
+      DejaVu fonts are Copyright (c) 2003 Bitstream, Inc., with the DejaVu
+      changes in the public domain, and are distributed under the Bitstream
+      Vera font licence in data/fonts/LICENSE-DejaVu.txt.
+
   Tk
       Required to run the text editor and the viewer, installed separately,
       and distributed under its own licence.  It is not part of this source.
