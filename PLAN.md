@@ -337,3 +337,4 @@ named, and no person is named.
 - [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
 - [ ] PR 5 - AutoCAD SOLVE command run inside AutoCAD
 - [x] v1.0 - `.hcx` removed throughout, no other program or person named
+- [x] v1.0 - program icon: on the editor window, and in both `.exe` files

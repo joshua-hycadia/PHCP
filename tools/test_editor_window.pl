@@ -105,6 +105,10 @@ is('MODEL: VALIDATE, then CALCULATE', "@mi" eq 'VALIDATE CALCULATE', "@mi");
 is('white paper and black ink in the editor',
    lc $main::ed->cget(-background) eq '#ffffff' && lc $main::ed->cget(-foreground) eq '#111111');
 is('the window itself is white, not blue', lc $main::mw->cget(-background) eq '#ffffff');
+{
+    my @sizes = sort { $a <=> $b } map { $_->width } grep { $_->isa('Tk::Photo') } $main::mw->imageNames;
+    is('the PHCP icon is set, at 16, 32 and 48 pixels', "@sizes" =~ /\b16 32 48\b/, "photos: @sizes");
+}
 is('flat: no bevel on the buttons or the editor',
    !grep({ $main::btn{$_}->cget(-relief) ne 'flat' || $main::btn{$_}->cget(-borderwidth) != 0 } keys %main::btn)
    && $main::ed->cget(-borderwidth) == 0);
