@@ -8,7 +8,7 @@
 # The read-only viewer: open a model, solve it, look at the results.  Kept for
 # checking a model without any risk of editing it; the text editor,
 # phcp_editor.pl, is the program for building and changing one.  It reads
-# .phc and .hcx alike, through HardyCross::Parse::read_model.
+# a .phc model, through HardyCross::Parse::read_model.
 #==============================================================================
 # phcp_viewer.pl -- the read-only PHCP viewer.
 #
@@ -255,7 +255,7 @@ my $menu = $mw->Menu(-type => 'menubar', -font => $UI_B);
 $mw->configure(-menu => $menu);
 my $file = $menu->cascade(-label => 'FILE', -tearoff => 0);
 $file->command(-label => 'OPEN...', -accelerator => 'Ctrl+O', -command => sub {
-    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc', '.hcx']], ['All', '*']]);
+    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc']], ['All', '*']]);
     solve_path($f) if $f;
 });
 $file->separator;
@@ -267,7 +267,7 @@ $model->command(-label => 'RE-SOLVE', -accelerator => 'F5',
 my $bar = $mw->Frame(-background => $SURFACE2)
              ->pack(-side => 'top', -fill => 'x', -padx => $UNIT, -pady => $UNIT);
 $bar->Button(-text => 'OPEN...', -font => $UI_B, -command => sub {
-    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc', '.hcx']], ['All', '*']]);
+    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc']], ['All', '*']]);
     solve_path($f) if $f;
 })->pack(-side => 'left');
 $bar->Button(-text => 'RE-SOLVE (F5)', -font => $UI_B,

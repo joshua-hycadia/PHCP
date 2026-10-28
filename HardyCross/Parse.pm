@@ -148,31 +148,21 @@ sub read_curve {
     return HardyCross::fit_curve($c, $rising);
 }
 
-# read_model reads a file; read_string reads the same syntax out of memory.
-# The GUI needs the second one: its grid IS the model, and round-tripping it
-# through a temporary file to solve it would be both slow and a good way to
-# leave junk behind when something dies mid-edit.
+# read_model reads a model file: a .phc command file, the one file type a
+# user sees.  HardyCross::Phc translates its lines into rows of the older
+# .hcx block syntax and hands them back to read_string below, so every check,
+# default and unit conversion lives in one place; read_string reads that
+# syntax out of memory, as the tests and the stress tools also use it.
 #
-# The extension chooses the language: a .phc file is the command language and
-# goes to HardyCross::Phc, which translates it into .hcx rows and hands them
-# back to read_string below -- so both formats share every check, default and
-# unit conversion.  Anything else is read as .hcx, as it always has been.
+# A .hcx FILE is refused, with the reason (Joshua, 28 October 2026: there are
+# no .hcx models in use; the format only ever served the prototype).
 sub read_model {
     my $path = shift;
-    if ($path =~ /\.phc\z/i) {
-        # Loaded here, not at the top, because Phc.pm itself uses this module.
-        require HardyCross::Phc;
-        return HardyCross::Phc::read_model($path);
-    }
-    open my $fh, '<', $path or HardyCross::fail("cannot open input file %s", $path);
-    # Slurp inside a do-block so the undefined $/ ends HERE.  Written as a bare
-    # "local $/" at the top of the sub, it stayed in force for everything the
-    # parse called -- including the pipe database load, which then read its
-    # whole data file as a single line, found it began with '#', skipped it as
-    # a comment, and loaded nothing at all.
-    my $text = do { local $/; <$fh> };
-    close $fh;
-    return read_string($text);
+    HardyCross::fail('%s IS NOT A .PHC MODEL. PHCP READS .PHC FILES ONLY', $path)
+        unless $path =~ /\.phc\z/i;
+    # Loaded here, not at the top, because Phc.pm itself uses this module.
+    require HardyCross::Phc;
+    return HardyCross::Phc::read_model($path);
 }
 
 #------------------------------------------------------------------------------
