@@ -81,10 +81,10 @@ perl tools/test_report_checks.pl    # report hand-checks across the examples
 perl tools/test_pdf.pl              # PDF structure checks
 perl tools/stress_resolver.pl       # fitting resolver
 perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
-perl tools/test_gui_document.pl     # until the spreadsheet is removed in PR 3
-perl tools/test_gui_editing.pl      # until the spreadsheet is removed in PR 3
+perl tools/test_editor.pl           # the editor's logic, headless
+perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
 ```
 
 Add the new suites from `PLAN.md` to this list as they are written.
-No CPAN modules beyond Tk, Tk::TableMatrix (until PR 3) and PAR::Packer (for the
+No CPAN modules beyond Tk and PAR::Packer (for the
 Windows build); everything else is core Perl.
