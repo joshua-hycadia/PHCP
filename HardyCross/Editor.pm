@@ -184,6 +184,9 @@ sub check_buffer {
 # emptied when it grows past a limit.
 #------------------------------------------------------------------------------
 my %CHECK_CACHE;
+# clear_cache -- forget every remembered verdict: after the pipe and fitting
+# database changes, a line that was good may not be, and the other way about.
+sub clear_cache { %CHECK_CACHE = () }
 my $CACHE_LIMIT = 50_000;
 sub cached_check {
     my ($line, $ctx) = @_;
