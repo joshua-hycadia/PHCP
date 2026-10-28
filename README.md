@@ -176,8 +176,10 @@ model whose fixed flow governs, are new.
 **Examples.**  Every example is supplied as `.phc`.  Its solved pipe flows and
 node pressures are frozen in `tools/baseline/<example>.expected`, taken from an
 independent description of the same network solved at tight tolerances, and
-`tools/test_phc.pl` requires the example to reproduce them to 1e-4 (example 04,
-the 1000-node grid, is solved only with `--full`).
+`tools/test_phc.pl` requires the example to reproduce them to 1e-4.  Example 04,
+the 1000-node grid, has only its pipe and node names frozen: its solve takes many
+minutes, so it is checked to hold every pipe and node, and solved only with
+`--full`.
 
 **Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
 typed, without Tk, for the text editor: whether it is complete, the command's
