@@ -11,7 +11,7 @@ for the model (`.phc`), a text editor built around it, and a monospace ASCII
 calculation report.  The whole stack is Perl.
 
 ```
-perl phcp_editor.pl model.phc            # the text editor (F5 solves, Ctrl+R writes the report)
+perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 perl phcp_viewer.pl model.phc            # read-only results viewer
@@ -264,43 +264,69 @@ expected value must be re-derived by hand - never just changed to match.
 `perl phcp_editor.pl [model.phc]`
 
 ```
-+---------------------------------------------+------------------+
-| EDITOR - the model as .phc commands         | ERRORS           |
-|                                             | WARNINGS         |
-| command strip: TITLE PROJECT UNITS ...      | NODES            |
-| status bar: the field template | results    |                  |
-+---------------------------------------------+------------------+
-| PIPES | NODES | OUTLETS | REPORT    - results in sortable columns |
-| [ ] HIDE NON-FLOWING PIPES   [ ] HIDE INACTIVE NODES             |
++------------------------------------------------------------------+
+| NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
++------------------------------------------------------------------+
+| NETWORK | PROJECT                                                 |
+|  USE PIPE PC ... | NODE NC WATER ... | PUMP BP BFP ...  (strip)   |
+|  +----+--------------------------------------+ +---------------+ |
+|  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
+|  |  2 | NODE      R1 4.5                     | | WARNINGS      | |
+|  +----+--------------------------------------+ | NODES         | |
+|  status bar: the field template | the line's results             |
++------------------------------------------------------------------+
+| VALIDATION | PIPES | NODES | OUTLETS | REPORT      [ ] HIDE ...   |
 +------------------------------------------------------------------+
 ```
 
-The editor and its lists above, the results below; both dividers move.
-Light blue paper and black type, monospace, and everything in capitals -
-menus, headings, messages, results.  The editor works in `.phc` files only.
+A white, flat window: one-pixel grey rules instead of bevels, blue and
+black used only to highlight, red for what is wrong.  Monospace for the
+model and the results, a plain sans-serif for the window's own labels, and
+everything in capitals.
+
+**The editor holds the network only.**  The title, project details, units,
+method and options are set in the PROJECT tab.  The `.phc` file still holds
+them, as lines at its head, so a saved file is complete and `phcp.pl` reads
+it unchanged; the editor takes them out when a file is opened and writes
+them back when it is saved.  A setting typed into the network is marked as
+an error that says so.
+
+**VALIDATE before CALCULATE.**  CALCULATE (F5) is available only when the
+model is exactly as it was when it last passed VALIDATE (F4); any change, in
+the editor or the PROJECT tab, turns it off again.  VALIDATE checks every
+line, the settings, nodes undefined or unconnected, and the network's
+structure as the solver will, and lists each problem in the VALIDATION tab:
+
+| column | holds |
+|---|---|
+| WHERE | the line, or PROJECT TAB |
+| FIELD | the field at fault: SIZE, START, MINFLOW, ... or the PROJECT tab field |
+| WHAT IS WRONG | the problem |
+| WHY | what the program needs and why, in plain words - and for a line that stops short, how the command is written |
+
+Each fault is marked on its own field in the editor; a click on a row goes
+there and selects it.
 
 | feature | behaviour |
 |---|---|
-| colouring | command words dark blue and bold, comments grey; a line with an error is red, and so is an incomplete line once the cursor has left it |
-| command strip | every command, in its four groups (settings; pipes; nodes and outlets; pumps and devices).  A click starts a line with that command, on the cursor's line if it is empty or on a new line below |
-| status bar | the field template of the current command, the field the cursor is in highlighted; then the line's error, or after a solve the element's results |
-| proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it.  Holding Enter lays down a run of lines |
-| pick list | Ctrl+Space in a `USE` type, a pipe's fittings, a `UNITS` quantity or unit, `METHOD` or an `OPTION` name lists the choices with descriptions; arrows and Enter insert, completing a code already part typed |
-| ERRORS | every line the reader refuses, with its message.  A setting given twice, a node defined twice and a name used twice are listed too, by the same rule the reader uses |
-| WARNINGS | from the last solve: no convergence, a pipe over the velocity limit, an outlet or fixed flow short of its requirement, and the engine's own warnings |
-| NODES | nodes used but defined nowhere, and nodes defined that nothing connects to.  A click on any entry in the three lists goes to its line |
-| solve | F5 solves the buffer and fills the tables and the REPORT tab; an error moves the cursor to its line and empties the tables |
-| results on the cursor | after a solve the status bar shows the solved flow, velocity and end pressures of the pipe on the cursor's line (or the discharge of an outlet, the pressure at a node), in the model's units, marked if the text has changed since |
-| PIPES | one row per pipe, written in the direction of flow.  21 columns: NAME, SNODE, ENODE, NOM, I.D., MAT, C (C factor, or absolute roughness under `METHOD DW`), L, F (fitting equivalent length), T, FIT K, Q, PF, PF/M, PE, PS (loss across a device in the pipe), PV, VEL, RE, F (Darcy friction factor) and FORMULA.  A right click on a heading opens the column chooser; NAME to PF, PS and VEL are shown at first |
+| syntax colours | command words blue and bold; a name being defined black and bold; references black; numbers dark blue; pipe types, fittings and units blue; comments grey italic.  A line in error has a pale red band and a red line number |
+| line numbers | a gutter beside the editor, scrolled with it; the cursor's line in black.  A click on a number goes to the line |
+| command strip | the network commands, in their three groups.  A click starts a line with that command |
+| status bar | the field template of the current command, the field the cursor is in highlighted; then the line's error, or after a calculation the element's results |
+| proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it |
+| pick list | Ctrl+Space in a `USE` type or a pipe's fittings lists the codes with descriptions |
+| ERRORS / WARNINGS / NODES | live as you type: lines the reader refuses; the last calculation's warnings; nodes undefined or unconnected.  A click goes to the line, or to the PROJECT tab field |
+| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (METHOD and the options; a blank option takes its default).  Text is kept in capitals |
+| PIPES | 21 columns: NAME, SNODE, ENODE, NOM, I.D., MAT, C (C factor, or absolute roughness under `METHOD DW`), L, F, T, FIT K, Q, PF, PF/M, PE, PS (loss across a device in the pipe), PV, VEL, RE, F (Darcy) and FORMULA.  A right click on the headings opens the column chooser; NAME to PF, PS and VEL are shown at first |
 | NODES, OUTLETS | every node with its type, elevation, pressure, discharge, requirement and margin; every outlet and fixed flow with the required and achieved flow and pressure, the margin and PASS or FAIL |
-| sorting | a click on a column heading sorts on it, a second click reverses; the heading shows the direction.  Numbers sort as numbers |
-| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES leave out pipes carrying no flow and nodes no water passes through |
-| units | FILE > PROPERTIES - UNITS chooses the unit of each quantity.  OK rewrites the file's `UNITS` lines, as one edit that Ctrl+Z undoes; nothing else in the text changes |
-| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`).  Any file but a `.phc` is refused with the reason, and the buffer is kept |
+| sorting | a click on a heading sorts on it, a second click reverses; the heading shows the direction |
+| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES |
+| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 
 The window is thin.  Every decision it shows - a line's status, the three
-lists, the proposal, the pick list, the tables and their sorting - is made by
+lists, the proposal, the pick list, what VALIDATE finds and why, the tables
+and their sorting - is made by
 `HardyCross/Editor.pm`, which has no Tk in it and calls the same `.phc`
 reader the solver uses, so the editor cannot call a line good that the solve
 refuses.  `tools/test_editor.pl` checks those decisions headless;
@@ -513,8 +539,8 @@ others on the page, and the report says which check to make.
 | supply, pump and loss curves | 14 / 14 |
 | report hand-checks, 14 models | 659 / 659 |
 | PDF structure, 14 models | 98 / 98 |
-| text editor logic, headless | 84 / 84 |
-| text editor window, under Xvfb | 69 / 69 |
+| text editor logic, headless | 114 / 114 |
+| text editor window, under Xvfb | 92 / 92 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing

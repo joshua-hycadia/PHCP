@@ -13,8 +13,9 @@
 # this is where they are checked: each line's status, the ERRORS, WARNINGS
 # and NODES lists, what is proposed after each command, the pick lists, the
 # colours, the status bar, a solve and the figures for the cursor's line, the
-# PIPES, NODES and OUTLETS tables and their sorting, the units, and how files
-# are opened and reports written.  The window itself is driven by
+# PIPES, NODES and OUTLETS tables and their sorting, the document (settings
+# in the PROJECT tab, the network in the editor), VALIDATE's what, why and
+# where, and how files are opened and reports written.  The window itself is driven by
 # tools/test_editor_window.pl.
 #==============================================================================
 use strict;
@@ -137,15 +138,23 @@ print "3. PICK LISTS AND THE STATUS BAR\n";
 }
 
 #==============================================================================
-print "4. COLOURING\n";
+print "4. SYNTAX COLOURING\n";
 #==============================================================================
 {
-    my @s = HardyCross::Editor::colour_spans('  PIPE P1 A B 1 50  // MAIN');
-    is('command word span', grep { $_->[2] eq 'command' && $_->[0] == 2 && $_->[1] == 6 } @s);
-    is('comment span to the end of the line', grep { $_->[2] eq 'comment' && $_->[0] == 20 && $_->[1] == 27 } @s);
+    my @s = HardyCross::Editor::colour_spans('  PIPE P1 A B 1 50 2E  // MAIN');
+    my %k = map {; "$_->[0]-$_->[1]" => $_->[2] } @s;
+    is('command word', ($k{'2-6'} // '') eq 'command');
+    is('the new pipe\'s name, its two nodes', ($k{'7-9'} // '') eq 'name' && ($k{'10-11'} // '') eq 'ref'
+       && ($k{'12-13'} // '') eq 'ref');
+    is('length and size are numbers, the fitting a keyword',
+       ($k{'14-15'} // '') eq 'number' && ($k{'16-18'} // '') eq 'number' && ($k{'19-21'} // '') eq 'keyword');
+    is('comment span to the end of the line', ($k{'23-30'} // '') eq 'comment');
+    my %b = map {; "$_->[0]-$_->[1]" => $_->[2] } HardyCross::Editor::colour_spans('BFP P1 0 10 500 40');
+    is('after BFP the pipe is a reference, the curve numbers', $b{'4-6'} eq 'ref' && $b{'9-11'} eq 'number');
+    is('USE: the pipe type a keyword',
+       (grep { $_->[2] eq 'keyword' } HardyCross::Editor::colour_spans('USE ASAM')) == 1);
     is('an alias is a command word (P)', grep { $_->[2] eq 'command' } HardyCross::Editor::colour_spans('P P1 A B 1 50'));
-    is('an unknown word is not coloured as a command',
-       !grep { $_->[2] eq 'command' } HardyCross::Editor::colour_spans('PIPX P1'));
+    is('an unknown word: nothing coloured', !HardyCross::Editor::colour_spans('PIPX P1 A'));
     is('a comment-only line', (HardyCross::Editor::colour_spans('// NOTE'))[0][2] eq 'comment');
 }
 
@@ -266,28 +275,129 @@ print "7. THE RESULTS TABLES\n";
 }
 
 #==============================================================================
-print "8. UNITS\n";
+print "8. THE DOCUMENT - settings in the PROJECT tab, the network in the editor\n";
 #==============================================================================
+my $EX7 = slurp("$EX/07_pipe_database_demo.phc");
 {
-    my $u = HardyCross::Editor::units_of($M);
-    is('units_of: the file\'s LENGTH M, defaults for the rest',
-       $u->{LENGTH} eq 'M' && $u->{ELEVATION} eq 'M' && $u->{SIZE} eq 'MM' && $u->{PRESSURE} eq 'KPA'
-       && $u->{FLOW} eq 'LPM' && $u->{KFACTOR} eq 'LPM/KPA');
-    my $t = HardyCross::Editor::set_units($M, { %$u, LENGTH => 'MM', PRESSURE => 'BAR' });
-    my @l = split /\n/, $t;
-    is('set_units rewrites an existing UNITS line where it stands',
-       (grep { $l[$_] eq 'UNITS     LENGTH MM' } 0 .. $#l) == 1 && $l[2] eq 'UNITS     LENGTH MM', $l[2]);
-    is('   and adds a line for a changed quantity', (grep { $_ eq 'UNITS     PRESSURE BAR' } @l) == 1);
-    is('   but none for a default left as it is', !grep { /UNITS\s+(FLOW|SIZE)/ } @l);
-    is('   the rest of the text untouched', (join "\n", grep { !/^UNITS/ } @l) eq
-       (join "\n", grep { !/^UNITS/ } split /\n/, $M));
-    my $c = "// HEADER\nPIPE P1 A B 1 50\n";
-    is('a new UNITS line goes after the leading comments',
-       (split /\n/, HardyCross::Editor::set_units($c, { FLOW => 'LPS' }))[1] eq 'UNITS     FLOW LPS');
+    my $d = HardyCross::Editor::split_file($EX7);
+    my $s = $d->{settings};
+    is('the title and project details go to the settings',
+       $s->{title} eq 'LEVEL 2 SPRINKLER RANGE - DEMONSTRATION' && $s->{project}{JOB} eq 'HYC-DEMO-017'
+       && $s->{project}{AUTHORITY_PHONE} eq '02 9265 2999');
+    is('   and the units and method', $s->{units}{LENGTH} eq 'M' && $s->{units}{FLOW} eq 'LPM' && $s->{method} eq 'HW');
+    is('the network holds no setting line',
+       $d->{network} !~ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)\b/m && $d->{network} =~ /^WATER     SUP 0 650$/m
+       && $d->{network} =~ /^PIPE      X1 R1 H3 9\.0 65 2E\n\z/m, substr($d->{network}, 0, 40));
+    my ($full, $h) = HardyCross::Editor::join_file($s, $d->{network});
+    my @fl = split /\n/, $full;
+    is('join_file: the settings at the head, then a blank line, then the network',
+       $fl[0] eq 'TITLE     LEVEL 2 SPRINKLER RANGE - DEMONSTRATION' && $fl[ $h - 1 ] eq ''
+       && $fl[$h] eq 'WATER     SUP 0 650', "H $h: $fl[$h]");
+    is('   every unit written, defaults included', (grep { /^UNITS / } @fl) == 6);
+    my $r1 = HardyCross::Editor::solve_text($EX7);
+    my $r2 = HardyCross::Editor::solve_text($full);
+    my ($q1) = map { $_->{q} } grep { ($_->{id} // '') eq 'M1' } @{ $r1->{net}{elems} };
+    my ($q2) = map { $_->{q} } grep { ($_->{id} // '') eq 'M1' } @{ $r2->{net}{elems} };
+    is('the joined file solves exactly as the original', abs($q1 - $q2) < 1e-9);
+    my $again = HardyCross::Editor::split_file($full);
+    is('split, join and split again: the same settings and network',
+       $again->{network} eq $d->{network} && (HardyCross::Editor::join_file($again->{settings}, $again->{network}))[0] eq $full);
+    $d = HardyCross::Editor::split_file("UNITS FLOW LPS\nUNITS FLOW LPM\nUNITS SIZE XX\nNODE A 0\n");
+    is('a repeated or bad setting stays in the network, to be seen and fixed',
+       $d->{settings}{units}{FLOW} eq 'LPS' && $d->{network} eq "UNITS FLOW LPM\nUNITS SIZE XX\nNODE A 0\n", $d->{network});
+    my $c = HardyCross::Editor::doc_check($d);
+    is('   where it is an error: settings are set in the PROJECT tab',
+       $c->{lines}[1]{message} eq 'UNITS IS SET IN THE PROJECT TAB, NOT IN THE NETWORK'
+       && $c->{lines}[3]{status} eq 'ok');
+    my $new = HardyCross::Editor::new_settings();
+    is('new settings: the office default units, HW',
+       $new->{units}{LENGTH} eq 'MM' && $new->{units}{KFACTOR} eq 'LPM/KPA' && $new->{method} eq 'HW');
+}
+{
+    my $d = HardyCross::Editor::split_file($EX7);
+    my $net = $d->{network};
+    $d->{network} = $net . "PIPE Z1 H3 ZZ 3 32\nPIPE M2 R1 R2 3 50\n";
+    my $c = HardyCross::Editor::doc_check($d);
+    my %p = map { $_->{line} => $_->{message} } @{ $c->{problems} };
+    is('doc_check numbers by network line, messages included',
+       ($p{17} // '') eq 'THE NAME M2 IS ALREADY USED ON LINE 10', join ' / ', map { "$_: $p{$_}" } sort keys %p);
+    is('   undefined nodes by network line', $c->{undefined}[0]{node} eq 'ZZ' && $c->{undefined}[0]{line} == 16);
+    $d->{settings}{options}{VEL_LIMIT} = 'FAST';
+    $c = HardyCross::Editor::doc_check($d);
+    is('a bad option is a settings problem, named by its PROJECT tab field',
+       $c->{settings_problems}[0]{field} eq 'VEL_LIMIT' && $c->{settings_problems}[0]{message} =~ /NOT A NUMBER/,
+       $c->{settings_problems}[0]{message});
+    my $dg = HardyCross::Editor::doc_diagnostics($d);
+    is('   listed in ERRORS with its field and no line',
+       !defined $dg->{errors}[0]{line} && $dg->{errors}[0]{field} eq 'VEL_LIMIT'
+       && $dg->{errors}[0]{message} =~ /^PROJECT TAB, VEL_LIMIT: /);
+    $d->{settings}{options}{VEL_LIMIT} = '';
+    $d->{network} = $net;
+    my $st = HardyCross::Editor::doc_status($d, 9, 22);
+    is('doc_status: the PIPE template on network line 9', $st->{template}{command} eq 'PIPE');
+    $d->{network} = $net . "PIPE Q1 R1 R2 3 50 \n";
+    my %f = map { $_->[0] => 1 } @{ HardyCross::Editor::doc_choices($d, 16, 27) };
+    is('doc_choices: the fittings, with the settings\' SIZE unit in force', $f{E} && $f{GV});
+    $d->{network} = $net . "PIPE Q2 R1 NOWHERE 3 50\n";
+    my $r = HardyCross::Editor::doc_solve($d);
+    is('doc_solve: an error\'s line is the network line', !$r->{ok} && ($r->{line} // 0) == 16
+       && $r->{error} =~ /^LINE 16: /, $r->{error});
+    $d->{network} = $net;
+    $r = HardyCross::Editor::doc_solve($d);
+    is('doc_solve: the network with its settings solves', $r->{ok} && $r->{converged});
 }
 
 #==============================================================================
-print "9. FILES - open .phc only, write the report\n";
+print "9. VALIDATE - what is wrong, why, and where\n";
+#==============================================================================
+{
+    my $d = HardyCross::Editor::split_file($EX7);
+    my $v = HardyCross::Editor::validate($d);
+    is('a good model validates with nothing to report', $v->{ok} && !@{ $v->{items} });
+    my $net = $d->{network};
+    $d->{network} = $net . join "\n", 'PIPE Z1 H3 ZZ 3 32', 'SPRINKLER S9 0', 'PIPX', 'NODE LONE 0',
+        'UNITS FLOW LPS', 'PIPE Q1 R1 R2 3 47', 'PIPE Q2 R1 R2 3 50 ZZ', 'PIPE M2 R1 R2 3 50', 'PIPE Q3 R1 R2 3X 50', '';
+    $v = HardyCross::Editor::validate($d);
+    my %it = map { $_->{line} => $_ } @{ $v->{items} };
+    is('nine problems found, in line order, and not valid',
+       !$v->{ok} && @{ $v->{items} } == 9 && join(' ', map { $_->{line} } @{ $v->{items} }) eq '16 17 18 19 20 21 22 23 24',
+       join(' ', map { $_->{line} } @{ $v->{items} }));
+    my $at = sub { my $i = $it{ $_[0] }; my @l = split /\n/, $d->{network}; substr($l[ $_[0] - 1 ], $i->{start}, $i->{end} - $i->{start}) };
+    is('an undefined node: the node itself, with why',
+       $it{16}{what} eq 'NODE ZZ IS USED, BUT NOT DEFINED' && $at->(16) eq 'ZZ' && $it{16}{why} =~ /DEFINED BY NODE/);
+    is('a short line: just past its end, naming the field it needs, and the template',
+       $it{17}{what} eq 'SPRINKLER NEEDS MINFLOW' && $it{17}{field} eq 'MINFLOW' && $it{17}{start} == 14
+       && $it{17}{why} =~ /SPRINKLER <NAME> <ELEVATION> <MINFLOW> <K>/, "$it{17}{start} $it{17}{why}");
+    is('an unknown command: the command word, and the commands listed',
+       $at->(18) eq 'PIPX' && $it{18}{field} eq 'COMMAND' && $it{18}{why} =~ /USE PIPE PC/);
+    is('a node nothing connects to', $it{19}{what} eq 'NOTHING CONNECTS TO NODE LONE' && $at->(19) eq 'LONE');
+    is('a setting in the network: the command word, and where it belongs',
+       $at->(20) eq 'UNITS' && $it{20}{why} =~ /PROJECT TAB/);
+    is('a size not in the database: the SIZE field, and why a bore is not guessed',
+       $at->(21) eq '47' && $it{21}{field} eq 'SIZE' && $it{21}{why} =~ /NEVER GUESSED/);
+    is('a bad fitting: the fitting code', $at->(22) eq 'ZZ' && $it{22}{why} =~ /FITTING CODES/);
+    is('a name used twice: the name, and why names are unique',
+       $at->(23) eq 'M2' && $it{23}{what} eq 'THE NAME M2 IS ALREADY USED ON LINE 10' && $it{23}{why} =~ /ONE SET OF NAMES/);
+    is('a bad length: the length field, and how a length is written, in the file\'s unit',
+       $at->(24) eq '3X' && $it{24}{field} eq 'LENGTH' && $it{24}{why} =~ /LENGTH UNIT \(M\)/);
+    is('every what and why in capitals', !grep { "$_->{what}$_->{why}" =~ /[a-z]/ } @{ $v->{items} });
+
+    # Structure: lines all good, but part of the network is cut off.
+    my $island = HardyCross::Editor::split_file("WATER S 0 500\nNODE A 0\nNODE B 0\nNODE C 0\n"
+        . "PIPE P1 S A 1 50\nPIPE P2 B C 1 50\nSPRINKLER H 0 0 80\nPIPE P3 A H 1 50\n");
+    $v = HardyCross::Editor::validate($island);
+    is('a part of the network cut off from the rest: found before any calculation',
+       !$v->{ok} && $v->{items}[0]{what} =~ /^NODE [BC] IS NOT CONNECTED/ && $v->{items}[0]{line} =~ /^[34]$/,
+       $v->{items}[0]{what});
+    $d = HardyCross::Editor::split_file($EX7);
+    $d->{settings}{options}{TOL_FLOW} = 'TIGHT';
+    $v = HardyCross::Editor::validate($d);
+    is('a bad option: in the PROJECT tab, its field named',
+       !$v->{ok} && $v->{items}[0]{tab} eq 'PROJECT' && $v->{items}[0]{field} eq 'TOL_FLOW' && !defined $v->{items}[0]{line});
+}
+
+#==============================================================================
+print "10. FILES - open .phc only, write the report\n";
 #==============================================================================
 {
     my $r = HardyCross::Editor::load_file("$EX/01_single_branch.phc");
