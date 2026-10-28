@@ -163,6 +163,30 @@ print "4. WHERE THE DATABASE IS - a team folder, else the built-in one\n";
     is('USE BUILT-IN clears the setting and goes back', !defined HardyCross::Settings::database_dir()
        && HardyCross::PipeData::origin() eq 'BUILT-IN');
 }
+print "5. ROUGHNESS - a column of PIPE TYPES\n";
+{
+    my @c = map { $_->[0] } @{ HardyCross::DbEdit::table('PIPETYPE')->{cols} };
+    is('PIPE TYPES has ROUGHNESS MM after C FACTOR', "@c[4, 5]" eq 'C FACTOR ROUGHNESS MM');
+    my $d = HardyCross::DbEdit::open_db($REAL);
+    my ($pe) = grep { $_->{fields}[0] eq 'PE11' } @{ HardyCross::DbEdit::rows($d, 'PIPETYPE') };
+    is('   PE11 reads 0.007 mm', $pe && $pe->{fields}[5] eq '0.007');
+    my @shown = map { HardyCross::DbEdit::shown($_) } @{ $pe->{fields} };
+    $shown[5] = '0';
+    my $e0 = HardyCross::DbEdit::set_row($d, $pe->{line}, \@shown);
+    is('   a roughness of 0 is refused', ($e0 // '') =~ qr/ROUGHNESS MM '0' MUST BE A NUMBER ABOVE ZERO, OR DASH/);
+    $shown[5] = '0.015';
+    is('   0.015 is accepted', !defined HardyCross::DbEdit::set_row($d, $pe->{line}, \@shown) && $d->{modified});
+    # A database from before the column: its pipe types read with DASH.
+    (my $old = slurp($REAL)) =~ s/^(PIPETYPE\|[^\n]*)\|[^|\n]*$/$1/mg;
+    open my $o, '>', "$TMP/old.dat" or die;
+    print $o $old;
+    close $o;
+    my $od = HardyCross::DbEdit::open_db("$TMP/old.dat");
+    my $p = HardyCross::DbEdit::check_all($od);
+    is('   an older database without it opens: roughness DASH, nothing to put right, nothing changed',
+       !@$p && !$od->{modified} && (grep { $_->{fields}[0] eq 'ASAM' } @{ HardyCross::DbEdit::rows($od, 'PIPETYPE') })[0]{fields}[5] eq 'DASH',
+       join '; ', map { $_->{message} } @$p);
+}
 is('the real database was never touched', slurp($REAL) eq $ORIG);
 
 print "\n$pass passed, $fail failed\n";

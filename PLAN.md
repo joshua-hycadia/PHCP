@@ -328,6 +328,8 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `phcp_editor.pl` | the QUICK TOOLS tab, between GRAPH and DATABASE; it scrolls |
 | `tools/test_tools.pl`, `tools/test_editor_window.pl` | the calculators against formulas written out in the test, and the tab driven |
 | `build_windows.bat` | packs HardyCross::Tools |
+| `data/pipes.dat` | a ROUGHNESS column for each pipe type, each value's source in the header: steel 0.045 mm, PVC-M 0.003, PE100 0.007, CPVC 0.003 |
+| `HardyCross/PipeData.pm`, `HardyCross/DbEdit.pm` | read it (an older database without it reads as none published); the DATABASE tab shows and edits it |
 
 ## Definition of done, each PR
 

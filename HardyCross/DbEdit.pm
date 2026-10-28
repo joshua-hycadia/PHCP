@@ -61,7 +61,7 @@ use HardyCross::Phc;
 our @TABLES = (
     [ 'PIPETYPE', 'PIPE TYPES',
       [ [ 'CODE', 'code' ], [ 'NAME', 'text' ], [ 'STANDARD', 'text' ], [ 'SIZE RANGE', 'text' ],
-        [ 'C FACTOR', 'num' ] ] ],
+        [ 'C FACTOR', 'num' ], [ 'ROUGHNESS MM', 'num0' ] ] ],
     [ 'PIPE', 'PIPE SIZES',
       [ [ 'PIPE TYPE', 'code' ], [ 'DN', 'int' ], [ 'OD MM', 'num0' ], [ 'BORE MM', 'num0' ],
         [ 'K', 'num0' ] ] ],
@@ -97,6 +97,9 @@ sub open_db {
     for my $l (split /\n/, $text, -1) {
         if ($l =~ /^\s*(#|$)/) { push @lines, { text => $l }; next }
         my ($kind, @f) = split /\|/, $l, -1;
+        # A pipe type from a database written before ROUGHNESS MM was added:
+        # shown as DASH, none published, and written so if the row is edited.
+        push @f, 'DASH' if $kind eq 'PIPETYPE' && @f == 5;
         push @lines, { text => $l, kind => $kind, fields => \@f };
     }
     pop @lines if @lines && $lines[-1]{text} eq '' && $text =~ /\n\z/;
