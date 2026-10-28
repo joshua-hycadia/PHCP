@@ -695,6 +695,41 @@ our %PROJECT_LABEL = (DENSITY => 'DENSITY (MM/MIN)', AREA_PER_SPRINKLER => 'AREA
                       AUTHORITY_PHONE => 'AUTHORITY PHONE', DATA_SOURCE => 'PIPE DATA SOURCE');
 sub project_label { my $f = shift; return $PROJECT_LABEL{$f} // ($f =~ tr/_/ /r) }
 
+#------------------------------------------------------------------------------
+# The PROJECT tab's UNITS and CALCULATION fields in plain words.  Each option
+# keeps its .phc name (written in the file, and shown small beside the label
+# for anyone reading a file by hand), and gets a label and one line saying what
+# it does and what it is when left blank.  The defaults quoted are the
+# reader's own (HardyCross::Parse::new_net).  Options a user rarely needs come
+# last, under SOLVER - ADVANCED.
+#------------------------------------------------------------------------------
+our %UNIT_LABEL = (LENGTH => 'PIPE LENGTH', ELEVATION => 'ELEVATION', SIZE => 'PIPE SIZE AND BORE',
+                   PRESSURE => 'PRESSURE', FLOW => 'FLOW', KFACTOR => 'K-FACTOR');
+our @OPTION_FORM = (
+    [ 'VEL_LIMIT', 'VELOCITY WARNING LIMIT',
+      'PIPES FASTER THAN THIS, IN M/S, ARE LISTED AS WARNINGS. BLANK: 6 M/S.' ],
+    [ 'FITTING_BASIS', 'FITTING LENGTHS',
+      'CORRECTED: ADJUSTED FOR THE C-FACTOR AND THE INSTALLED BORE. STANDARD: AS PUBLISHED IN AS 2118.1. '
+      . 'BLANK: CORRECTED.', [ '', 'CORRECTED', 'STANDARD' ] ],
+    [ 'ORIF_STEP', 'ORIFICE PLATE BORE STEP',
+      'A BORE SIZED FOR AN OPP PLATE IS ROUNDED TO THIS STEP, IN THE PIPE SIZE UNIT. BLANK: 0.5 MM.' ],
+    'SOLVER - ADVANCED',
+    [ 'TOL_FLOW', 'FLOW TOLERANCE',
+      'THE SOLVE ENDS WHEN EVERY LOOP\'S FLOW CORRECTION IS SMALLER THAN THIS, IN THE FLOW UNIT. BLANK: 0.05 L/MIN.' ],
+    [ 'TOL_LOOP', 'PRESSURE TOLERANCE',
+      'AND EVERY LOOP BALANCES TO WITHIN THIS, IN THE PRESSURE UNIT. BLANK: 0.01 KPA.' ],
+    [ 'MAXITER', 'MAXIMUM ITERATIONS',
+      'THE SOLVE STOPS AFTER THIS MANY ROUNDS AND REPORTS THAT IT DID NOT CONVERGE. BLANK: 50000.' ],
+    [ 'HW_CONST', 'HAZEN-WILLIAMS CONSTANT',
+      'THE CONSTANT OF THE HAZEN-WILLIAMS FORMULA, FOR KPA PER METRE. BLANK: 6.05E7, AS IN AS 2118.1.' ],
+    [ 'NU', 'KINEMATIC VISCOSITY',
+      'OF THE WATER, IN M2/S, FOR DARCY-WEISBACH ONLY. BLANK: 1.004E-6, WATER AT 20 C.' ],
+    [ 'PROFILE', 'COEFFICIENT PROFILE',
+      'FOR VALIDATION RUNS ONLY: REPLACES THE HAZEN-WILLIAMS CONSTANT AND EXPONENTS. LEAVE BLANK FOR DESIGN.' ],
+    [ 'RELAX', 'RELAXATION',
+      'NOT USED BY THE SOLVER. ACCEPTED SO THAT OLDER FILES STILL READ.' ],
+);
+
 # new_settings -- an empty document's settings: the office defaults.
 sub new_settings {
     return { title => '', project => {}, extra => [], units => { %HardyCross::Phc::UNIT_DEFAULT },
