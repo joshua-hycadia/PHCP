@@ -180,16 +180,42 @@ not make, or a fitting the database lacks, shows on the line as it is typed.
 
 `data/pipes.dat` holds the pipe dimensions and fitting equivalent lengths.  It
 is a plain text file and is meant to be edited: add a pipe type, a size or a
-fitting, or correct a value, with any text editor.  The file's header explains
-the record format.
+fitting, or correct a value - in the editor's DATABASE tab, or with any text
+editor.  The file's header explains the record format.
+
+**The DATABASE tab.**  The database as four tables - pipe types, pipe sizes,
+fittings, K' factors - with a filter.  It opens read-only; ticking EDIT THE
+DATABASE lets a row be changed, added or deleted.  SAVE CHANGES checks every
+row (numbers where numbers belong or DASH, a size only for a pipe type that
+exists, no two rows for the same thing, a bore smaller than its OD), reads the
+whole file with the solver's own reader before it replaces the old one, dates
+the DATASET line, and makes it the database in use; a model must then be
+validated again before it is calculated.  Comments, blank lines and order are
+kept, and a field not edited keeps its exact text.
+
+**Where the database is.**  In order, the first that is set or exists:
+
+| | |
+|---|---|
+| a team folder | set on each machine with CHOOSE FOLDER... in the DATABASE tab (or the environment variable `PHCP_DATABASE_DIR`) - for example a folder on a network drive that a whole team points at.  If that folder cannot be read, the program stops and says where; it does not quietly use other data |
+| beside the program | `data\pipes.dat` next to `phcp.exe` - an office copy that wins over the built-in one; the DATABASE tab saves here when the built-in copy is packed inside the `.exe` |
+| built-in | the copy the program ships with |
+
+The choice is kept per machine in `%APPDATA%\PHCP\settings.ini` on Windows
+(`~/.config/phcp/settings.ini` elsewhere).  CHOOSE FOLDER on a folder with no
+`pipes.dat` offers to copy the database in use there, which is how a team
+starts its shared database; USE BUILT-IN goes back.  When two people edit the
+shared database at once, the second SAVE is refused - the file changed after
+they opened it - rather than overwrite the first person's change.
 
 101 pipe sizes across eight pipe types, 219 fitting equivalent lengths, and 19
 PPI factors for PE.
 
 **Traceability.**  Because the data can change, every report states the
 database's DATASET name and date, its file name and the SHA-256 of the exact
-bytes read (Section 4).  A calculation can always be tied back to the data it
-used.  Change the DATASET line whenever you change the content, and re-run
+bytes read (Section 4) - with its full path when it is a team folder's or an
+office copy, so shared data and a local copy cannot be confused.  A
+calculation can always be tied back to the data it used.  Change the DATASET line whenever you change the content, and re-run
 `tools/test_pipedata.pl` after any edit.
 
 **Where it is read from**, first found wins: `data/pipes.dat` beside the source;
@@ -323,6 +349,7 @@ there and selects it.
 | HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES, each with the count of rows it would hide beside it - (NONE), and greyed, when every pipe flows or every node is active |
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
+| DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
@@ -550,7 +577,8 @@ others on the page, and the report says which check to make.
 | report hand-checks, 14 models | 659 / 659 |
 | PDF structure, 14 models | 98 / 98 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 100 / 100 |
+| text editor window, under Xvfb | 116 / 116 |
+| database editing and location | 37 / 37 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing
