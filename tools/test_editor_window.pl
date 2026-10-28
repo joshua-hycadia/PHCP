@@ -115,6 +115,16 @@ is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    && $main::list{NODES}->rooty > $main::list{ERRORS}->rooty);
 is('the results sit below the editor', $main::table{PIPES}{page}->rooty > $main::ed->rooty + $main::ed->height);
 is('a line-number gutter left of the editor', $main::gutter->rootx < $main::ed->rootx && (main::gutter_numbers())[0] eq '1');
+{
+    my @pw = grep { $_->isa('Tk::Panedwindow') } $main::mw->Descendants;
+    is('two dividers, each wide enough to grab and drag (6 px), with the resize pointer',
+       @pw == 2 && !grep({ $_->cget(-sashwidth) < 6 } @pw)
+       && (grep { $_->cget(-sashcursor) eq 'sb_v_double_arrow' } @pw) == 1);
+}
+is('sizes scale with the screen: px() multiplies by the scale, at least 1',
+   $main::SCALE >= 1 && main::px(10) == int(10 * $main::SCALE + 0.5) && ref main::px([2, 4]) eq 'ARRAY');
+is('FITTING_BASIS is a drop-down that shows DEFAULT when blank',
+   $main::form{FITTING_BASIS}->isa('Tk::Menubutton') && $main::form{FITTING_BASIS}->cget(-text) =~ /^DEFAULT/);
 is('CALCULATE is off and the model NOT VALIDATED', !main::calculate_enabled() && main::state_text() eq 'NOT VALIDATED');
 
 #==============================================================================
@@ -351,6 +361,9 @@ main::calculate();
 my $all = main::table_rows('PIPES');
 $main::hide_pipes = 1; main::fill_table('PIPES');
 my @shown = map { $_->[0] } main::table_rows('PIPES');
+is('the HIDE boxes count what they would hide: one pipe, one node',
+   main::hide_count_text('pipes') eq '(1)' && main::hide_count_text('nodes') eq '(1)',
+   main::hide_count_text('pipes') . ' ' . main::hide_count_text('nodes'));
 is('HIDE NON-FLOWING PIPES leaves out the dead end', $all == 7 && @shown == 6 && !grep { $_ eq 'D1' } @shown);
 $main::hide_pipes = 0; main::fill_table('PIPES');
 my $alln = main::table_rows('NODES');
@@ -362,6 +375,41 @@ $main::hide_nodes = 0; main::fill_table('NODES');
 main::set_buffer($doc->{network});
 main::validate();
 main::calculate();
+is('with everything flowing the boxes say NONE, and are greyed',
+   main::hide_count_text('pipes') eq '(NONE)' && main::hide_count_text('nodes') eq '(NONE)'
+   && lc $main::checks{pipes}{label}->cget(-foreground) eq lc $main::C{faint});
+{
+    # The wheel goes to the pane under the pointer, not the one with the focus.
+    main::select_tab($main::restabs, 'NODES');
+    main::set_buffer(join "\n", map({ "NODE N$_ 0" } 1 .. 60), "WATER S 0 500", "SPRINKLER H 0 0 80",
+                     map({ "PIPE P$_ N$_ N" . ($_ + 1) . " 1 50" } 1 .. 59), "PIPE PS S N1 1 100", "PIPE PH N60 H 1 50", '');
+    main::validate();
+    main::calculate();
+    main::select_tab($main::restabs, 'NODES');
+    $main::mw->update;
+    my $h = $main::table{NODES}{hlist};
+    my ($ey0) = $main::ed->yview;
+    my ($hy0) = $h->yview;
+    $main::ed->focusForce;
+    $main::mw->update;
+    $main::ed->eventGenerate('<MouseWheel>', -delta => -120, -when => 'now',
+        -rootx => $h->rootx + 40, -rooty => $h->rooty + 60, -x => 40, -y => 60);
+    $main::mw->update;
+    my ($ey1) = $main::ed->yview;
+    my ($hy1) = $h->yview;
+    is('the wheel over the NODES table scrolls the table, not the editor with the focus',
+       $hy1 > $hy0 && $ey1 == $ey0, "table $hy0 -> $hy1, editor $ey0 -> $ey1");
+    $h->selectionSet(2);
+    $h->anchorSet(2);
+    my $cb = $h->cget(-browsecmd);
+    $cb->Call(2) if $cb;
+    is('a clicked row has its blue band and no dotted anchor box',
+       !defined(($h->info('anchor'))[0]) || ($h->info('anchor'))[0] eq '');
+    is('the results show the ordinary pointer', $h->cget(-cursor) =~ /^(left_ptr|arrow)$/);
+    main::set_buffer($doc->{network});
+    main::validate();
+    main::calculate();
+}
 if ($SHOT) {
     main::go_to_line($pl);
     $main::mw->raise;
