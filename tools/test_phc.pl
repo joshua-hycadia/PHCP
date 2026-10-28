@@ -538,5 +538,60 @@ print "9. ROUGHNESS - as given, else the database's, else 0.045 mm and flagged\n
     is('no example assumes a roughness', !@flag, "@flag");
 }
 
+#==============================================================================
+print "10. PUMPS AGAINST THEIR DUTY, AND THE HOSE ALLOWANCE\n";
+#==============================================================================
+{
+    require HardyCross::PumpCheck;
+    # A pump curve: 700 kPa at no flow, 600 at 2000 L/min, 450 at 3000.
+    my $m = join "\n", 'UNITS LENGTH M', 'WATER T1 0 100', 'NODE A 0',
+        'PUMP PU1 T1 A 700 2000 600 3000 450', 'PIPE P1 A B 20 150', 'NODE B 0',
+        'BP P1 300 1500 250', 'PIPE P2 B S1 10 100', 'SPRINKLER S1 0 -50 80', '';
+    my ($n, $err) = read_phc($m . "PUMPDUTY PU1 2000 600\nPUMPDUTY P1 1500 250\n");
+    my %c = map { $_->{id} => $_ } @{ HardyCross::PumpCheck::check($n) || [] };
+    is('PUMPDUTY on a pump, and on a pipe with a booster (P1.BP)', $n && $c{PU1}{duty} && $c{'P1.BP'}{duty}, $err);
+    is('PU1 at its duty: 600 at 2000 L/min - PASS', abs($c{PU1}{at_duty}{p} - 600) < 1e-9 && $c{PU1}{at_duty}{ok});
+    is('   shut-off 700, at most 140% of 600 = 840 - PASS', $c{PU1}{shutoff} == 700 && $c{PU1}{shutoff_ok});
+    is('   at 150% flow, 3000 L/min: 450, at least 65% of 600 = 390 - meets, read on the curve',
+       abs($c{PU1}{over}{p} - 450) < 1e-9 && $c{PU1}{over}{ok} && !$c{PU1}{over}{extrapolated});
+    is('the booster at 150% flow is beyond its last point: EXTRAPOLATED', $c{'P1.BP'}{over}{extrapolated});
+    is('no warnings when every pump meets its duty', !grep { /^pump / } @{ $n->{warnings} || [] });
+    ($n) = read_phc($m . "PUMPDUTY PU1 2000 480\n");
+    my ($w) = grep { /^pump PU1/ } @{ $n->{warnings} || [] };
+    is('duty 480: shut-off 700 is above 140% of 480 = 672 - a warning naming the pump and the source',
+       $w && $w =~ /shut-off 700\.0 is above 140% of its duty pressure 480\.0 \(672\.0\) - AS 2941/, $w);
+    ($n) = read_phc($m . "PUMPDUTY PU1 2500 600\n");
+    ($w) = grep { /^pump PU1/ } @{ $n->{warnings} || [] };
+    is('duty 600 at 2500 L/min: the curve gives less there - does not deliver its duty', $w && $w =~ /does not deliver its duty/, $w);
+    ($n) = read_phc($m);
+    %c = map { $_->{id} => $_ } @{ HardyCross::PumpCheck::check($n) };
+    is('without PUMPDUTY a pump is listed, not checked', !$c{PU1}{duty} && $c{PU1}{shutoff} == 700);
+    refused('PUMPDUTY of a name that is no pump', $m . "PUMPDUTY P2 100 100\n", 10, qr/NO PUMP OF THAT NAME/);
+    refused('two duties for one pump', $m . "PUMPDUTY PU1 2000 600\nPUMPDUTY PU1 2000 600\n", 11, qr/ALREADY HAS A DUTY, ON LINE 10/);
+
+    # The hose allowance: added at the supply to the demand flow; the demand
+    # pressure, a property of the network, does not change.
+    my $one = join "\n", 'UNITS LENGTH M', 'WATER W1 0 900 3000 600', 'NODE A 0', 'PIPE P1 W1 A 30 100',
+        'PIPE P2 A S1 10 50', 'SPRINKLER S1 0 -100 80', '';
+    my ($a) = read_phc($one);
+    my ($h) = read_phc($one . "OPTION HOSE_ALLOWANCE 500\n");
+    HardyCross::solve_model($_) for $a, $h;
+    my ($da, $dh) = map { HardyCross::Demand::demand_point($_) } $a, $h;
+    is('the demand pressure is the same with a hose allowance', abs($dh->{p_demand} - $da->{p_demand}) < 0.02);
+    is('   the demand flow is the system\'s plus 500 L/min', abs($dh->{q_demand} - ($dh->{q_system} + 500)) < 1e-9
+       && abs($dh->{q_system} - $da->{q_demand}) < 1);
+    my $avail = 900 - 300 * ($dh->{q_demand} / 3000) ** 1.85;     # straight in Q^1.85 from 0 to 3000
+    is(sprintf('   available at that flow, %.2f kPa, read straight in Q^1.85; margin = available - demand', $avail),
+       abs($dh->{p_avail} - $avail) < 1e-6 && abs($dh->{margin} - ($avail - $dh->{p_demand})) < 1e-6);
+    my $rep = HardyCross::Report::write_report($h, 1, 'hose.phc');
+    (my $flat = $rep) =~ s{\s+}{ }g;                            # wrapped lines read as one
+    is('   the report shows the system flow, the allowance and the demand',
+       $rep =~ /HOSE ALLOWANCE, added\s+500\.0 L\/min/ && $rep =~ /SYSTEM FLOW at the demand point/
+       && $flat =~ /A hose stream allowance of 500\.0 L\/min is added/);
+    my ($u) = read_phc("UNITS FLOW LPS\n" . $one . "OPTION HOSE_ALLOWANCE 8.3333333\n");
+    is('   in the model\'s flow unit: 8.333 L/s is 500 L/min', abs($u->{opts}{hose} - 500) < 1e-4);
+    refused('a negative allowance is refused', $one . "OPTION HOSE_ALLOWANCE -5\n", 7, qr/HOSE_ALLOWANCE CANNOT BE NEGATIVE/);
+}
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
