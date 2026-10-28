@@ -541,8 +541,16 @@ The Windows build was run on 28 October 2026 (Strawberry Perl 5.42.3, GCC
 smoke test solved the examples and wrote a PDF.  The editor ran on Windows 11
 at 150 % display scaling; what that run showed - blurred text, dividers too
 thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
-The script now also packs Win32::API, which the editor uses to be sharp on a
-scaled display; the build has not been re-run since that line was added.
+The script also packs Win32::API, which the editor uses to be sharp on a
+scaled display.
+
+**The icon.**  `data/phcp.ico` - a blue tile with a two-loop pipe network and
+a red sprinkler at the far node - is written into both `.exe` files by pp,
+which needs Win32::Exe (the script installs it; without it the programs keep
+the default icon).  The editor also sets the same picture on its window and
+taskbar button itself, from PNG data held in `phcp_editor.pl`, so it shows
+when run from source too.  The build has not been re-run since the icon was
+added.
 
 ## Calling PHCP from another program
 
@@ -661,7 +669,7 @@ others on the page, and the report says which check to make.
 | report hand-checks, 7 models | 351 / 351 |
 | PDF structure, typeface and graph, 7 models | 93 / 93 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 116 / 116 |
+| text editor window, under Xvfb | 117 / 117 |
 | database editing and location | 37 / 37 |
 | invariance stress | 9 584 / 9 584 |
 
