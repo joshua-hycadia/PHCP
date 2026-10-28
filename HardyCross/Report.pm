@@ -281,6 +281,12 @@ sub write_report {
             . 'AS 2118.1 fitting allowances are equivalent lengths; K belongs with '
             . 'Darcy-Weisbach. The K terms have been applied as entered.';
     }
+    # How a curve is drawn between the points entered changes the answer, so
+    # it is stated whenever the model has one.
+    my @curved = grep { $_->{curve} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    push @notes, 'Supply, pump and loss-device curves (' . join(', ', map { $_->{id} } @curved[0 .. ($#curved < 7 ? $#curved : 7)])
+        . (@curved > 8 ? ' ...' : '') . ') pass through every point entered, with pressure '
+        . 'linear in Q^1.85 between points and continued linearly beyond the last.' if @curved;
     push @notes, 'No project-specific manufacturer data are relied upon.';
     for my $i (0 .. $#notes) { $out .= wrap(sprintf(' %2d  ', $i + 1), $notes[$i]) }
 
@@ -299,6 +305,12 @@ sub write_report {
         for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
             next unless $e->{kind} eq 'DISCHARGE' && $e->{n1} == $i;
             $q += abs $e->{q}; $preq = $e->{preq}; $tag = $e->{id};
+        }
+        # A fixed flow's minimum pressure is a requirement at its node too.
+        # Its flow is already in the node's demand above.
+        for my $f (grep { $_->{n1} == $i } @{ $net->{fixed} || [] }) {
+            $preq = $f->{preq} if defined $f->{preq} && $f->{preq} > $preq;
+            $tag = $tag ? "$tag $f->{id}" : $f->{id};
         }
         my ($pd, $qd) = (pdp($net->{u_pres}) + 1, qdp($net->{u_flow}));
         $out .= sprintf " %-10s %10.3f %12.*f %12.*f %12.*f %12.*f %11s  %s\n",
@@ -425,8 +437,11 @@ sub write_report {
 
     #-------------------------------------------------- 7. outlet compliance
     # Each outlet's required and achieved flow and pressure, PASS or FAIL.
+    # Fixed flows with a minimum pressure are listed after the outlets: their
+    # flow is set, so only the pressure can fail, and K is shown as "fixed".
     my @dis = grep { $_->{kind} eq 'DISCHARGE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
-    if (@dis) {
+    my @fix = grep { defined $_->{preq} } @{ $net->{fixed} || [] };
+    if (@dis || @fix) {
         $out .= title('7. OUTLET COMPLIANCE');
         $out .= sprintf " %-12s %-8s %9s %11s %11s %11s %11s   %s\n",
             'OUTLET', 'NODE', 'K', 'REQ Q', 'ACT Q', 'REQ P', 'ACT P', 'RESULT';
@@ -443,8 +458,22 @@ sub write_report {
                 $e->{k} * sqrt($up) / $uf, $qd, $e->{qreq} / $uf, $qd, $q / $uf,
                 $pd, $e->{preq} / $up, $pd, $p / $up, $pass ? 'PASS' : '*** FAIL';
         }
+        for my $f (@fix) {
+            my $p = $net->{nodes}[ $f->{n1} ]{h} - $GW * $f->{z};
+            my $pass = $p >= $f->{preq} - 1e-6;
+            $fails++ unless $pass;
+            my ($pd, $qd) = (pdp($net->{u_pres}), qdp($net->{u_flow}));
+            $out .= sprintf " %-12s %-8s %9s %11.*f %11.*f %11.*f %11.*f   %s\n",
+                $f->{id}, $net->{nodes}[ $f->{n1} ]{id}, 'fixed',
+                $qd, $f->{qreq} / $uf, $qd, $f->{q} / $uf,
+                $pd, $f->{preq} / $up, $pd, $p / $up, $pass ? 'PASS' : '*** FAIL';
+        }
         $out .= thin();
-        $out .= " Check: ACT Q = K x sqrt(ACT P) on every row (AS 2118.1 Appendix B, eqn B1).\n";
+        $out .= " Check: ACT Q = K x sqrt(ACT P) on every row (AS 2118.1 Appendix B, eqn B1).\n"
+            if @dis && !@fix;
+        $out .= " Check: ACT Q = K x sqrt(ACT P) on every row with a K (AS 2118.1 Appendix B,\n"
+              . " eqn B1).  A fixed flow's Q is set by the model; only its pressure is checked.\n"
+            if @fix;
         $out .= $fails ? " *** $fails OUTLET(S) BELOW REQUIREMENT ***\n" : " All outlets meet their requirement.\n";
     }
 
@@ -470,7 +499,7 @@ sub write_report {
             $out .= thin();
             my %nm = (PIPE => 'PIPE', PUMP => 'PUMP', SUPPLY_STATIC => 'SUPPLY',
                       SUPPLY_CURVE => 'SUPPLY', FIXED_DROP => 'PRV', ORIFICE => 'ORIFICE',
-                      ORIFICE_REQUIRED => 'ORIF_P', BFP => 'BFP');
+                      ORIFICE_REQUIRED => 'ORIF_P', BFP => 'BFP', RATIO => 'PRA');
             my $p;              # running pressure, carried forward by hand
             my $worst = 0;
             my $k = 0;
@@ -509,11 +538,19 @@ sub write_report {
             }
             $out .= thin();
             my $pgo = HardyCross::Demand::gauge($net, $gov->{n1});
-            $out .= sprintf " Outlet %s: pressure %.1f %s, required %.1f, margin %.1f.   "
-                . "Discharge %.1f %s = K %.3f x sqrt(%.1f).\n",
-                $gov->{id}, $pgo / $up, sym($net->{u_pres}), $gov->{preq} / $up,
-                ($pgo - $gov->{preq}) / $up, abs($gov->{q}) / $uf, sym($net->{u_flow}),
-                $gov->{k} * sqrt($up) / $uf, $pgo / $up;
+            if ($gov->{kind} eq 'FIXEDFLOW') {
+                # A fixed flow has no K: its discharge is set by the model.
+                $out .= sprintf " Fixed flow %s: pressure %.1f %s, required %.1f, margin %.1f.   "
+                    . "Discharge %.1f %s, fixed.\n",
+                    $gov->{id}, $pgo / $up, sym($net->{u_pres}), $gov->{preq} / $up,
+                    ($pgo - $gov->{preq}) / $up, $gov->{q} / $uf, sym($net->{u_flow});
+            } else {
+                $out .= sprintf " Outlet %s: pressure %.1f %s, required %.1f, margin %.1f.   "
+                    . "Discharge %.1f %s = K %.3f x sqrt(%.1f).\n",
+                    $gov->{id}, $pgo / $up, sym($net->{u_pres}), $gov->{preq} / $up,
+                    ($pgo - $gov->{preq}) / $up, abs($gov->{q}) / $uf, sym($net->{u_flow}),
+                    $gov->{k} * sqrt($up) / $uf, $pgo / $up;
+            }
             $out .= " Check: P TO = P FROM - PF - PE on every row.  PF = PF/M x T.\n";
             $out .= sprintf " Check: P TO worked by hand agrees with P SOLVED at every node, "
                 . "worst difference %.1e %s.\n", $worst / $up, sym($net->{u_pres});
@@ -562,7 +599,7 @@ sub write_report {
     }
 
     #---------------------------------------------- 8. supplies and devices
-    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP)/ }
+    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP|RATIO)/ }
               @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     if (@sup) {
         $out .= title('10. SUPPLIES, PUMPS AND PRESSURE DEVICES');
@@ -571,13 +608,17 @@ sub write_report {
         $out .= thin();
         my %nm = (SUPPLY_STATIC => 'STATIC', SUPPLY_CURVE => 'CURVE', PUMP => 'PUMP',
                   FIXED_DROP => 'PRV', ORIFICE => 'ORIFICE', ORIFICE_REQUIRED => 'ORIFICE_P',
-                  BFP => 'BFP');
+                  BFP => 'BFP', RATIO => 'PRA');
         for my $e (@sup) {
             my ($hf) = $e->{closed} ? (0) : HardyCross::elem_hf($e, $e->{q}, $o);
             my $note = $e->{closed} ? 'CHECK VALVE CLOSED - would run backwards'
                      : $e->{kind} eq 'ORIFICE' && $e->{bore}
                         ? sprintf('bore %.2f mm in %.2f mm pipe, beta %.3f',
                                   $e->{bore}, $e->{pipedia}, $e->{bore} / $e->{pipedia})
+                     : $e->{kind} eq 'RATIO'
+                        # Outlet = inlet / ratio, so the reader can check it.
+                        ? sprintf('ratio %g:1, inlet %.1f, outlet %.1f', $e->{ratio},
+                                  ($e->{pin} // 0) / $up, (($e->{pin} // 0) - $e->{dp}) / $up)
                      : '';
             $out .= sprintf " %-12s %-11s %-8s %-8s %11.*f %11.*f   %s\n",
                 $e->{id}, $nm{ $e->{kind} } // $e->{kind},
