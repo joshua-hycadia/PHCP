@@ -366,6 +366,12 @@ sub solve_text {
     return error_result($@) unless $net;
     my $conv = eval { HardyCross::solve_model($net) };
     return error_result($@) unless defined $conv;
+    # With design areas (AREA), each is solved and the governing one shown.
+    if ($net->{areas}) {
+        require HardyCross::Areas;
+        ($net, $conv) = eval { HardyCross::Areas::governing($net, $conv) };
+        return error_result($@) unless $net;
+    }
     $net->{converged} = $conv;
     return { ok => 1, converged => $conv, net => $net,
              report => HardyCross::Report::write_report($net, $conv, $path // 'UNTITLED.PHC') };
@@ -719,6 +725,9 @@ our @OPTION_FORM = (
     [ 'HOSE_ALLOWANCE', 'HOSE STREAM ALLOWANCE',
       'A FLOW, IN THE FLOW UNIT, ADDED AT THE SUPPLY FOR HOSE STREAMS: THE DEMAND IS CHECKED AT THE SYSTEM\'S FLOW '
       . 'PLUS THIS. BLANK: NONE.' ],
+    [ 'DESIGN_AREA', 'DESIGN AREA',
+      'THE ONE DESIGN AREA (AREA) TO SOLVE AND REPORT. BLANK: EVERY AREA IS SOLVED AND THE ONE THAT GOVERNS IS '
+      . 'REPORTED. NOT USED WITHOUT AREA LINES.' ],
     'SOLVER - ADVANCED',
     [ 'TOL_FLOW', 'FLOW TOLERANCE',
       'THE SOLVE ENDS WHEN EVERY LOOP\'S FLOW CORRECTION IS SMALLER THAN THIS, IN THE FLOW UNIT. BLANK: 0.05 L/MIN.' ],

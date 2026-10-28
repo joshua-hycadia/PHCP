@@ -42,6 +42,10 @@
 #   governing      { id, margin } the outlet with least pressure to spare, or null
 #   demand         { supply, flow, pressure, available, margin, meets } at the
 #                  demand point, or null with demand_reason saying why
+#   design_area    the design area (AREA) these results are for, or null
+#   areas          [ { name, outlets, governing, margin, demand_flow,
+#                    demand_pressure, supply_margin, converged, governs } ]
+#                  every design area solved (HardyCross::Areas), or null
 #   warnings       [ text ]
 #   errors         [ { line, message } ]  line is the .phc line, or null
 #   summary        [ text ]  the lines a caller shows a user: the result, the
@@ -149,6 +153,14 @@ sub results {
         pipes => \@pipes, elements => \@elems, nodes => \@nodes, outlets => \@outlets,
         governing => $go ? { id => $go->{id}, margin => r4($gm / $up) } : undef,
         warnings => [ @{ $net->{warnings} || [] } ], errors => [],
+        design_area => $net->{design_area},
+        areas => $net->{area_results} ? [ map { my $d = $_->{demand}; {
+            name => $_->{name}, outlets => $_->{outlets}, governing => $_->{governing},
+            margin => defined $_->{margin} ? r4($_->{margin} / $up) : undef,
+            demand_flow => $d ? r4($d->{q} / $uf) : undef, demand_pressure => $d ? r4($d->{p} / $up) : undef,
+            supply_margin => $d ? r4($d->{margin} / $up) : undef,
+            converged => $_->{ok} ? JSON::PP::true : JSON::PP::false,
+            governs => $_->{governs} ? JSON::PP::true : JSON::PP::false } } @{ $net->{area_results} } ] : undef,
     );
 
     my $u = $j{units};
@@ -170,6 +182,8 @@ sub results {
     my @s;
     push @s, $ok ? "CONVERGED IN $j{iterations} ITERATIONS"
                  : 'DID NOT CONVERGE - THE RESULTS MUST NOT BE USED';
+    push @s, $j{areas} ? sprintf('DESIGN AREA %s GOVERNS, OF %d AREAS SOLVED', $j{design_area}, scalar @{ $j{areas} })
+           : defined $j{design_area} ? "DESIGN AREA $j{design_area}, CHOSEN BY OPTION DESIGN_AREA" : ();
     if ($go) {
         my ($g) = grep { $_->{id} eq $go->{id} } @outlets;
         push @s, sprintf('GOVERNING OUTLET %s: %.1f %s AGAINST %.1f REQUIRED, MARGIN %.1f %s', $go->{id},
