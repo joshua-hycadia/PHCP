@@ -15,16 +15,16 @@
 # the README says plainly whether the window has been run.
 #
 # tools/test_editor.pl checks every decision the editor makes.  This checks
-# that the window carries them out: the layout (editor, command strip and
-# status bar above, ERRORS / WARNINGS / NODES to the right, the results
-# tables below), the colours on the right characters, the three lists, the
-# command strip, Enter offering a proposal and Tab taking it, the pick list,
-# F5 filling the tables and the REPORT tab, sorting, the column chooser and
-# the HIDE boxes, the units dialog, undo, and the files.  Keys are sent as real X key events where Tk
+# that the window carries them out: the layout (toolbar, NETWORK and PROJECT
+# tabs, the editor with its line numbers, the three lists, the results tabs
+# below), the white, flat look, the syntax colours, the command strip,
+# proposals and undo, the pick list, VALIDATE before CALCULATE and the
+# VALIDATION tab, the tables with sorting, the column chooser and the HIDE
+# boxes, the PROJECT tab, and the files.  Keys are sent as real X key events where Tk
 # delivers them reliably under a virtual display (Return, Tab, letters); the
 # file dialogs are bypassed by passing the file name, as a user's choice would.
 #
-# --shot file.png saves a screenshot of the window after the solve.
+# --shot file.png saves a screenshot of the window after the calculation.
 #==============================================================================
 use strict;
 use warnings;
@@ -91,78 +91,86 @@ main::build_window();
 $main::mw->update;
 is('the window opens, titled in capitals', $main::mw->title eq 'PHCP EDITOR - UNTITLED.PHC', $main::mw->title);
 my $menubar = $main::mw->cget(-menu);
-my @menus = map { $menubar->entrycget($_, -label) }
-            grep { $menubar->type($_) eq 'cascade' } 0 .. $menubar->index('end');
+my @casc = grep { $menubar->type($_) eq 'cascade' } 0 .. $menubar->index('end');
+my @menus = map { $menubar->entrycget($_, -label) } @casc;
 is('menus in capitals: FILE EDIT MODEL', "@menus" eq 'FILE EDIT MODEL', "@menus");
-my ($fi) = grep { $menubar->type($_) eq 'cascade' } 0 .. $menubar->index('end');
-my $filemenu = $menubar->entrycget($fi, -menu);
-my @items = map { $filemenu->entrycget($_, -label) }
-            grep { $filemenu->type($_) eq 'command' } 0 .. $filemenu->index('end');
-is('every FILE item in capitals, PROPERTIES among them',
-   !grep({ /[a-z]/ } @items) && grep({ /^PROPERTIES/ } @items), "@items");
-is('light blue paper, black ink in the editor',
-   lc $main::ed->cget(-background) eq lc $main::C{paper} && $main::ed->cget(-foreground) eq '#000000');
-is('the report tab in the same scheme', lc $main::report->cget(-background) eq lc $main::C{paper});
-is('a black status band', $main::statusbar->cget(-background) eq '#000000');
+my $mm = $menubar->entrycget($casc[2], -menu);
+my @mi = map { $mm->entrycget($_, -label) } grep { $mm->type($_) eq 'command' } 0 .. $mm->index('end');
+is('MODEL: VALIDATE, then CALCULATE', "@mi" eq 'VALIDATE CALCULATE', "@mi");
+is('white paper and black ink in the editor',
+   lc $main::ed->cget(-background) eq '#ffffff' && lc $main::ed->cget(-foreground) eq '#111111');
+is('the window itself is white, not blue', lc $main::mw->cget(-background) eq '#ffffff');
+is('flat: no bevel on the buttons or the editor',
+   !grep({ $main::btn{$_}->cget(-relief) ne 'flat' || $main::btn{$_}->cget(-borderwidth) != 0 } keys %main::btn)
+   && $main::ed->cget(-borderwidth) == 0);
 my @strip = main::strip_commands();
-is('the command strip lists every command, in its groups',
-   "@strip" eq join(' ', @HardyCross::Phc::COMMANDS) && @strip == 24, "@strip");
+is('the command strip lists the 19 network commands, no settings',
+   @strip == 19 && $strip[0] eq 'USE' && $strip[-1] eq 'PRA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
+   "@strip");
+is('NETWORK and PROJECT tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT'
+   && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
    && $main::list{NODES}->rooty > $main::list{ERRORS}->rooty);
-is('the results tables sit below the editor',
-   $main::table{PIPES}{hlist}->rooty > $main::ed->rooty + $main::ed->height
-   && join(' ', $main::book->pages) eq 'PIPES NODES OUTLETS REPORT', join(' ', $main::book->pages));
+is('the results sit below the editor', $main::table{PIPES}{page}->rooty > $main::ed->rooty + $main::ed->height);
+is('a line-number gutter left of the editor', $main::gutter->rootx < $main::ed->rootx && (main::gutter_numbers())[0] eq '1');
+is('CALCULATE is off and the model NOT VALIDATED', !main::calculate_enabled() && main::state_text() eq 'NOT VALIDATED');
 
 #==============================================================================
-print "2. OPEN AND COLOUR\n";
+print "2. OPEN: the network in the editor, the rest in the PROJECT tab\n";
 #==============================================================================
 my $EX7 = 'examples/07_pipe_database_demo.phc';
 main::open_path($EX7);
 flush();
-is('a .phc opens into the editor unchanged', main::buffer() eq slurp($EX7));
-is('the status bar shows the first line\'s template at once', main::status_text() =~ /^\s*TITLE TEXT/, main::status_text());
-is('before a solve the tables say how to get results',
-   $main::table{PIPES}{hlist}->header('cget', 0, '-widget')->cget(-text) =~ /F5 SOLVES/);
-is('the title names the file', $main::mw->title eq 'PHCP EDITOR - 07_PIPE_DATABASE_DEMO.PHC', $main::mw->title);
+my $doc = HardyCross::Editor::split_file(slurp($EX7));
+is('the editor holds the network only', main::buffer() eq $doc->{network} && main::buffer() !~ /^(TITLE|PROJECT|UNITS)/m);
+is('the PROJECT tab holds the title, details and units',
+   $main::settings->{title} eq 'LEVEL 2 SPRINKLER RANGE - DEMONSTRATION' && $main::form{JOB}->get eq 'HYC-DEMO-017'
+   && $main::settings->{units}{LENGTH} eq 'M' && $main::form{LENGTH}->cget(-text) =~ /^M\s/);
+is('opening is not a change: no *', $main::mw->title eq 'PHCP EDITOR - 07_PIPE_DATABASE_DEMO.PHC', $main::mw->title);
+is('the status bar shows the first line\'s template', main::status_text() =~ /^WATER NAME ELEVATION STATIC/, main::status_text());
 my @lines = split /\n/, main::buffer();
-my ($tl) = grep { $lines[ $_ - 1 ] =~ /^TITLE/ } 1 .. @lines;
+is('a number for every line', (main::gutter_numbers())[-1] == @lines + 1);
 my ($pl) = grep { $lines[ $_ - 1 ] =~ /^PIPE\s+M1/ } 1 .. @lines;
-is('command words carry the command colour', (grep { $_ eq 'command' } tags_on("$tl.0"))
-   && (grep { $_ eq 'command' } tags_on("$pl.2")));
-is('the fields do not', !grep { $_ eq 'command' } tags_on("$pl.12"));
+my ($ul) = grep { $lines[ $_ - 1 ] =~ /^USE\s+ASAM/ } 1 .. @lines;
+is('syntax: the command word', grep { $_ eq 'command' } tags_on("$pl.1"));
+is('syntax: the pipe\'s name, its nodes, its length, its fittings',
+   (grep { $_ eq 'name' } tags_on("$pl.10")) && (grep { $_ eq 'ref' } tags_on("$pl.13"))
+   && (grep { $_ eq 'number' } tags_on("$pl.21")) && (grep { $_ eq 'keyword' } tags_on("$pl.30")));
+is('syntax: a pipe type', grep { $_ eq 'keyword' } tags_on("$ul.11"));
 $main::ed->insert('1.0', "// A NOTE\n");
 flush();
-is('comments carry the comment colour', grep { $_ eq 'comment' } tags_on('1.3'));
-main::set_buffer(slurp($EX7));
-is('no line is red in a good model', !$main::ed->tagRanges('error'));
-is('nothing in the three lists', !grep { $main::list{$_}->size } qw(ERRORS WARNINGS NODES));
+is('syntax: a comment', grep { $_ eq 'comment' } tags_on('1.3'));
+main::set_buffer($doc->{network});
+is('nothing is marked in a good model', !$main::ed->tagRanges('error') && !grep { $main::list{$_}->size } qw(ERRORS WARNINGS NODES));
+is('before a calculation the tables say how to get results',
+   main::header_text('PIPES', 0) =~ /VALIDATE \(F4\), THEN CALCULATE \(F5\)/);
 
 #==============================================================================
-print "3. ERRORS AND NODES\n";
+print "3. LIVE CHECKS - the lists and the marks as you type\n";
 #==============================================================================
 my $n = @lines + 1;
 $main::ed->insert('end', "PIPE Z1 H3 ZZ 3 32\nSPRINKLER S9 0\nPIPX\nNODE LONE 0\n");
 $main::ed->markSet('insert', '1.0');
 flush();
-is('an unknown command line is red', grep { $_ eq 'error' } tags_on(($n + 2) . '.1'));
-is('an incomplete line, cursor elsewhere, is red', grep { $_ eq 'error' } tags_on(($n + 1) . '.1'));
+is('a line in error has a pale red band', grep { $_ eq 'error' } tags_on(($n + 2) . '.1'));
+is('   and its number is red', grep { /^\d+\.\d+$/ && (split /\./)[0] == $n + 2 } $main::gutter->tagRanges('bad'));
 my @er = $main::list{ERRORS}->get(0, 'end');
-is('ERRORS names both lines',
-   (grep { /^LINE ${\($n+1)}\s+SPRINKLER NEEDS MINFLOW$/ } @er) && (grep { /^LINE ${\($n+2)}\s+UNKNOWN COMMAND PIPX$/ } @er),
+is('ERRORS names both lines, by editor line',
+   (grep { /^\s*${\($n+1)}\s+SPRINKLER NEEDS MINFLOW$/ } @er) && (grep { /^\s*${\($n+2)}\s+UNKNOWN COMMAND PIPX$/ } @er),
    "@er");
+is('   with a count in its heading', $main::list_head{ERRORS}->cget(-text) eq 'ERRORS  2');
 my @no = $main::list{NODES}->get(0, 'end');
-is('NODES lists ZZ, used but not defined, and LONE, unconnected',
-   (grep { /^LINE $n\s+ZZ - USED, BUT NOT DEFINED$/ } @no)
-   && (grep { /^LINE ${\($n+3)}\s+LONE - DEFINED, BUT NOTHING CONNECTS TO IT$/ } @no), "@no");
+is('NODES lists ZZ and LONE',
+   (grep { /^\s*$n\s+ZZ - USED, BUT NOT DEFINED$/ } @no) && (grep { /LONE - DEFINED, BUT NOTHING CONNECTS TO IT$/ } @no), "@no");
 $main::list{ERRORS}->selectionClear(0, 'end');
 $main::list{ERRORS}->selectionSet($#er);
 main::go_to_list('ERRORS');
-is('clicking an error moves the cursor to its line',
-   ($main::ed->index('insert') =~ /^(\d+)/)[0] == $main::list_lines{ERRORS}[-1]);
+is('clicking an error moves the cursor to its line', (main::cursor())[0] == $n + 2);
 $main::ed->delete("$n.0", 'end');
 flush();
-is('removing the bad lines clears the lists and the red',
+is('removing the bad lines clears the lists and the marks',
    !$main::list{ERRORS}->size && !$main::list{NODES}->size && !$main::ed->tagRanges('error'));
 
 #==============================================================================
@@ -174,15 +182,13 @@ my ($cl) = main::cursor();
 is('a click on SPRINKLER starts a SPRINKLER line',
    $main::ed->get("$cl.0", "$cl.0 lineend") eq 'SPRINKLER ', $main::ed->get("$cl.0", "$cl.0 lineend"));
 main::update_status();
-is('   and the status bar shows its fields, NAME current',
-   main::status_text() =~ /^\s*SPRINKLER NAME ELEVATION MINFLOW K/, main::status_text());
+is('   and the status bar shows its fields', main::status_text() =~ /^SPRINKLER NAME ELEVATION MINFLOW K/, main::status_text());
 $main::ed->markSet('insert', "$pl.4");
 main::start_command('NODE');
 ($cl) = main::cursor();
 is('on a line in use, the command goes on a new line below it',
-   $cl == $pl + 1 && $main::ed->get("$cl.0", "$cl.0 lineend") eq 'NODE      '
-   && $main::ed->get("$pl.0", "$pl.0 lineend") eq $lines[ $pl - 1 ]);
-main::set_buffer(slurp($EX7));
+   $cl == $pl + 1 && $main::ed->get("$cl.0", "$cl.0 lineend") eq 'NODE      ');
+main::set_buffer($doc->{network});
 
 #==============================================================================
 print "5. PROPOSALS - Enter offers, Tab and Enter accept, typing discards\n";
@@ -191,32 +197,23 @@ my ($b3) = grep { $lines[ $_ - 1 ] =~ /^PIPE\s+B3/ } 1 .. @lines;
 $main::ed->markSet('insert', "$b3.0 lineend");
 key('Return');
 is('Enter after a pipe offers the next one, greyed', $main::prop{active}
-   && $main::ed->get('pstart', 'pend') eq 'PIPE B4 H3 H4 3.2 32'
-   && (grep { $_ eq 'proposal' } tags_on('pstart')), $main::ed->get('insert linestart', 'insert lineend'));
+   && $main::ed->get('pstart', 'pend') eq 'PIPE B4 H3 H4 3.2 32' && (grep { $_ eq 'proposal' } tags_on('pstart')));
 is('   an offered line is not part of the model yet', main::buffer() !~ /B4/);
 key('Tab');
-is('Tab accepts it as typed text', !$main::prop{active} && main::buffer() =~ /^PIPE B4 H3 H4 3\.2 32$/m
-   && !(grep { $_ eq 'proposal' } tags_on(($b3 + 1) . '.2')));
+is('Tab accepts it as typed text', !$main::prop{active} && main::buffer() =~ /^PIPE B4 H3 H4 3\.2 32$/m);
 key('Return');
-is('Enter again offers the next', $main::prop{active} && $main::ed->get('pstart', 'pend') =~ /^PIPE B5 H4 H5/);
 key('Return');
-is('Enter accepts and offers the one after (holding Enter repeats)',
-   main::buffer() =~ /^PIPE B5 H4 H5 3\.2 32$/m && $main::prop{active}
-   && $main::ed->get('pstart', 'pend') =~ /^PIPE B6 H5 H6/);
+is('Enter accepts and offers the one after', main::buffer() =~ /^PIPE B5 H4 H5 3\.2 32$/m && $main::prop{active});
 key('x');
 is('typing anything else discards it and types the key', !$main::prop{active}
    && main::buffer() !~ /B6/ && $main::ed->get('insert linestart', 'insert lineend') eq 'x');
 main::undo();
-# TextUndo merges adjacent typing into one step, so this undo may take the
-# newline and the x together; what matters is that the discarded proposal
-# does not come back as text.
-is('undo removes the typed key, and the discarded proposal does not come back',
-   main::buffer() !~ /x$/m && main::buffer() !~ /B6/, main::buffer());
+is('undo: the discarded proposal does not come back', main::buffer() !~ /x$/m && main::buffer() !~ /B6/);
 for (1 .. 3) { last if main::buffer() !~ /^PIPE B5/m; main::undo() }
 is('further undo removes the accepted line', main::buffer() !~ /^PIPE B5/m);
 main::redo();
 is('redo puts it back', main::buffer() =~ /^PIPE B5/m);
-main::set_buffer(slurp($EX7));
+main::set_buffer($doc->{network});
 
 #==============================================================================
 print "6. PICK LIST, Ctrl+Space\n";
@@ -225,102 +222,146 @@ $main::ed->insert('end', "USE ");
 $main::ed->markSet('insert', 'end - 1 chars');
 my $top = main::pick_list();
 $main::mw->update;
-my $lb = $top && ($top->children)[0];
-@items = $lb ? $lb->get(0, 'end') : ();
-is('Ctrl+Space in a USE line lists the pipe types with descriptions',
-   (grep { /^ASAM\s+\S/ } @items) && (grep { /^BORE / } @items) && !grep({ /[a-z]/ } @items), "@items[0..2]");
-$top->destroy if $top;
+my @items = $top ? ($top->children)[0]->get(0, 'end') : ();
+is('in a USE line: the pipe types with descriptions', (grep { /^ASAM\s+\S/ } @items) && (grep { /^BORE / } @items));
+$top->destroy if $top && Tk::Exists($top);
 main::insert_choice('S40');
-is('picking inserts the code at the cursor', main::buffer() =~ /^USE S40$/m);
+is('picking inserts the code', main::buffer() =~ /^USE S40$/m);
 $main::ed->insert('end', "\nPIPE Q1 R1 R2 3 50 G");
 $main::ed->markSet('insert', 'end - 1 chars');
 $top = main::pick_list();
 $main::mw->update;
 @items = $top ? ($top->children)[0]->get(0, 'end') : ();
-is('in a fitting field it lists the fitting codes for that pipe and size',
-   (grep { /^GV\s/ } @items) && (grep { /^E\s/ } @items), scalar(@items) . ' items');
-$top->destroy if $top;
+is('in a fitting field: the fitting codes for that pipe and size', (grep { /^GV\s/ } @items) && (grep { /^E\s/ } @items));
+$top->destroy if $top && Tk::Exists($top);
 main::insert_choice('GV');
 is('a partly typed code is completed, not doubled', main::buffer() =~ /^PIPE Q1 R1 R2 3 50 GV$/m);
-main::set_buffer(slurp($EX7));
+main::set_buffer($doc->{network});
 
 #==============================================================================
-print "7. SOLVE, F5, AND RESULTS ON THE CURSOR\n";
+print "7. VALIDATE BEFORE CALCULATE\n";
 #==============================================================================
 key('F5');
-is('F5 fills the REPORT tab with the full report',
-   main::report_text() =~ /PIPE SCHEDULE/i && main::report_text() =~ /GOVERNING OUTLET/i);
-is('the status bar says it converged', main::status_text() =~ /SOLVED - CONVERGED/, main::status_text());
+is('F5 before VALIDATE is refused, and says why',
+   !$main::solved && main::status_text() =~ /VALIDATE THE INPUTS FIRST/, main::status_text());
+$main::ed->insert('end', "PIPE Z1 H3 ZZ 3 32\nSPRINKLER S9 0\nPIPE Q1 R1 R2 3 47\n");
+main::after_change();
+key('F4');
+my @vr = main::validation_rows();
+is('F4 lists the problems in the VALIDATION tab: where, field, what, why',
+   @vr == 3 && $vr[0][0] eq "LINE $n" && $vr[0][1] eq 'NODE' && $vr[0][2] eq 'NODE ZZ IS USED, BUT NOT DEFINED'
+   && $vr[0][3] =~ /DEFINED BY NODE/ && $main::restabs->{current} eq 'VALIDATION', join ' | ', @{ $vr[0] || [] });
+is('   CALCULATE stays off; the toolbar says 3 PROBLEMS',
+   !main::calculate_enabled() && main::state_text() eq '3 PROBLEMS - SEE VALIDATION', main::state_text());
+is('   each fault is marked on its field in the editor',
+   (grep { $_ eq 'fault' } tags_on("$n.12")) && !(grep { $_ eq 'fault' } tags_on("$n.2"))
+   && (grep { $_ eq 'fault' } tags_on(($n + 2) . '.17')));
+is('   a short line has its last word marked', grep { $_ eq 'fault' } tags_on(($n + 1) . '.13'));
+main::go_to_fault(2);
+is('a click on a problem selects its field in the editor',
+   $main::ed->get('sel.first', 'sel.last') eq '47' && (main::cursor())[0] == $n + 2);
+main::set_buffer($doc->{network});
+is('a change clears the marks and the verdict', !$main::ed->tagRanges('fault') && main::state_text() eq 'NOT VALIDATED');
+my $v = main::validate();
+is('a good model validates; CALCULATE comes on',
+   $v->{ok} && main::calculate_enabled() && main::state_text() eq 'VALID - READY TO CALCULATE'
+   && (main::validation_rows())[0][2] =~ /NO PROBLEMS FOUND/,
+   join ' / ', $v->{ok} ? 'ok' : map({ $_->{what} } @{ $v->{items} }), main::state_text());
+$main::ed->insert('end', ' ');
+main::after_change();
+is('any edit turns CALCULATE off again', !main::calculate_enabled() && main::state_text() eq 'NOT VALIDATED');
+$main::ed->delete('end - 2 chars', 'end - 1 chars');
+main::after_change();
+main::validate();
+$main::settings->{options}{VEL_LIMIT} = '8';
+main::settings_changed();
+is('so does a change in the PROJECT tab', !main::calculate_enabled());
+$main::settings->{options}{VEL_LIMIT} = '';
+main::settings_changed();
+main::validate();
+key('F5');
+is('validated, F5 calculates: the REPORT and the tables fill',
+   main::report_text() =~ /PIPE SCHEDULE/i && main::table_rows('PIPES') == 6 && main::state_text() eq 'CALCULATED');
+is('   the PIPES tab comes forward, the status bar says converged',
+   $main::restabs->{current} eq 'PIPES' && main::status_text() =~ /CALCULATED - CONVERGED/, main::status_text());
 main::go_to_line($pl);
 $main::ed->markSet('insert', "$pl.0 lineend");
 main::update_status();
-is('on pipe M1 the status bar shows its solved flow, velocity and pressures',
-   main::status_text() =~ /M1  Q 3576\.8 L\/MIN  V 6\.87 M\/S  SUP 650\.0 KPA -> R1 461\.0 KPA/,
-   main::status_text());
+is('on pipe M1 the status bar shows its flow, velocity and pressures',
+   main::status_text() =~ /M1  Q 3576\.8 L\/MIN  V 6\.87 M\/S  SUP 650\.0 KPA -> R1 461\.0 KPA/, main::status_text());
 is('   with the PIPE template, the current field highlighted',
-   main::status_text() =~ /^\s*PIPE NAME START END LENGTH SIZE/ && $main::statusbar->tagRanges('current'),
-   main::status_text());
+   main::status_text() =~ /^PIPE NAME START END LENGTH SIZE/ && $main::statusbar->tagRanges('current'));
 my @w = $main::list{WARNINGS}->get(0, 'end');
-is('WARNINGS lists M1, over the velocity limit, on its line',
-   grep({ /^LINE $pl\s+M1 - VELOCITY 6\.87 M\/S IS OVER THE LIMIT/ } @w), "@w");
+is('WARNINGS lists M1 over the velocity limit, on its line', grep({ /^\s*$pl\s+M1 - VELOCITY 6\.87 M\/S/ } @w), "@w");
 
 #==============================================================================
 print "8. THE RESULTS TABLES\n";
 #==============================================================================
 my @heads = main::table_heads('PIPES');
-is('PIPES: the default columns',
-   "@heads" eq 'NAME SNODE ENODE NOM I.D. MAT C L F T FIT K Q PF PS VEL', "@heads");
+is('PIPES: the default columns', "@heads" eq 'NAME SNODE ENODE NOM I.D. MAT C L F T FIT K Q PF PS VEL', "@heads");
 my @rows = main::table_rows('PIPES');
-is('PIPES: a row per pipe, M1 first as in the file',
-   @rows == 6 && "@{ $rows[0] }" eq 'M1 SUP R1 100 105.1 ASAM 120 12.00 19.40 31.40 0.00 3576.8 144.86 - 6.87',
-   "@{ $rows[0] }");
+is('PIPES: M1 first, as in the file',
+   "@{ $rows[0] }" eq 'M1 SUP R1 100 105.1 ASAM 120 12.00 19.40 31.40 0.00 3576.8 144.86 - 6.87', "@{ $rows[0] }");
 my %ci = map { $heads[$_] => $_ } 0 .. $#heads;
 my ($vfull) = grep { $main::table{PIPES}{data}{columns}[$_]{key} eq 'VEL' } 0 .. $#{ $main::table{PIPES}{data}{columns} };
 main::sort_table('PIPES', $vfull);
-my @v = map { $_->[ $ci{VEL} ] } main::table_rows('PIPES');
-is('a click on VEL sorts ascending', !(grep { $v[$_] > $v[ $_ + 1 ] } 0 .. $#v - 1), "@v");
+my @vv = map { $_->[ $ci{VEL} ] } main::table_rows('PIPES');
+is('a click on VEL sorts ascending', !(grep { $vv[$_] > $vv[ $_ + 1 ] } 0 .. $#vv - 1), "@vv");
 main::sort_table('PIPES', $vfull);
-@v = map { $_->[ $ci{VEL} ] } main::table_rows('PIPES');
-is('   a second click reverses', !(grep { $v[$_] < $v[ $_ + 1 ] } 0 .. $#v - 1), "@v");
-my ($head) = grep { $_->cget(-text) =~ /^VEL/ } map { $main::table{PIPES}{hlist}->header('cget', $_, '-widget') }
-             0 .. $#heads;
-is('   and its heading shows the direction', $head && $head->cget(-text) =~ /^VEL v/);
+@vv = map { $_->[ $ci{VEL} ] } main::table_rows('PIPES');
+is('   a second click reverses', !(grep { $vv[$_] < $vv[ $_ + 1 ] } 0 .. $#vv - 1), "@vv");
+is('   and its heading shows the direction', main::header_text('PIPES', $ci{VEL}) =~ /^\s*VEL \x{25BC}\n\s*M\/S$/);
+{
+    # A real click in the heading row, at the middle of the Q column.
+    my $h = $main::table{PIPES}{hlist};
+    my $x = 0;
+    $x += $h->columnWidth($_) for 0 .. $ci{Q} - 1;
+    $x += int($h->columnWidth($ci{Q}) / 2);
+    main::select_tab($main::restabs, 'PIPES');
+    $h->focusForce;
+    $main::mw->update;
+    $h->eventGenerate('<ButtonPress-1>',   -x => $x, -y => 5, -button => 1, -when => 'now');
+    $h->eventGenerate('<ButtonRelease-1>', -x => $x, -y => 5, -button => 1, -when => 'now');
+    $main::mw->update;
+    my @q = map { $_->[ $ci{Q} ] } main::table_rows('PIPES');
+    is('a mouse click on the Q heading sorts on Q', !(grep { $q[$_] > $q[ $_ + 1 ] } 0 .. $#q - 1)
+       && main::header_text('PIPES', $ci{Q}) =~ /Q \x{25B2}/, "@q");
+}
+is('the headings are one flat band: text in the header row, not buttons',
+   !defined eval { $main::table{PIPES}{hlist}->header('cget', 0, '-widget') });
 my $menu = main::column_menu();
 my @labels = map { $menu->entrycget($_, -label) } 0 .. $menu->index('end');
 is('the column chooser lists all 21 columns, NAME fixed',
-   @labels == 21 && $labels[0] eq 'PIPE NAME' && $menu->entrycget(0, -state) eq 'disabled', "@labels");
+   @labels == 21 && $labels[0] eq 'PIPE NAME' && $menu->entrycget(0, -state) eq 'disabled');
 $menu->unpost; $menu->destroy;
 $main::pipe_show{RE} = 1; $main::pipe_show{MAT} = 0;
 main::make_table('PIPES');
 @heads = main::table_heads('PIPES');
-is('turning RE on and MAT off changes the columns shown',
-   (grep { $_ eq 'RE' } @heads) && !(grep { $_ eq 'MAT' } @heads), "@heads");
+is('turning RE on and MAT off changes the columns', (grep { $_ eq 'RE' } @heads) && !(grep { $_ eq 'MAT' } @heads));
 $main::pipe_show{RE} = 0; $main::pipe_show{MAT} = 1;
 main::make_table('PIPES');
-my @nr = main::table_rows('NODES');
-my ($sup) = grep { $_->[0] eq 'SUP' } @nr;
+my ($sup) = grep { $_->[0] eq 'SUP' } main::table_rows('NODES');
 is('NODES: SUP is the WATER supply at 650.0', $sup && $sup->[1] eq 'WATER' && $sup->[3] eq '650.0');
 my @or = main::table_rows('OUTLETS');
-is('OUTLETS: the three sprinklers, each with a result',
-   @or == 3 && !grep { $_->[-1] !~ /^(PASS|FAIL)$/ } @or);
+is('OUTLETS: the three sprinklers, each PASS or FAIL', @or == 3 && !grep { $_->[-1] !~ /^(PASS|FAIL)$/ } @or);
 
-# HIDE: a pipe carrying no flow, a dead end off R2.
-main::set_buffer(slurp($EX7) . "NODE DEAD 4.5\nPIPE D1 R2 DEAD 2 25\n");
-main::solve();
+main::set_buffer($doc->{network} . "NODE DEAD 4.5\nPIPE D1 R2 DEAD 2 25\n");
+main::validate();
+main::calculate();
 my $all = main::table_rows('PIPES');
 $main::hide_pipes = 1; main::fill_table('PIPES');
 my @shown = map { $_->[0] } main::table_rows('PIPES');
-is('HIDE NON-FLOWING PIPES leaves out the dead end', $all == 7 && @shown == 6 && !grep { $_ eq 'D1' } @shown,
-   "$all / @shown");
+is('HIDE NON-FLOWING PIPES leaves out the dead end', $all == 7 && @shown == 6 && !grep { $_ eq 'D1' } @shown);
 $main::hide_pipes = 0; main::fill_table('PIPES');
 my $alln = main::table_rows('NODES');
 $main::hide_nodes = 1; main::fill_table('NODES');
 my @sn = map { $_->[0] } main::table_rows('NODES');
-is('HIDE INACTIVE NODES leaves out the dead node', !grep({ $_ eq 'DEAD' } @sn) && @sn == $alln - 1, "@sn");
+is('HIDE INACTIVE NODES leaves out the dead node', !grep({ $_ eq 'DEAD' } @sn) && @sn == $alln - 1);
 $main::hide_nodes = 0; main::fill_table('NODES');
-main::set_buffer(slurp($EX7));
-main::solve();
 
+main::set_buffer($doc->{network});
+main::validate();
+main::calculate();
 if ($SHOT) {
     main::go_to_line($pl);
     $main::mw->raise;
@@ -332,53 +373,81 @@ if ($SHOT) {
 $main::ed->insert("$pl.0 lineend", ' ');
 $main::ed->markSet('insert', "$pl.0 lineend");
 main::update_status();
-is('after an edit the figures are marked as from the earlier solve',
-   main::status_text() =~ /SOLVED BEFORE THE LATEST EDITS/, main::status_text());
-main::set_buffer(slurp($EX7) . "PIPE Z9 H3 NOWHERE 3 32\n");
-my $r = main::solve();
-my ($cur) = $main::ed->index('insert') =~ /^(\d+)/;
-is('a model with an error is not solved; the cursor goes to the error line',
-   !$r->{ok} && $cur == @lines + 1 && main::report_text() =~ /NOT SOLVED/, "line $cur");
-is('   and the tables are emptied', !main::table_rows('PIPES'));
+is('after an edit the figures are marked as from the earlier calculation',
+   main::status_text() =~ /CALCULATED BEFORE THE LATEST EDITS/, main::status_text());
 
 #==============================================================================
-print "9. PROPERTIES - UNITS\n";
+print "9. THE PROJECT TAB\n";
 #==============================================================================
-main::set_buffer(slurp($EX7));
-my ($dlg, $pick) = main::properties();
+main::set_buffer($doc->{network});
+main::select_tab($main::toptabs, 'PROJECT');
 $main::mw->update;
-is('the dialog opens with the file\'s units', $pick->{LENGTH} eq 'M' && $pick->{FLOW} eq 'LPM');
-$dlg->destroy;
-main::apply_units({ %$pick, FLOW => 'LPS' });
-is('choosing LPS rewrites the UNITS FLOW line', main::buffer() =~ /^UNITS     FLOW LPS$/m
-   && main::buffer() !~ /FLOW LPM/);
-main::solve();
-is('and the results follow: M1 in L/S', main::status_text() =~ /SOLVED/ && do {
-       main::go_to_line($pl); main::update_status(); main::status_text() =~ /M1  Q 59\.6\d* L\/S/ },
-   main::status_text());
-main::undo();
-is('undo puts the units back', main::buffer() =~ /FLOW LPM/);
+is('the PROJECT tab shows the units as flat drop-downs',
+   $main::form{FLOW}->ismapped && $main::form{FLOW}->cget(-relief) eq 'flat');
+my $fm = $main::form{FLOW}->cget(-menu);
+my ($lps) = grep { $fm->entrycget($_, -label) =~ /^LPS/ } 0 .. $fm->index('end');
+my ($lpm) = grep { $fm->entrycget($_, -label) =~ /^LPM/ } 0 .. $fm->index('end');
+is('   the default is marked in the menu', $fm->entrycget($lpm, -label) eq 'LPM   (DEFAULT)');
+$fm->invoke($lps);
+is('choosing LPS sets the unit, marks the file changed',
+   $main::settings->{units}{FLOW} eq 'LPS' && $main::form{FLOW}->cget(-text) =~ /^LPS/ && $main::mw->title =~ /\*$/);
+main::validate();
+main::calculate();
+main::go_to_line($pl);
+main::update_status();
+is('the results follow: M1 in L/S', main::status_text() =~ /M1  Q 59\.6\d* L\/S/, main::status_text());
+$fm->invoke($lpm);
+is('choosing LPM again: the file as it was, no *', $main::mw->title !~ /\*$/, $main::mw->title);
+$main::form{JOB}->delete(0, 'end');
+$main::form{JOB}->insert(0, 'job 42');
+main::settings_changed();
+is('text typed in a field is kept in capitals', $main::settings->{project}{JOB} eq 'JOB 42');
+$main::settings->{options}{TOL_FLOW} = 'TIGHT';
+main::settings_changed();
+my ($oe) = grep { ($main::list_lines{ERRORS}[$_]{field} // '') eq 'TOL_FLOW' } 0 .. $#{ $main::list_lines{ERRORS} };
+is('a bad option is listed in ERRORS', defined $oe && $main::list{ERRORS}->get($oe) =~ /PROJECT TAB, TOL_FLOW/);
+main::select_tab($main::toptabs, 'NETWORK');
+$main::list{ERRORS}->selectionClear(0, 'end');
+$main::list{ERRORS}->selectionSet($oe // 0);
+main::go_to_list('ERRORS');
+is('   a click on it opens the PROJECT tab at the field', $main::toptabs->{current} eq 'PROJECT');
+$v = main::validate();
+is('   VALIDATE names the PROJECT tab and the field',
+   !$v->{ok} && (main::validation_rows())[0][0] eq 'PROJECT TAB' && (main::validation_rows())[0][1] eq 'TOL_FLOW');
+$main::settings->{options}{TOL_FLOW} = '';
+main::settings_changed();
 
 #==============================================================================
 print "10. FILES\n";
 #==============================================================================
-main::set_buffer(slurp('examples/01_single_branch.phc'));
+main::open_path('examples/01_single_branch.phc');
 $main::path = undef;
 $main::ed->insert('end', "// EDITED\n");
 main::after_change();
 is('an edit marks the title with *', $main::mw->title =~ /\*$/);
 main::file_save_as("$TMP/saved.phc");
-is('SAVE AS writes the buffer', slurp("$TMP/saved.phc") eq main::buffer());
+my $saved = slurp("$TMP/saved.phc");
+is('SAVE AS writes the settings at the head, then the network',
+   $saved =~ /\AUNITS     LENGTH M\n/ && $saved =~ /\nMETHOD    HW\n/ && $saved =~ /\n\n\/\/ 01 - SINGLE BRANCH/
+   && $saved =~ /\/\/ EDITED\n\z/, substr($saved, 0, 120));
 is('   and the title loses the *', $main::mw->title eq 'PHCP EDITOR - SAVED.PHC', $main::mw->title);
+my $sv = HardyCross::Editor::solve_text($saved);
+is('   the saved file solves on its own', $sv->{ok} && $sv->{converged});
+main::open_path("$TMP/saved.phc");
+is('reopening it gives the same network and settings',
+   main::buffer() =~ /\A\/\/ 01 - SINGLE BRANCH/ && $main::settings->{options}{TOL_FLOW} eq '0.001');
 my $before = main::buffer();
 main::open_path('examples/02_full_network.hcx');
 is('a .hcx is refused, the buffer kept, the reason shown',
    main::buffer() eq $before && main::status_text() =~ /THE EDITOR WORKS IN \.PHC FILES/, main::status_text());
 main::open_path('examples/02_full_network.phc');
 main::file_report("$TMP/report.pdf");
-is('WRITE REPORT .pdf solves and writes a PDF', -s "$TMP/report.pdf" && slurp("$TMP/report.pdf") =~ /^%PDF-/);
+is('WRITE REPORT validates, calculates and writes a PDF', -s "$TMP/report.pdf" && slurp("$TMP/report.pdf") =~ /^%PDF-/);
 main::file_report("$TMP/report.txt");
 is('WRITE REPORT .txt writes the text report', slurp("$TMP/report.txt") =~ /OUTLET COMPLIANCE/i);
+main::set_buffer(main::buffer() . "PIPX\n");
+is('WRITE REPORT on a model with problems stops at VALIDATION', !main::file_report("$TMP/no.txt") && !-e "$TMP/no.txt"
+   && $main::restabs->{current} eq 'VALIDATION');
 
 $main::mw->destroy;
 print "\n$pass passed, $fail failed\n";

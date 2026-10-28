@@ -5,38 +5,53 @@
 # source code; it does not cover the third-party data in data/.
 #
 #==============================================================================
-# phcp_editor.pl -- the PHCP text editor.
+# phcp_editor.pl -- the PHCP editor.
 #
 #   perl phcp_editor.pl [model.phc]
 #
-#   +--------------------------------------+------------------+
-#   | EDITOR - the model as .phc commands  | ERRORS           |
-#   |                                      | WARNINGS         |
-#   | command strip:  TITLE PROJECT ...    | NODES            |
-#   | status bar: the field template       |                  |
-#   +--------------------------------------+------------------+
-#   | PIPES | NODES | OUTLETS | REPORT  - results, in sortable columns  |
-#   | [ ] HIDE NON-FLOWING PIPES   [ ] HIDE INACTIVE NODES               |
-#   +--------------------------------------------------------------------+
+#   +------------------------------------------------------------------+
+#   | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
+#   +------------------------------------------------------------------+
+#   | NETWORK | PROJECT                                                 |
+#   |  USE PIPE PC ... | NODE NC WATER ... | PUMP BP BFP ...  (strip)   |
+#   |  +----+---------------------------------------+ +--------------+ |
+#   |  |  1 | WATER     SUP 0 650                   | | ERRORS       | |
+#   |  |  2 | NODE      R1 4.5                      | | WARNINGS     | |
+#   |  +----+---------------------------------------+ | NODES        | |
+#   |  status bar: the field template | the line's results            | |
+#   +------------------------------------------------------------------+
+#   | VALIDATION | PIPES | NODES | OUTLETS | REPORT      [ ] HIDE ...   |
+#   +------------------------------------------------------------------+
+#
+# The editor holds the NETWORK only.  The title, project details, units,
+# method and options are set in the PROJECT tab; the .phc file keeps them as
+# lines at its head (HardyCross::Editor::split_file and join_file), so a
+# saved file is complete and phcp.pl reads it unchanged.
+#
+# VALIDATE comes before CALCULATE.  VALIDATE lists every problem - what is
+# wrong, why, and where - in the VALIDATION tab and marks each in the editor;
+# a click on one goes to it.  CALCULATE is available only while the model is
+# exactly as it was when it last passed validation.
 #
 # THIS FILE IS ONLY THE WINDOW.  Every decision -- is this line good, what is
-# the next line likely to be, what goes in a pick list or a table, what does
-# a warning say -- is made by HardyCross::Editor, which has no Tk in it and is
+# the next line likely to be, what goes in a pick list or a table, what is
+# wrong and why -- is made by HardyCross::Editor, which has no Tk in it and is
 # tested headless by tools/test_editor.pl.  What is here is drawing, keys and
 # files.  tools/test_editor_window.pl drives this window under a virtual
 # display; it loads this file without starting the event loop (see the last
 # lines) and calls the handlers below directly.
 #
 # Layout of this file:
-#   colours and fonts          the light blue and black scheme, named once
+#   colours and fonts          white and matte; blue and black for highlights
+#   widget helpers             flat buttons, tabs, check boxes, drop-downs
 #   build_window               the widgets
-#   recolour / update_status   colouring, the three lists, the status bar
+#   recolour / update_status   syntax colours, line numbers, lists, status bar
 #   command strip              the commands, a click starts a line
+#   PROJECT tab                title, project details, units, method, options
 #   tables                     the results: sort, column chooser, hide boxes
 #   proposals                  the greyed next line, accepted by Enter or Tab
 #   pick_list                  Ctrl+Space
-#   solve                      F5
-#   properties                 FILE > PROPERTIES: the file's units
+#   validate / calculate       F4 / F5
 #   files                      NEW OPEN SAVE SAVE AS WRITE REPORT
 #==============================================================================
 use strict;
@@ -45,10 +60,8 @@ use FindBin;
 use lib $FindBin::Bin;
 use Tk;
 use Tk::Panedwindow;
-use Tk::NoteBook;
 use Tk::HList;
 use Tk::ItemStyle;
-use Tk::BrowseEntry;
 # TextUndo, not Text: Perl/Tk's Text accepts -undo but never records an edit,
 # so Ctrl+Z did nothing.  TextUndo keeps its own record of every insert and
 # delete, and undoes them one at a time.
@@ -58,132 +71,242 @@ use HardyCross::Phc;
 use HardyCross::Editor;
 
 #------------------------------------------------------------------------------
-# Colours and fonts.
+# Colours.
 #
-# Light blue paper and black ink, the scheme of a Perl textbook: a pale blue
-# page with black type, and a black band for the status line.  Command words
-# are dark blue and bold, comments grey, errors red -- each dark enough to
-# read on the pale blue.
+# A white, matte window: white paper, a very light grey for panels, one-pixel
+# grey rules in place of bevels.  Blue and black are the highlight colours -
+# command words, the current field, the active tab, the CALCULATE button, the
+# selection - and red marks what is wrong.  Every colour is named once here.
 #------------------------------------------------------------------------------
 our %C = (
-    paper    => '#D6EAF8',     # editor, lists and tables: pale blue
-    chrome   => '#AED6F1',     # frames and headings: a deeper blue
-    ink      => '#000000',     # text
-    band     => '#000000',     # status bar background
-    band_ink => '#D6EAF8',     # status bar text
-    command  => '#002B7F',     # command words
-    comment  => '#4D5656',     # comments
-    error    => '#B00020',     # a line in error
-    warn     => '#7E5109',     # a warning
-    proposal => '#5D7FA3',     # the greyed proposed line
-    current  => '#FFFFFF',     # the current field in the status bar
-    select   => '#85C1E9',     # selection
+    paper      => '#FFFFFF',     # editor, tables, form fields
+    panel      => '#F6F7F9',     # toolbar, status bar, table headings
+    line       => '#DDE1E6',     # one-pixel rules and field outlines
+    hover      => '#EEF1F5',     # a button or heading under the pointer
+    ink        => '#111111',     # text
+    muted      => '#6B7280',     # labels, inactive tabs, comments
+    faint      => '#A3AAB4',     # line numbers, disabled text
+    accent     => '#1F5FBF',     # the highlight blue
+    accent_dk  => '#184C99',     # the highlight blue, pressed
+    accent_bg  => '#E8F0FC',     # a pale blue behind a highlight
+    select     => '#D3E3FA',     # selection
+    curline    => '#F5F8FD',     # the cursor's line
+    number     => '#0B4F9C',     # numbers in the editor
+    error      => '#C62828',     # what is wrong
+    error_bg   => '#FDEEEE',     # behind a line in error
+    fault_bg   => '#F9D4D4',     # behind the field validation found at fault
+    warn       => '#8A5A00',     # a warning
+    proposal   => '#9AA5B4',     # the greyed proposed line
 );
-our $MONO   = ['Courier', 11];
-our $MONO_B = ['Courier', 11, 'bold'];
-our $UI_B   = ['Helvetica', 10, 'bold'];
+
+# Fonts are chosen when the window is built, from what the machine has:
+# Consolas and Segoe UI on Windows, DejaVu on Linux.
+our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S);
+sub pick_fonts {
+    my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
+    my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
+    my ($ui)   = grep { $have{ lc $_ } } 'Segoe UI', 'DejaVu Sans', 'Liberation Sans', 'Helvetica Neue', 'Arial';
+    $mono //= 'Courier';
+    $ui   //= 'Helvetica';
+    ($MONO, $MONO_B, $MONO_I) = ([ $mono, 10 ], [ $mono, 10, 'bold' ], [ $mono, 10, 'italic' ]);
+    ($UI, $UI_B, $UI_S) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ]);
+}
 
 # The window's state.  One editor window per process, so plain package
 # variables, each named for what it holds.
-our ($mw, $ed, $report, $statusbar, $book, $strip);
-our (%list, %list_lines);        # ERRORS, WARNINGS, NODES: listbox, and its lines
+our ($mw, $ed, $gutter, $report, $statusbar, $strip, $pill, $vtable);
+our (%list, %list_lines, %list_head);   # ERRORS, WARNINGS, NODES: listbox, entries, heading
 our (%table);                    # PIPES, NODES, OUTLETS: { hlist, data, sort, desc }
+our ($toptabs, $restabs);        # the NETWORK / PROJECT tabs and the results tabs
+our (%btn, %form, %checks);      # toolbar buttons; PROJECT tab fields; HIDE boxes
 our %pipe_show;                  # the pipe columns shown, by key
 our ($hide_pipes, $hide_nodes) = (0, 0);
 our $path;                       # the file being edited, or undef for a new buffer
-our $solved;                     # { net, converged, text } from the last good solve
-our $saved_text = '';            # the text as last opened or saved: "modified" is
-                                 # simply the buffer differing from it
+our $settings = HardyCross::Editor::new_settings();   # what the PROJECT tab holds
+our $solved;                     # { net, converged, text } from the last calculation
+our $validation;                 # { ok, items, text } from the last VALIDATE
+our $valid_text;                 # the whole text as it was when it last passed VALIDATE
+our $saved_text = '';            # the whole text as last opened or saved
 our $recolour_job;               # the pending delayed re-check, so typing stays smooth
 our %prop = (active => 0);       # the proposal on show, if any
 our $notice;                     # [ text, bad, where ]: a message that stays in the
                                  # status bar until the text or the cursor changes
+our $gutter_lines = 0;           # how many numbers the gutter holds
+
+#==============================================================================
+# Widget helpers.  Tk draws bevels by default; each helper sets a flat relief,
+# no border, and a one-pixel outline in the rule colour where one is wanted.
+#==============================================================================
+
+# rule -- a one-pixel line, horizontal ('x') or vertical ('y').
+sub rule {
+    my ($parent, $fill, %pack) = @_;
+    my $f = $parent->Frame(-background => $C{line}, ($fill eq 'x' ? (-height => 1) : (-width => 1)));
+    $f->pack(-fill => $fill, %pack);
+    return $f;
+}
+
+# flat_button -- a flat button.  The primary one (CALCULATE) is solid blue.
+sub flat_button {
+    my ($parent, $text, $cmd, %o) = @_;
+    my $p = $o{primary};
+    return $parent->Button(-text => $text, -command => $cmd, -font => $UI_B,
+        -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
+        -highlightbackground => $p ? $C{accent} : $C{line}, -highlightcolor => $C{accent},
+        -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
+        -activebackground => $p ? $C{accent_dk} : $C{hover},
+        -activeforeground => $p ? '#FFFFFF' : $C{ink},
+        -disabledforeground => $C{faint}, -padx => 14, -pady => 5, -cursor => 'hand2');
+}
+
+#------------------------------------------------------------------------------
+# make_tabs -- a row of flat tabs over a set of pages.  The active tab is in
+# ink with a blue bar under it; the others are grey.  Returns
+# { bar, page => { name => frame }, current, ... }; the bar has room on its
+# right for the caller to pack more into.
+#------------------------------------------------------------------------------
+sub make_tabs {
+    my ($parent, $names, $on_select) = @_;
+    my $t = { names => $names, page => {}, label => {}, on_select => $on_select };
+    $t->{bar} = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x');
+    rule($parent, 'x', -side => 'top');
+    my $body = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'both', -expand => 1);
+    for my $n (@$names) {
+        my $f = $t->{bar}->Frame(-background => $C{paper})->pack(-side => 'left');
+        my $l = $f->Label(-text => $n, -font => $UI_B, -background => $C{paper}, -foreground => $C{muted},
+                          -padx => 14, -pady => 7, -cursor => 'hand2')->pack(-side => 'top');
+        my $u = $f->Frame(-height => 2, -background => $C{paper})->pack(-side => 'top', -fill => 'x');
+        $t->{label}{$n} = [ $l, $u ];
+        $l->bind('<ButtonRelease-1>' => sub { select_tab($t, $n) });
+        $t->{page}{$n} = $body->Frame(-background => $C{paper});
+    }
+    select_tab($t, $names->[0]);
+    return $t;
+}
+
+sub select_tab {
+    my ($t, $n) = @_;
+    $t->{page}{ $t->{current} }->packForget if $t->{current};
+    $t->{current} = $n;
+    $t->{page}{$n}->pack(-fill => 'both', -expand => 1);
+    for my $m (@{ $t->{names} }) {
+        my ($l, $u) = @{ $t->{label}{$m} };
+        $l->configure(-foreground => $m eq $n ? $C{ink} : $C{muted});
+        $u->configure(-background => $m eq $n ? $C{accent} : $C{paper});
+    }
+    $t->{on_select}->($n) if $t->{on_select};
+}
+
+#------------------------------------------------------------------------------
+# check_box -- a flat check box drawn on a canvas: an outlined square, filled
+# blue with a white tick when on.  (Tk's own indicator is bevelled.)
+#------------------------------------------------------------------------------
+sub check_box {
+    my ($parent, $text, $var, $cmd) = @_;
+    my $f = $parent->Frame(-background => $C{paper}, -cursor => 'hand2');
+    my $c = $f->Canvas(-width => 14, -height => 14, -background => $C{paper},
+                       -highlightthickness => 0, -borderwidth => 0)->pack(-side => 'left', -padx => [0, 6]);
+    my $l = $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{ink})
+              ->pack(-side => 'left');
+    my $draw = sub {
+        $c->delete('all');
+        if ($$var) {
+            $c->createRectangle(1, 1, 13, 13, -fill => $C{accent}, -outline => $C{accent});
+            $c->createLine(4, 7, 6, 10, 11, 4, -fill => '#FFFFFF', -width => 2);
+        } else {
+            $c->createRectangle(1, 1, 13, 13, -fill => $C{paper}, -outline => $C{faint});
+        }
+    };
+    $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l;
+    $draw->();
+    return { frame => $f, draw => $draw };
+}
+
+#------------------------------------------------------------------------------
+# drop_down -- a flat choice: the value, a small arrow, and a plain menu.  The
+# default, if given, is marked in the menu.
+#------------------------------------------------------------------------------
+our @dd_refresh;                  # drop-downs to redraw when settings are loaded
+sub drop_down {
+    my ($parent, $var, $choices, $cmd, $default) = @_;
+    my $show = sub { sprintf '%-9s %s', $$var // '', "\x{25BE}" };
+    my $mb = $parent->Menubutton(-text => $show->(), -font => $MONO, -relief => 'flat',
+        -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
+        -background => $C{paper}, -activebackground => $C{hover}, -foreground => $C{ink},
+        -anchor => 'w', -width => 11, -padx => 6, -pady => 3, -indicatoron => 0, -cursor => 'hand2');
+    my $m = $mb->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
+        -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink});
+    for my $v (@$choices) {
+        $m->command(-label => $v . (defined $default && $v eq $default ? '   (DEFAULT)' : ''), -command => sub { $$var = $v; $mb->configure(-text => $show->()); $cmd->() });
+    }
+    $mb->configure(-menu => $m);
+    push @dd_refresh, sub { $mb->configure(-text => $show->()) };
+    return $mb;
+}
+
+# flat_entry -- a one-line text field with a one-pixel outline, blue when focused.
+sub flat_entry {
+    my ($parent, $var, $width) = @_;
+    return $parent->Entry(-textvariable => $var, -font => $MONO, -width => $width // 30,
+        -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
+        -highlightbackground => $C{line}, -highlightcolor => $C{accent},
+        -background => $C{paper}, -foreground => $C{ink}, -insertbackground => $C{ink},
+        -selectbackground => $C{select}, -selectforeground => $C{ink});
+}
+
+# flat_scrollbar -- a thin grey scrollbar with no bevels.
+sub flat_scrollbar {
+    my ($parent, $orient) = @_;
+    return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
+        -elementborderwidth => 0, -width => 11, -troughcolor => $C{panel},
+        -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
+}
 
 #==============================================================================
 # build_window -- create every widget.  Returns the main window.
 #==============================================================================
 sub build_window {
-    $mw = MainWindow->new(-background => $C{chrome});
+    $mw = MainWindow->new(-background => $C{paper});
+    pick_fonts();
     $mw->geometry('1500x950');
-    $mw->optionAdd('*Font', $UI_B);
+    $mw->optionAdd('*Font', $UI);
+    $mw->optionAdd('*Background', $C{paper});
+    $mw->optionAdd('*Menu.Relief', 'flat');
+    $mw->optionAdd('*Menu.activeBorderWidth', 0);
+    $mw->optionAdd('*Menu.activeBackground', $C{select});
+    $mw->optionAdd('*Menu.activeForeground', $C{ink});
+    $mw->optionAdd('*Menu.font', $UI);
+    $mw->optionAdd('*Menu.borderWidth', 1);
     build_menus();
+    build_toolbar();
 
-    # Top and bottom, the divider movable: the editor area above, the
-    # results below.
-    my $vp = $mw->Panedwindow(-orient => 'vertical', -background => $C{chrome}, -sashwidth => 6);
-    my $top = $mw->Frame(-background => $C{chrome});
-    my $bottom = $mw->Frame(-background => $C{chrome});
-
-    # Above: the editor and its strip and status bar, with the three lists
-    # to the right.
-    my $hp = $top->Panedwindow(-orient => 'horizontal', -background => $C{chrome}, -sashwidth => 6);
-    my $left  = $top->Frame(-background => $C{chrome});
-    my $right = $top->Frame(-background => $C{chrome});
-    heading($left, 'EDITOR');
-    $statusbar = $left->Text(-height => 1, -wrap => 'none', -font => $MONO,
-        -background => $C{band}, -foreground => $C{band_ink}, -borderwidth => 0,
-        -highlightthickness => 0, -state => 'disabled', -cursor => 'left_ptr')
-        ->pack(-side => 'bottom', -fill => 'x', -pady => [4, 0]);
-    $statusbar->tagConfigure('current', -foreground => $C{band}, -background => $C{current},
-                             -font => $MONO_B);
-    $statusbar->tagConfigure('bad', -foreground => '#FF8A80');
-    build_strip($left);
-    $ed = $left->Scrolled('TextUndo', -scrollbars => 'se', -wrap => 'none',
-        -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
-        -insertbackground => $C{ink}, -selectbackground => $C{select},
-        -insertwidth => 2, -borderwidth => 0, -highlightthickness => 0)
-        ->pack(-fill => 'both', -expand => 1);
-    for my $name (qw(ERRORS WARNINGS NODES)) {
-        my $f = $right->Frame(-background => $C{chrome})->pack(-fill => 'both', -expand => 1);
-        heading($f, $name);
-        $list{$name} = $f->Scrolled('Listbox', -scrollbars => 'osoe', -height => 6,
-            -font => $MONO, -background => $C{paper},
-            -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
-            -selectbackground => $C{select}, -borderwidth => 0, -highlightthickness => 0,
-            -activestyle => 'none')->pack(-fill => 'both', -expand => 1);
-        $list_lines{$name} = [];
-        my $n = $name;
-        $list{$name}->bind('<ButtonRelease-1>' => sub { go_to_list($n) });
-    }
-    $hp->add($left, -width => 1060);
-    $hp->add($right);
-    $hp->pack(-fill => 'both', -expand => 1);
-
-    # Below: the results, one tab each, with the HIDE boxes under them.
+    # The divider between the work above and the results below can be moved.
+    my $vp = $mw->Panedwindow(-orient => 'vertical', -background => $C{line},
+                              -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
+                              -handlesize => 0, -sashrelief => 'flat');
+    my $top = $mw->Frame(-background => $C{paper});
+    my $bottom = $mw->Frame(-background => $C{paper});
+    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT' ]);
+    build_network($toptabs->{page}{NETWORK});
+    build_project($toptabs->{page}{PROJECT});
     build_results($bottom);
     $vp->add($top, -height => 560);
     $vp->add($bottom);
-    $vp->pack(-fill => 'both', -expand => 1, -padx => 6, -pady => 6);
-
-    # Colouring.  The error tag is raised above the others so a line in error
-    # is red all the way along, command word included.
-    $ed->tagConfigure('command', -foreground => $C{command}, -font => $MONO_B);
-    $ed->tagConfigure('comment', -foreground => $C{comment});
-    $ed->tagConfigure('error', -foreground => $C{error});
-    $ed->tagConfigure('proposal', -foreground => $C{proposal});
-    $ed->tagRaise('error');
-    $ed->tagRaise('proposal');
+    $vp->pack(-fill => 'both', -expand => 1);
 
     bind_keys();
+    $saved_text = full_text();       # an empty new file is not a change
     set_title();
+    update_actions();
     update_status();
     $ed->focus;
     return $mw;
 }
 
-# heading -- a capitalised label over a pane, list or table.
-sub heading {
-    my ($parent, $text) = @_;
-    $parent->Label(-text => $text, -font => $UI_B, -anchor => 'w',
-                   -background => $C{chrome}, -foreground => $C{ink})
-           ->pack(-side => 'top', -fill => 'x');
-}
-
-#------------------------------------------------------------------------------
-# Menus.  Labels in capitals, as the rest of PHCP.
-#------------------------------------------------------------------------------
 sub build_menus {
-    my $bar = $mw->Menu(-type => 'menubar');
+    my $bar = $mw->Menu(-type => 'menubar', -relief => 'flat', -borderwidth => 0, -font => $UI,
+                        -background => $C{paper}, -foreground => $C{ink});
     $mw->configure(-menu => $bar);
     my $file = $bar->cascade(-label => 'FILE', -tearoff => 0);
     $file->command(-label => 'NEW',             -accelerator => 'CTRL+N', -command => sub { file_new() });
@@ -191,7 +314,7 @@ sub build_menus {
     $file->command(-label => 'SAVE',            -accelerator => 'CTRL+S', -command => sub { file_save() });
     $file->command(-label => 'SAVE AS...',                                -command => sub { file_save_as() });
     $file->separator;
-    $file->command(-label => 'PROPERTIES - UNITS...',                     -command => sub { properties() });
+    $file->command(-label => 'PROJECT AND UNITS',                         -command => sub { select_tab($toptabs, 'PROJECT') });
     $file->separator;
     $file->command(-label => 'WRITE REPORT...', -accelerator => 'CTRL+R', -command => sub { file_report() });
     $file->separator;
@@ -202,7 +325,121 @@ sub build_menus {
     $edit->separator;
     $edit->command(-label => 'PICK LIST', -accelerator => 'CTRL+SPACE', -command => sub { pick_list() });
     my $model = $bar->cascade(-label => 'MODEL', -tearoff => 0);
-    $model->command(-label => 'SOLVE', -accelerator => 'F5', -command => sub { solve() });
+    $model->command(-label => 'VALIDATE',  -accelerator => 'F4', -command => sub { validate() });
+    $model->command(-label => 'CALCULATE', -accelerator => 'F5', -command => sub { calculate() });
+}
+
+# build_toolbar -- the file buttons, VALIDATE and CALCULATE, WRITE REPORT, and
+# on the right the model's state: not validated, problems, valid, calculated.
+sub build_toolbar {
+    my $tb = $mw->Frame(-background => $C{panel})->pack(-side => 'top', -fill => 'x');
+    my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => 14, -pady => 8);
+    my $sep = sub { $in->Frame(-background => $C{line}, -width => 1, -height => 22)->pack(-side => 'left', -padx => 10) };
+    $btn{NEW}  = flat_button($in, 'NEW',  sub { file_new() })->pack(-side => 'left', -padx => [0, 4]);
+    $btn{OPEN} = flat_button($in, 'OPEN', sub { file_open() })->pack(-side => 'left', -padx => 4);
+    $btn{SAVE} = flat_button($in, 'SAVE', sub { file_save() })->pack(-side => 'left', -padx => 4);
+    $sep->();
+    $btn{VALIDATE}  = flat_button($in, 'VALIDATE  F4', sub { validate() })->pack(-side => 'left', -padx => 4);
+    $btn{CALCULATE} = flat_button($in, 'CALCULATE  F5', sub { calculate() }, primary => 1)
+                          ->pack(-side => 'left', -padx => 4);
+    $sep->();
+    $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => 4);
+    $pill = $in->Label(-text => '', -font => $UI_B, -padx => 12, -pady => 4)->pack(-side => 'right');
+    rule($mw, 'x', -side => 'top');
+}
+
+#------------------------------------------------------------------------------
+# build_network -- the NETWORK tab: the command strip across the top, the
+# editor with its line numbers and status bar, the three lists on the right.
+#------------------------------------------------------------------------------
+sub build_network {
+    my $page = shift;
+    build_strip($page);
+    my $hp = $page->Panedwindow(-orient => 'horizontal', -background => $C{line},
+                                -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
+                                -handlesize => 0, -sashrelief => 'flat');
+    my $left  = $page->Frame(-background => $C{paper});
+    my $right = $page->Frame(-background => $C{paper});
+
+    # The status bar, under the editor.
+    my $sb = $left->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
+    rule($sb, 'x', -side => 'top');
+    $statusbar = $sb->Text(-height => 1, -wrap => 'none', -font => $MONO, -background => $C{panel},
+        -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 14, -pady => 6,
+        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0)->pack(-fill => 'x');
+    $statusbar->tagConfigure('current', -foreground => $C{accent}, -font => $MONO_B, -underline => 1);
+    $statusbar->tagConfigure('muted', -foreground => $C{muted});
+    $statusbar->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
+    $statusbar->tagConfigure('good', -foreground => $C{accent}, -font => $MONO_B);
+
+    # The editor: line numbers, text, scrollbars.  The gutter is a second
+    # Text in the same font, scrolled with the editor, so its numbers stay
+    # level with the lines however the editor is scrolled.
+    my $ef = $left->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
+    my $vsb = flat_scrollbar($ef, 'vertical')->pack(-side => 'right', -fill => 'y');
+    my $hsb = flat_scrollbar($ef, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
+    $gutter = $ef->Text(-width => 5, -wrap => 'none', -font => $MONO, -background => $C{panel},
+        -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => 6, -pady => 6,
+        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
+        ->pack(-side => 'left', -fill => 'y');
+    $gutter->tagConfigure('num', -justify => 'right');
+    $gutter->tagConfigure('cur', -foreground => $C{ink}, -font => $MONO_B);
+    $gutter->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
+    $gutter->bind('<ButtonRelease-1>' => sub {
+        my ($n) = $gutter->index('current') =~ /^(\d+)/;
+        go_to_line($n) if $n;
+    });
+    rule($ef, 'y', -side => 'left');
+    $ed = $ef->TextUndo(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
+        -insertbackground => $C{ink}, -insertwidth => 2, -selectbackground => $C{select},
+        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 10, -pady => 6,
+        -spacing1 => 1, -spacing3 => 1, -exportselection => 1,
+        -yscrollcommand => sub { $vsb->set(@_); $gutter->yviewMoveto($_[0]) },
+        -xscrollcommand => sub { $hsb->set(@_) })->pack(-side => 'left', -fill => 'both', -expand => 1);
+    $vsb->configure(-command => sub { $ed->yview(@_) });
+    $hsb->configure(-command => sub { $ed->xview(@_) });
+    for my $ev ('<MouseWheel>', '<Button-4>', '<Button-5>') {
+        $gutter->bind($ev => sub { my $d = $ev eq '<Button-4>' ? -3 : 3; $ed->yviewScroll($d, 'units'); Tk->break });
+    }
+
+    # Syntax colours.  Blue for command words and keywords, black bold for a
+    # name being defined, dark blue for numbers, grey italic for comments.
+    # Behind a line in error, a pale red; behind the exact field validation
+    # found at fault, a deeper red with the text underlined.
+    $ed->tagConfigure('curline', -background => $C{curline});
+    $ed->tagConfigure('command', -foreground => $C{accent}, -font => $MONO_B);
+    $ed->tagConfigure('keyword', -foreground => $C{accent});
+    $ed->tagConfigure('name',    -foreground => $C{ink}, -font => $MONO_B);
+    $ed->tagConfigure('ref',     -foreground => $C{ink});
+    $ed->tagConfigure('number',  -foreground => $C{number});
+    $ed->tagConfigure('comment', -foreground => $C{muted}, -font => $MONO_I);
+    $ed->tagConfigure('error',   -background => $C{error_bg});
+    $ed->tagConfigure('fault',   -background => $C{fault_bg}, -foreground => $C{error}, -underline => 1);
+    $ed->tagConfigure('proposal', -foreground => $C{proposal}, -font => $MONO_I);
+    $ed->tagLower('curline');
+    $ed->tagRaise('error');
+    $ed->tagRaise('fault');
+    $ed->tagRaise('proposal');
+    $ed->tagRaise('sel');
+
+    # The three lists.
+    for my $name (qw(ERRORS WARNINGS NODES)) {
+        my $f = $right->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
+        $list_head{$name} = $f->Label(-text => $name, -font => $UI_S, -anchor => 'w', -background => $C{paper},
+            -foreground => $C{muted}, -padx => 14, -pady => 8)->pack(-side => 'top', -fill => 'x');
+        $list{$name} = $f->Listbox(-height => 5, -font => $MONO, -background => $C{paper},
+            -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
+            -selectbackground => $C{select}, -selectforeground => $C{ink}, -relief => 'flat',
+            -borderwidth => 0, -highlightthickness => 0, -activestyle => 'none')
+            ->pack(-fill => 'both', -expand => 1, -padx => [14, 4], -pady => [0, 6]);
+        rule($f, 'x', -side => 'bottom') unless $name eq 'NODES';
+        $list_lines{$name} = [];
+        my $n = $name;
+        $list{$name}->bind('<ButtonRelease-1>' => sub { go_to_list($n) });
+    }
+    $hp->add($left, -width => 1000);
+    $hp->add($right);
+    $hp->pack(-fill => 'both', -expand => 1);
 }
 
 #------------------------------------------------------------------------------
@@ -217,16 +454,18 @@ sub build_menus {
 sub bind_keys {
     my $t = text_widget();
     $t->bindtags([ 'PhcEditor', $t->bindtags ]);
-    $mw->bind('PhcEditor', '<Return>'        => sub { on_return(); Tk->break });
-    $mw->bind('PhcEditor', '<Tab>'           => sub { on_tab() and Tk->break });
-    $mw->bind('PhcEditor', '<KeyPress>'      => \&on_key);
-    $mw->bind('PhcEditor', '<ButtonPress>'   => sub { discard_proposal() });
-    $mw->bind('PhcEditor', '<KeyRelease>'    => sub { after_change() });
-    $mw->bind('PhcEditor', '<ButtonRelease>' => sub { update_status() });
-    $mw->bind('PhcEditor', '<Control-space>' => sub { pick_list(); Tk->break });
-    $mw->bind('PhcEditor', '<Control-z>'     => sub { undo(); Tk->break });
-    $mw->bind('PhcEditor', '<Control-y>'     => sub { redo(); Tk->break });
-    $mw->bind('<F5>'        => sub { solve() });
+    $mw->bind('PhcEditor', '<Return>'          => sub { on_return(); Tk->break });
+    $mw->bind('PhcEditor', '<Tab>'             => sub { on_tab() and Tk->break });
+    $mw->bind('PhcEditor', '<KeyPress>'        => \&on_key);
+    $mw->bind('PhcEditor', '<ButtonPress>'     => sub { discard_proposal() });
+    $mw->bind('PhcEditor', '<ButtonPress-3>'   => sub { Tk->break });   # no bevelled pop-up menu
+    $mw->bind('PhcEditor', '<KeyRelease>'      => sub { after_change() });
+    $mw->bind('PhcEditor', '<ButtonRelease>'   => sub { update_status() });
+    $mw->bind('PhcEditor', '<Control-space>'   => sub { pick_list(); Tk->break });
+    $mw->bind('PhcEditor', '<Control-z>'       => sub { undo(); Tk->break });
+    $mw->bind('PhcEditor', '<Control-y>'       => sub { redo(); Tk->break });
+    $mw->bind('<F4>'        => sub { validate() });
+    $mw->bind('<F5>'        => sub { calculate() });
     $mw->bind('<Control-n>' => sub { file_new() });
     $mw->bind('<Control-o>' => sub { file_open() });
     $mw->bind('<Control-s>' => sub { file_save() });
@@ -235,57 +474,78 @@ sub bind_keys {
     $mw->protocol('WM_DELETE_WINDOW' => sub { file_quit() });
 }
 
-# text_widget -- the Text inside the Scrolled frame, where keys arrive.
-sub text_widget { $ed->Subwidget('scrolled') }
+# text_widget -- the Text where keys arrive (the editor itself).
+sub text_widget { $ed }
 
 #==============================================================================
 # Buffer helpers.
 #==============================================================================
 
-# buffer -- the model text, without a proposal that is only on offer.
+# buffer -- the network text, without a proposal that is only on offer.
 sub buffer {
     my $t = $ed->get('1.0', 'end - 1 chars');
     return $t unless $prop{active};
     return $ed->get('1.0', 'pstart') . $ed->get('pend', 'end - 1 chars');
 }
 
-# set_buffer -- replace the whole text, as when a file is opened.
+# doc -- the document: the PROJECT tab's settings and the editor's network.
+sub doc { return { settings => $settings, network => buffer() } }
+
+# full_text -- the whole .phc file the document makes.
+sub full_text { return (HardyCross::Editor::join_file($settings, buffer()))[0] }
+
+# set_buffer -- replace the network text, as when a file is opened.
 sub set_buffer {
     my $text = shift;
     discard_proposal();
     $ed->delete('1.0', 'end');
     $ed->insert('1.0', $text);
     text_widget()->ResetUndo;    # undo does not reach back past an open
-    $saved_text = $text;
+    $saved_text = full_text();
     $ed->markSet('insert', '1.0');
-    $solved = undef;
+    ($solved, $validation, $valid_text) = (undef, undef, undef);
     fill_results();
+    fill_validation();
     recolour();
+    update_actions();
     update_status();
 }
 
 # cursor -- (line, column) of the insertion point.
 sub cursor { split /\./, $ed->index('insert') }
 
-# go_to_line -- put the cursor at the start of line $n, show and select it.
+# go_to_line -- put the cursor at line $n, show it; select columns $a to $b
+# if given, otherwise the whole line.
 sub go_to_line {
-    my $n = shift or return;
-    $ed->markSet('insert', "$n.0");
-    $ed->see("$n.0");
+    my ($n, $a, $b) = @_;
+    return unless $n;
+    select_tab($toptabs, 'NETWORK');
     $ed->tagRemove('sel', '1.0', 'end');
-    $ed->tagAdd('sel', "$n.0", "$n.0 lineend");
+    if (defined $a) {
+        $ed->markSet('insert', "$n.$a");
+        $ed->tagAdd('sel', "$n.$a", "$n.$b");
+    } else {
+        $ed->markSet('insert', "$n.0");
+        $ed->tagAdd('sel', "$n.0", "$n.0 lineend");
+    }
+    $ed->see('insert');
     $ed->focus;
     update_status();
 }
 
+# go_to_list -- a click in ERRORS, WARNINGS or NODES: to the line, or for a
+# setting to its field in the PROJECT tab.
 sub go_to_list {
     my $name = shift;
     my ($i) = $list{$name}->curselection;
-    go_to_line($list_lines{$name}[$i]) if defined $i;
+    return unless defined $i;
+    my $e = $list_lines{$name}[$i] or return;
+    return show_field($e->{field}) if $e->{field};
+    go_to_line($e->{line});
 }
 
 #==============================================================================
-# Colouring, the three lists, the status bar.
+# Colouring, line numbers, the three lists, the status bar.
 #==============================================================================
 
 # after_change -- after a key: the status bar at once, the full re-check
@@ -295,63 +555,98 @@ sub after_change {
     $recolour_job->cancel if $recolour_job;
     $recolour_job = $mw->after(250, sub { $recolour_job = undef; recolour() });
     set_title();
+    update_actions();
 }
 
-# recolour -- re-check every line; colour it and refill the three lists.
+# recolour -- re-check every line; colour it, number it, and refill the lists.
 sub recolour {
     my $text = buffer();
     my ($line) = cursor();
-    my $res = HardyCross::Editor::check_buffer($text, $line);
+    my $res = HardyCross::Editor::doc_check(doc(), $line);
     my @l = split /\n/, $text, -1;
-    $ed->tagRemove($_, '1.0', 'end') for qw(command comment error);
+    $ed->tagRemove($_, '1.0', 'end') for qw(command keyword name ref number comment error);
+    my @bad;
     for my $i (1 .. @l) {
         for my $s (HardyCross::Editor::colour_spans($l[ $i - 1 ])) {
             my ($a, $b, $tag) = @$s;
             $ed->tagAdd($tag, "$i.$a", "$i.$b");
         }
-        my $st = $res->{lines}[$i]{status};
+        my $st = ($res->{lines}[$i] || {})->{status} // 'ok';
         # An incomplete line is still being typed while the cursor is on it;
-        # anywhere else it is as wrong as an error and shows red.
-        $ed->tagAdd('error', "$i.0", "$i.0 lineend")
-            if $st eq 'error' || ($st eq 'incomplete' && $i != $line);
+        # anywhere else it is as wrong as an error.
+        if ($st eq 'error' || ($st eq 'incomplete' && $i != $line)) {
+            $ed->tagAdd('error', "$i.0", "$i.0 lineend + 1 chars");
+            push @bad, $i;
+        }
     }
-    # Warnings belong to the last solve; they are shown until the next one.
-    my $d = HardyCross::Editor::diagnostics($text, $solved ? $solved->{net} : undef, $line);
+    # Validation marks belong to the text they were found in.
+    $ed->tagRemove('fault', '1.0', 'end') unless $validation && $validation->{text} eq full_text();
+    refresh_gutter(\@bad);
+
+    # Warnings belong to the last calculation; they are shown until the next.
+    my $d = HardyCross::Editor::doc_diagnostics(doc(), $solved ? $solved->{net} : undef, $line);
     for my $name (qw(ERRORS WARNINGS NODES)) {
         my $lb = $list{$name};
+        my @e = @{ $d->{ lc $name } };
         $lb->delete(0, 'end');
         $list_lines{$name} = [];
-        for my $p (@{ $d->{ lc $name } }) {
-            $lb->insert('end', defined $p->{line} ? sprintf('LINE %-5d %s', $p->{line}, $p->{message})
-                                                  : $p->{message});
-            push @{ $list_lines{$name} }, $p->{line};
+        for my $p (@e) {
+            $lb->insert('end', defined $p->{line} ? sprintf('%5d  %s', $p->{line}, $p->{message})
+                                                  : "       $p->{message}");
+            push @{ $list_lines{$name} }, $p;
         }
+        $list_head{$name}->configure(-text => @e ? "$name  " . scalar(@e) : $name,
+            -foreground => !@e ? $C{muted} : $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink});
     }
     return $res;
 }
 
+# refresh_gutter -- the line numbers: one per line, the cursor's in black,
+# lines in error in red.
+sub refresh_gutter {
+    my $bad = shift || [];
+    my ($n) = $ed->index('end - 1 chars') =~ /^(\d+)/;
+    my ($cur) = cursor();
+    $gutter->configure(-state => 'normal');
+    if ($n != $gutter_lines) {
+        $gutter->delete('1.0', 'end');
+        $gutter->insert('1.0', join("\n", 1 .. $n), 'num');
+        $gutter_lines = $n;
+    }
+    $gutter->tagRemove($_, '1.0', 'end') for qw(cur bad);
+    $gutter->tagAdd('bad', "$_.0", "$_.0 lineend") for @$bad;
+    $gutter->tagAdd('cur', "$cur.0", "$cur.0 lineend");
+    $gutter->configure(-state => 'disabled');
+    $gutter->yviewMoveto(($ed->yview)[0]);
+}
+
+# gutter_numbers -- the numbers the gutter shows (for the tests).
+sub gutter_numbers { return split /\n/, $gutter->get('1.0', 'end - 1 chars') }
+
 # update_status -- the status bar for the cursor's line: the command's field
 # template with the field the cursor is in highlighted, then the line's
-# message if it has one, or after a solve the element's results.
+# message if it has one, or after a calculation the element's results.
 sub update_status {
     my $text = buffer();
     my ($n, $col) = cursor();
-    # A message (solved, saved ...) stays until something changes; otherwise
-    # the key release that follows F5 would wipe "SOLVED" at once.
+    $ed->tagRemove('curline', '1.0', 'end');
+    $ed->tagAdd('curline', "$n.0", "$n.0 lineend + 1 chars");
+    refresh_gutter([ map { /^(\d+)/ ? $1 : () } $gutter->tagRanges('bad') ]) if $gutter;
+    # A message (calculated, saved ...) stays until something changes;
+    # otherwise the key release that follows F5 would wipe it at once.
     if ($notice) {
         return if $notice->[2] eq where($text);
         $notice = undef;
     }
-    my $st = HardyCross::Editor::status_at($text, $n, $col);
+    my $st = HardyCross::Editor::doc_status(doc(), $n, $col);
     $statusbar->configure(-state => 'normal');
     $statusbar->delete('1.0', 'end');
-    $statusbar->insert('end', ' ');
     if (my $t = $st->{template}) {
         if ($t->{command}) {
-            $statusbar->insert('end', "$t->{command} ");
+            $statusbar->insert('end', "$t->{command} ", 'muted');
             my @f = @{ $t->{fields} };
             for my $i (0 .. $#f) {
-                $statusbar->insert('end', $f[$i], ($i == $t->{current} ? 'current' : ()));
+                $statusbar->insert('end', $f[$i], ($i == $t->{current} ? 'current' : 'muted'));
                 $statusbar->insert('end', ' ');
             }
         }
@@ -362,10 +657,13 @@ sub update_status {
     } elsif ($solved) {
         my @l = split /\n/, $text, -1;
         my $r = HardyCross::Editor::results_at($solved->{net}, $l[ $n - 1 ]);
-        $r .= '   (SOLVED BEFORE THE LATEST EDITS)' if defined $r && $text ne $solved->{text};
+        $r .= '   (CALCULATED BEFORE THE LATEST EDITS)' if defined $r && full_text() ne $solved->{text};
         $extra = [ $r ] if defined $r;
     }
-    $statusbar->insert('end', '|  ' . $extra->[0], ($extra->[1] ? $extra->[1] : ())) if $extra;
+    if ($extra) {
+        $statusbar->insert('end', '   |   ', 'muted');
+        $statusbar->insert('end', $extra->[0], ($extra->[1] ? $extra->[1] : ()));
+    }
     $statusbar->configure(-state => 'disabled');
     return $st;
 }
@@ -373,9 +671,9 @@ sub update_status {
 # status_text -- what the status bar shows, as plain text (for the tests).
 sub status_text { my $s = $statusbar->get('1.0', 'end - 1 chars'); $s =~ s/\s+$//; $s }
 
-# where -- the buffer and cursor as one string: a message stays while this is
-# unchanged.
-sub where { my $text = shift // buffer(); return join "\x00", $ed->index('insert'), $text }
+# where -- the document and cursor as one string: a message stays while this
+# is unchanged.
+sub where { my $text = shift // buffer(); return join "\x00", $ed->index('insert'), $text, full_text() }
 
 # message -- a message in the status bar, kept until the text or cursor moves.
 sub message {
@@ -383,41 +681,73 @@ sub message {
     $notice = [ $text, $bad, where() ];
     $statusbar->configure(-state => 'normal');
     $statusbar->delete('1.0', 'end');
-    $statusbar->insert('end', ' ' . uc($text), ($bad ? 'bad' : ()));
+    $statusbar->insert('end', uc($text), ($bad ? 'bad' : 'good'));
     $statusbar->configure(-state => 'disabled');
 }
 
+#------------------------------------------------------------------------------
+# update_actions -- CALCULATE on or off, and the state shown on the right of
+# the toolbar.  CALCULATE is on only while the whole file is exactly as it
+# was when it last passed VALIDATE; any edit, to the network or in the
+# PROJECT tab, turns it off until VALIDATE is run again.
+#------------------------------------------------------------------------------
+sub update_actions {
+    return unless $btn{CALCULATE};
+    my $full = full_text();
+    my $valid = defined $valid_text && $valid_text eq $full;
+    $btn{CALCULATE}->configure($valid
+        ? (-state => 'normal', -background => $C{accent}, -highlightbackground => $C{accent})
+        : (-state => 'disabled', -background => $C{panel}, -highlightbackground => $C{line}));
+    my ($text, $fg, $bg);
+    if ($solved && $solved->{text} eq $full) {
+        ($text, $fg, $bg) = $solved->{converged} ? ('CALCULATED', $C{accent}, $C{accent_bg})
+                                                 : ('DID NOT CONVERGE', $C{error}, $C{error_bg});
+    } elsif ($valid) {
+        ($text, $fg, $bg) = ('VALID - READY TO CALCULATE', $C{accent}, $C{accent_bg});
+    } elsif ($validation && $validation->{text} eq $full) {
+        my $n = @{ $validation->{items} };
+        ($text, $fg, $bg) = ("$n PROBLEM" . ($n == 1 ? '' : 'S') . ' - SEE VALIDATION', $C{error}, $C{error_bg});
+    } else {
+        ($text, $fg, $bg) = ('NOT VALIDATED', $C{muted}, $C{hover});
+    }
+    $pill->configure(-text => $text, -foreground => $fg, -background => $bg);
+}
+
+# calculate_enabled / state_text -- for the tests.
+sub calculate_enabled { return $btn{CALCULATE}->cget(-state) eq 'normal' }
+sub state_text { return $pill->cget(-text) }
+
 #==============================================================================
-# The command strip: every command, in groups, two groups to a row so the
-# whole set fits beside the lists at any usual window width.  A click starts
-# a line with that command, on the current line if it is empty or a new one
-# below it.
+# The command strip: the network commands, in their groups.  A click starts a
+# line with that command, on the current line if it is empty or a new one
+# below it.  The settings commands are not here: they are the PROJECT tab.
 #==============================================================================
 sub build_strip {
     my $parent = shift;
-    $strip = $parent->Frame(-background => $C{chrome})->pack(-side => 'bottom', -fill => 'x', -pady => [4, 0]);
-    my @groups = @HardyCross::Phc::COMMAND_GROUPS;
-    while (my @pair = splice @groups, 0, 2) {
-        my $row = $strip->Frame(-background => $C{chrome})->pack(-side => 'top', -fill => 'x');
-        my $first = 1;
-        for my $group (@pair) {
-            $row->Label(-text => '|', -background => $C{chrome}, -foreground => $C{comment})
-                ->pack(-side => 'left', -padx => 4) unless $first;
-            $first = 0;
-            for my $cmd (@$group) {
-                my $l = $row->Label(-text => $cmd, -font => $UI_B, -background => $C{chrome},
-                                    -foreground => $C{command}, -cursor => 'hand2')
-                            ->pack(-side => 'left', -padx => 2);
-                $l->bind('<ButtonRelease-1>' => sub { start_command($cmd) });
-            }
+    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => 8, -pady => 6);
+    my @groups = @HardyCross::Phc::COMMAND_GROUPS[1 .. $#HardyCross::Phc::COMMAND_GROUPS];
+    my $first = 1;
+    for my $group (@groups) {
+        $strip->Frame(-background => $C{line}, -width => 1, -height => 16)->pack(-side => 'left', -padx => 8)
+            unless $first;
+        $first = 0;
+        for my $cmd (@$group) {
+            my $l = $strip->Label(-text => $cmd, -font => $MONO_B, -background => $C{paper},
+                                  -foreground => $C{accent}, -padx => 6, -pady => 3, -cursor => 'hand2')
+                          ->pack(-side => 'left');
+            $l->bind('<Enter>' => sub { $l->configure(-background => $C{accent_bg}) });
+            $l->bind('<Leave>' => sub { $l->configure(-background => $C{paper}) });
+            $l->bind('<ButtonRelease-1>' => sub { start_command($cmd) });
         }
     }
+    rule($parent, 'x', -side => 'top');
 }
 
 # start_command -- begin a line with a command, ready for its first field.
 sub start_command {
     my $cmd = shift;
     discard_proposal();
+    select_tab($toptabs, 'NETWORK');
     unless ($ed->get('insert linestart', 'insert lineend') =~ /^\s*$/) {
         $ed->markSet('insert', 'insert lineend');
         $ed->insert('insert', "\n");
@@ -431,11 +761,130 @@ sub start_command {
 
 # strip_commands -- the commands on the strip, in order (for the tests).
 sub strip_commands {
-    return map { $_->cget(-text) } grep { $_->cget(-text) ne '|' } map { $_->children } $strip->children;
+    return map { $_->cget(-text) } grep { $_->isa('Tk::Label') } $strip->children;
 }
 
 #==============================================================================
-# The results: PIPES, NODES and OUTLETS as sortable tables, and the REPORT.
+# The PROJECT tab: the title and project details, the units, the method and
+# the options.  Each field is tied to $settings; a change marks the file
+# modified and turns CALCULATE off until VALIDATE is run again.  Text is
+# kept in capitals as it is typed.
+#==============================================================================
+sub build_project {
+    my $page = shift;
+    my $wrap = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1, -padx => 18, -pady => 12);
+    my $column = sub {
+        my ($title) = @_;
+        my $c = $wrap->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'y', -anchor => 'n', -padx => [0, 32]);
+        $c->Label(-text => $title, -font => $UI_B, -background => $C{paper}, -foreground => $C{ink}, -anchor => 'w')
+          ->pack(-fill => 'x');
+        rule($c, 'x', -pady => [4, 8]);
+        my $g = $c->Frame(-background => $C{paper})->pack(-fill => 'x');
+        return $g;
+    };
+    my $row = 0;
+    my $label = sub {
+        my ($g, $text) = @_;
+        $g->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{muted}, -anchor => 'w')
+          ->grid(-row => $row, -column => 0, -sticky => 'w', -pady => 3, -padx => [0, 14]);
+    };
+    my $entry = sub {
+        my ($g, $field, $var, $width) = @_;
+        my $e = flat_entry($g, $var, $width);
+        $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3, -ipady => 3);
+        $e->bind('<KeyRelease>' => sub { settings_changed() });
+        $form{$field} = $e;
+        $row++;
+    };
+
+    my @f = @HardyCross::Editor::PROJECT_FIELDS;
+    my $split = 9;           # PROJECT ... DATE in the first column
+    my $g = $column->('PROJECT DETAILS');
+    $row = 0;
+    $label->($g, 'TITLE');
+    $entry->($g, 'TITLE', \$settings->{title}, 38);
+    for my $k (@f[0 .. $split]) {
+        $settings->{project}{$k} //= '';
+        $label->($g, HardyCross::Editor::project_label($k));
+        $entry->($g, $k, \$settings->{project}{$k}, 38);
+    }
+    $g = $column->('DESIGN BASIS');
+    $row = 0;
+    for my $k (@f[ $split + 1 .. $#f ]) {
+        $settings->{project}{$k} //= '';
+        $label->($g, HardyCross::Editor::project_label($k));
+        $entry->($g, $k, \$settings->{project}{$k}, 24);
+    }
+
+    $g = $column->('UNITS');
+    $row = 0;
+    for my $q (@HardyCross::Phc::UNIT_QUANTITIES) {
+        $label->($g, $q);
+        my $dd = drop_down($g, \$settings->{units}{$q}, $HardyCross::Phc::UNIT_CHOICES{$q}, sub { settings_changed() },
+                            $HardyCross::Phc::UNIT_DEFAULT{$q});
+        $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+        $form{$q} = $dd;
+        $row++;
+    }
+    $g = $column->('CALCULATION');
+    $row = 0;
+    $label->($g, 'METHOD');
+    my $dd = drop_down($g, \$settings->{method}, [qw(HW DW)], sub { settings_changed() });
+    $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+    $form{METHOD} = $dd;
+    $row++;
+    for my $o (@HardyCross::Phc::OPTIONS) {
+        $settings->{options}{$o} //= '';
+        $label->($g, $o);
+        $entry->($g, $o, \$settings->{options}{$o}, 12);
+    }
+    $g->Label(-text => "HW HAZEN-WILLIAMS, DW DARCY-WEISBACH.\nA BLANK OPTION TAKES ITS DEFAULT.",
+              -font => $UI, -background => $C{paper}, -foreground => $C{faint}, -justify => 'left')
+      ->grid(-row => $row, -column => 0, -columnspan => 3, -sticky => 'w', -pady => [8, 0]);
+}
+
+# settings_changed -- after any change in the PROJECT tab.
+sub settings_changed {
+    for my $v (\$settings->{title}, \(@{ $settings->{project} }{ keys %{ $settings->{project} } }),
+               \(@{ $settings->{options} }{ keys %{ $settings->{options} } })) {
+        $$v = uc $$v if defined $$v && $$v =~ /[a-z]/;
+    }
+    set_title();
+    update_actions();
+    recolour();         # the units in force change what a line means
+    update_status();
+}
+
+#------------------------------------------------------------------------------
+# load_settings -- put a document's settings into the PROJECT tab.  The
+# values are copied into the hash the fields are tied to, never by replacing
+# it, so every field stays tied.
+#------------------------------------------------------------------------------
+sub load_settings {
+    my $new = shift;
+    $settings->{title} = $new->{title} // '';
+    $settings->{project}{$_} = '' for keys %{ $settings->{project} };
+    $settings->{project}{$_} = $new->{project}{$_} for keys %{ $new->{project} };
+    $settings->{extra} = [ @{ $new->{extra} || [] } ];
+    $settings->{units}{$_} = $new->{units}{$_} for @HardyCross::Phc::UNIT_QUANTITIES;
+    $settings->{method} = $new->{method} // 'HW';
+    $settings->{options}{$_} = $new->{options}{$_} // '' for @HardyCross::Phc::OPTIONS;
+    $_->() for @dd_refresh;
+}
+
+# show_field -- the PROJECT tab, with one field focused and marked.
+sub show_field {
+    my $field = shift;
+    select_tab($toptabs, 'PROJECT');
+    my $w = $form{$field} or return;
+    $w->focus;
+    $w->configure(-highlightbackground => $C{error});
+    $mw->after(2500, sub { $w->configure(-highlightbackground => $C{line}) if Tk::Exists($w) });
+}
+
+#==============================================================================
+# The results: VALIDATION, then PIPES, NODES and OUTLETS as sortable tables,
+# and the REPORT.
 #
 # A click on a column heading sorts on it; a second click reverses.  On the
 # PIPES table a right click on the headings opens the column chooser.  HIDE
@@ -444,26 +893,110 @@ sub strip_commands {
 #==============================================================================
 sub build_results {
     my $parent = shift;
-    $book = $parent->NoteBook(-background => $C{chrome}, -backpagecolor => $C{chrome},
-                              -inactivebackground => $C{chrome}, -font => $UI_B);
+    $restabs = make_tabs($parent, [ 'VALIDATION', 'PIPES', 'NODES', 'OUTLETS', 'REPORT' ]);
+    my $opts = $restabs->{bar};
+    $checks{nodes} = check_box($opts, 'HIDE INACTIVE NODES', \$hide_nodes, sub { fill_table('NODES') });
+    $checks{nodes}{frame}->pack(-side => 'right', -padx => [6, 14]);
+    $checks{pipes} = check_box($opts, 'HIDE NON-FLOWING PIPES', \$hide_pipes, sub { fill_table('PIPES') });
+    $checks{pipes}{frame}->pack(-side => 'right', -padx => 6);
+
+    build_validation($restabs->{page}{VALIDATION});
     for my $name (qw(PIPES NODES OUTLETS)) {
-        my $page = $book->add($name, -label => $name);
-        $table{$name} = { hlist => undef, data => undef, sort => undef, desc => 0, page => $page };
+        $table{$name} = { hlist => undef, data => undef, sort => undef, desc => 0, page => $restabs->{page}{$name} };
         make_table($name);
     }
-    my $rp = $book->add('REPORT', -label => 'REPORT');
-    $report = $rp->Scrolled('Text', -scrollbars => 'se', -wrap => 'none', -font => $MONO,
-        -background => $C{paper}, -foreground => $C{ink}, -selectbackground => $C{select},
-        -borderwidth => 0, -highlightthickness => 0, -state => 'disabled')->pack(-fill => 'both', -expand => 1);
-    my $opts = $parent->Frame(-background => $C{chrome})->pack(-side => 'bottom', -fill => 'x');
-    $opts->Checkbutton(-text => 'HIDE NON-FLOWING PIPES', -variable => \$hide_pipes,
-        -background => $C{chrome}, -activebackground => $C{chrome}, -command => sub { fill_table('PIPES') })
-        ->pack(-side => 'left', -padx => 6);
-    $opts->Checkbutton(-text => 'HIDE INACTIVE NODES', -variable => \$hide_nodes,
-        -background => $C{chrome}, -activebackground => $C{chrome}, -command => sub { fill_table('NODES') })
-        ->pack(-side => 'left', -padx => 6);
-    $book->pack(-fill => 'both', -expand => 1);
+    my $rp = $restabs->{page}{REPORT};
+    my $rsb = flat_scrollbar($rp, 'vertical')->pack(-side => 'right', -fill => 'y');
+    $report = $rp->Text(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
+        -selectbackground => $C{select}, -selectforeground => $C{ink}, -borderwidth => 0,
+        -highlightthickness => 0, -padx => 12, -pady => 8, -state => 'disabled',
+        -yscrollcommand => sub { $rsb->set(@_) })->pack(-fill => 'both', -expand => 1);
+    $rsb->configure(-command => sub { $report->yview(@_) });
     %pipe_show = map { $_->{key} => $_->{show} } HardyCross::Editor::pipe_columns({ q => '', p => '', l => '' });
+}
+
+# hlist -- a flat, scrolled HList for a table.
+sub hlist {
+    my ($page, $ncol) = @_;
+    my $box = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
+    my $vsb = flat_scrollbar($box, 'vertical')->pack(-side => 'right', -fill => 'y');
+    my $hsb = flat_scrollbar($box, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
+    my $h = $box->HList(-header => 1, -columns => $ncol, -background => $C{paper},
+        -foreground => $C{ink}, -font => $MONO, -selectbackground => $C{select},
+        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0,
+        -selectmode => 'browse', -drawbranch => 0, -indent => 0,
+        -yscrollcommand => sub { $vsb->set(@_) }, -xscrollcommand => sub { $hsb->set(@_) })
+        ->pack(-fill => 'both', -expand => 1);
+    $vsb->configure(-command => sub { $h->yview(@_) });
+    $hsb->configure(-command => sub { $h->xview(@_) });
+    return ($h, $box);
+}
+
+#------------------------------------------------------------------------------
+# Column headings.  Each heading is a text item in the HList's own header
+# row, drawn on the grey panel with no border, so the row reads as one flat
+# band the full width of the table with no seams between columns.  (Buttons
+# placed in the header could not stretch to their columns and left gaps.)  A
+# click is placed by its x position: header_column turns it into a column.
+#------------------------------------------------------------------------------
+sub heading {
+    my ($h, $i, $text, $style) = @_;
+    $h->header('create', $i, -itemtype => 'text', -text => $text, -style => $style,
+               -headerbackground => $C{panel}, -borderwidth => 0, -relief => 'flat');
+}
+
+sub header_column {
+    my ($h, $x) = @_;
+    my @w = map { $h->columnWidth($_) } 0 .. $h->cget(-columns) - 1;
+    my $total = 0;
+    $total += $_ for @w;
+    my $pos = $x + ($h->xview)[0] * $total;
+    my $acc = 0;
+    for my $i (0 .. $#w) { $acc += $w[$i]; return $i if $pos < $acc }
+    return undef;
+}
+
+# on_heading -- call $cb with the column clicked, when a click (button $b) is
+# in the header row.
+sub on_heading {
+    my ($h, $b, $cb) = @_;
+    $h->bind("<ButtonRelease-$b>" => sub {
+        my $e = $h->XEvent or return;
+        return unless $e->y <= $h->header('height');
+        my $c = header_column($h, $e->x);
+        $cb->($c) if defined $c;
+    });
+}
+
+# styles -- the cell styles of a table: right and left aligned, on white and
+# on the faint stripe of alternate rows, and FAIL in red.
+sub styles {
+    my ($h, %o) = @_;
+    my %s;
+    for my $stripe (0, 1) {
+        my $bg = $C{paper};      # no stripes: HList cannot run a band past its last column
+        for my $al (qw(e w)) {
+            $s{"$al$stripe"} = $h->ItemStyle('text', -anchor => $al, -font => $MONO, -background => $bg,
+                -foreground => $C{ink}, -selectforeground => $C{ink}, -padx => 8, -pady => 3);
+        }
+        $s{"bad$stripe"} = $h->ItemStyle('text', -anchor => 'w', -font => $MONO_B, -background => $bg,
+            -foreground => $C{error}, -padx => 8, -pady => 3);
+        $s{"wrap$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
+            -foreground => $C{ink}, -padx => 8, -pady => 4, -wraplength => $o{wrap} // 600, -justify => 'left');
+        $s{"what$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI_B, -background => $bg,
+            -foreground => $C{error}, -padx => 8, -pady => 4, -wraplength => 380, -justify => 'left');
+        $s{"where$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
+            -foreground => $C{ink}, -padx => 8, -pady => 4);
+    }
+    $s{good} = $h->ItemStyle('text', -anchor => 'w', -font => $UI_B, -background => $C{paper},
+        -foreground => $C{accent}, -padx => 8, -pady => 8);
+    $s{muted} = $h->ItemStyle('text', -anchor => 'w', -font => $UI, -background => $C{paper},
+        -foreground => $C{muted}, -padx => 8, -pady => 8);
+    $s{headm} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $MONO_B,
+        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+    $s{headw} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $UI_B,
+        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+    return \%s;
 }
 
 # columns -- the columns of a table as shown: all of them, or for PIPES the
@@ -479,31 +1012,41 @@ sub columns {
 sub make_table {
     my $name = shift;
     my $t = $table{$name};
-    $t->{hlist}->destroy if $t->{hlist};
+    $t->{box}->destroy if $t->{box};
     my @cols = columns($name);
-    # Before a solve, or after one that failed, there are no columns: one
-    # heading says how to get some.
-    @cols = ([ 0, { head => 'NO RESULTS - F5 SOLVES THE MODEL', unit => '', align => 'w' } ]) unless @cols;
-    my $h = $t->{page}->Scrolled('HList', -scrollbars => 'osoe', -header => 1,
-        -columns => scalar @cols, -background => $C{paper}, -foreground => $C{ink},
-        -font => $MONO, -selectbackground => $C{select}, -borderwidth => 0,
-        -highlightthickness => 0, -selectmode => 'browse')->pack(-fill => 'both', -expand => 1);
+    # Before a calculation, or after one that failed, there are no columns:
+    # one heading says how to get some.
+    @cols = ([ 0, { head => 'NO RESULTS - VALIDATE (F4), THEN CALCULATE (F5)', unit => '', align => 'w' } ])
+        unless @cols;
+    my ($h, $box) = hlist($t->{page}, scalar @cols);
+    $t->{styles} = styles($h);
+    # Headings and cells are in the monospace face, each column padded to
+    # one width in characters: numbers then line up exactly on the right
+    # under a right-aligned heading, names on the left.  (HList itself
+    # clips a right-anchored heading, and a centred one sits unevenly over
+    # right-aligned numbers.)  Widths come from every row, shown or hidden,
+    # so a column does not jump when the HIDE boxes change.
+    my $rows = $t->{data} ? $t->{data}{rows} : [];
+    $t->{width} = {};
     for my $i (0 .. $#cols) {
         my ($full, $c) = @{ $cols[$i] };
-        my $mark = defined $t->{sort} && $t->{sort} == $full ? ($t->{desc} ? ' v' : ' ^') : '';
-        my $b = $h->Button(-text => $c->{head} . $mark . ($c->{unit} ? "\n$c->{unit}" : "\n "),
-            -font => $UI_B, -background => $C{chrome}, -activebackground => $C{select},
-            -foreground => $C{ink}, -relief => 'raised', -borderwidth => 1, -anchor => 'center',
-            -command => sub { sort_table($name, $full) });
-        $b->bind('<ButtonRelease-3>' => sub { column_menu() }) if $name eq 'PIPES';
-        $h->header('create', $i, -itemtype => 'window', -widget => $b);
+        my $w = 2 + length $c->{head};                   # room for the sort mark
+        $w = length $c->{unit} if length($c->{unit} // '') > $w;
+        for (@$rows) { my $l = length $_->{cells}[$full]; $w = $l if $l > $w }
+        $t->{width}{$full} = $w;
+        my $mark = defined $t->{sort} && $t->{sort} == $full ? ($t->{desc} ? " \x{25BC}" : " \x{25B2}") : '';
+        if ($t->{data}) {
+            heading($h, $i, join("\n", map { pad($_, $w, $c->{align}) } $c->{head} . $mark, $c->{unit} || ''),
+                    $t->{styles}{headm});
+        } else {
+            heading($h, $i, $c->{head}, $t->{styles}{headw});
+        }
     }
-    $t->{hlist} = $h;
-    $t->{styles} = {
-        e => $h->ItemStyle('text', -anchor => 'e', -font => $MONO, -background => $C{paper}, -foreground => $C{ink}),
-        w => $h->ItemStyle('text', -anchor => 'w', -font => $MONO, -background => $C{paper}, -foreground => $C{ink}),
-        bad => $h->ItemStyle('text', -anchor => 'w', -font => $MONO_B, -background => $C{paper}, -foreground => $C{error}),
-    };
+    if ($t->{data}) {
+        on_heading($h, 1, sub { sort_table($name, $cols[ $_[0] ][0]) });
+        on_heading($h, 3, sub { column_menu() }) if $name eq 'PIPES';
+    }
+    @{$t}{qw(hlist box)} = ($h, $box);
     fill_table($name);
 }
 
@@ -521,15 +1064,21 @@ sub fill_table {
     my $n = 0;
     for my $r (@$rows) {
         $h->add($n);
+        my $z = $n % 2;
         for my $i (0 .. $#cols) {
             my ($full, $c) = @{ $cols[$i] };
             my $cell = $r->{cells}[$full];
-            my $style = $cell eq 'FAIL' ? 'bad' : $c->{align};
-            $h->itemCreate($n, $i, -text => $cell, -style => $t->{styles}{$style});
+            my $style = $cell eq 'FAIL' ? "bad$z" : "w$z";
+            $h->itemCreate($n, $i, -text => pad($cell, $t->{width}{$full}, $c->{align}),
+                           -style => $t->{styles}{$style});
         }
         $n++;
     }
 }
+
+# pad -- text padded to $w characters: on the left for a right-aligned ('e')
+# column, on the right otherwise.
+sub pad { my ($t, $w, $al) = @_; return $al eq 'e' ? sprintf('%*s', $w, $t) : sprintf('%-*s', $w, $t) }
 
 # sort_table -- sort on a column; the same column again reverses.
 sub sort_table {
@@ -543,7 +1092,9 @@ sub sort_table {
 # column_menu -- the pipe column chooser: every column with a tick when shown.
 # NAME is always shown.
 sub column_menu {
-    my $m = $mw->Menu(-tearoff => 0, -background => $C{paper}, -foreground => $C{ink});
+    my $m = $mw->Menu(-tearoff => 0, -background => $C{paper}, -foreground => $C{ink}, -font => $UI,
+                      -relief => 'flat', -borderwidth => 1, -activeborderwidth => 0,
+                      -activebackground => $C{select}, -activeforeground => $C{ink}, -selectcolor => $C{accent});
     for my $c (HardyCross::Editor::pipe_columns({ q => '', p => '', l => '' })) {
         $m->checkbutton(-label => $c->{desc}, -variable => \$pipe_show{ $c->{key} },
             -state => $c->{fixed} ? 'disabled' : 'normal', -command => sub { make_table('PIPES') });
@@ -552,7 +1103,7 @@ sub column_menu {
     return $m;
 }
 
-# fill_results -- all four tabs from the last solve (empty without one).
+# fill_results -- the three tables from the last calculation (empty without one).
 sub fill_results {
     my $tables = $solved ? HardyCross::Editor::result_tables($solved->{net}) : {};
     for my $name (qw(PIPES NODES OUTLETS)) {
@@ -566,10 +1117,78 @@ sub table_rows {
     my $name = shift;
     my $h = $table{$name}{hlist};
     my @cols = columns($name);
-    return map { my $r = $_; [ map { $h->itemCget($r, $_, '-text') } 0 .. $#cols ] } $h->info('children');
+    my $trim = sub { my $t = shift; $t =~ s/^\s+|\s+$//g; $t };
+    return map { my $r = $_; [ map { $trim->($h->itemCget($r, $_, '-text')) } 0 .. $#cols ] } $h->info('children');
 }
+# header_text -- the text of a table's heading $i (for the tests).
+sub header_text { my ($name, $i) = @_; return $table{$name}{hlist}->header('cget', $i, '-text') }
 # table_heads -- the headings of a table as shown (for the tests).
 sub table_heads { return map { $_->[1]{head} } columns(shift) }
+
+#==============================================================================
+# The VALIDATION tab: what VALIDATE found.  One row per problem - WHERE (the
+# line, or the PROJECT tab), FIELD, WHAT IS WRONG and WHY.  A click on a row
+# goes to it: the field at fault is selected in the editor, or the PROJECT
+# tab field is focused.
+#==============================================================================
+sub build_validation {
+    my $page = shift;
+    my ($h, $box) = hlist($page, 4);
+    my @heads = ('WHERE', 'FIELD', 'WHAT IS WRONG', 'WHY');
+    my $st = styles($h, wrap => 620);
+    heading($h, $_, $heads[$_], $st->{headw}) for 0 .. 3;
+    $h->columnWidth(0, -char => 14);
+    $h->columnWidth(1, -char => 16);
+    $h->columnWidth(2, 400);
+    $h->configure(-browsecmd => sub { go_to_fault(shift) });
+    $vtable = { hlist => $h, styles => $st };
+    fill_validation();
+}
+
+# fill_validation -- the VALIDATION table from the last VALIDATE.
+sub fill_validation {
+    return unless $vtable;
+    my ($h, $s) = @{$vtable}{qw(hlist styles)};
+    $h->delete('all');
+    unless ($validation) {
+        $h->add('none');
+        $h->itemCreate('none', 2, -text => 'NOT VALIDATED YET. PRESS VALIDATE (F4) TO CHECK THE INPUTS.',
+                       -style => $s->{muted});
+        return;
+    }
+    unless (@{ $validation->{items} }) {
+        $h->add('none');
+        $h->itemCreate('none', 2, -text => 'NO PROBLEMS FOUND. CALCULATE (F5) IS NOW AVAILABLE.', -style => $s->{good});
+        return;
+    }
+    my $n = 0;
+    for my $it (@{ $validation->{items} }) {
+        my $z = $n % 2;
+        $h->add($n);
+        my $where = $it->{tab} ? 'PROJECT TAB' : defined $it->{line} ? "LINE $it->{line}" : 'NETWORK';
+        $h->itemCreate($n, 0, -text => $where, -style => $s->{"where$z"});
+        $h->itemCreate($n, 1, -text => $it->{field} // '', -style => $s->{"where$z"});
+        $h->itemCreate($n, 2, -text => $it->{what}, -style => $s->{"what$z"});
+        $h->itemCreate($n, 3, -text => $it->{why}, -style => $s->{"wrap$z"});
+        $n++;
+    }
+}
+
+# go_to_fault -- a VALIDATION row clicked: to the field at fault.
+sub go_to_fault {
+    my $row = shift;
+    return unless $validation && defined $row && $row =~ /^\d+\z/;
+    my $it = $validation->{items}[$row] or return;
+    return show_field($it->{field}) if $it->{tab};
+    go_to_line($it->{line}, $it->{start}, $it->{end}) if defined $it->{line};
+}
+
+# validation_rows -- the VALIDATION table as text, row by row (for the tests).
+sub validation_rows {
+    my $h = $vtable->{hlist};
+    return map { my $r = $_; [ map { $h->itemExists($r, $_) ? $h->itemCget($r, $_, '-text') : '' } 0 .. 3 ] }
+           $h->info('children');
+}
 
 #==============================================================================
 # Proposals.
@@ -646,25 +1265,25 @@ sub discard_proposal {
 #==============================================================================
 # Pick list, Ctrl+Space.
 #
-# In a USE type, a pipe's fittings, a UNITS quantity or unit, METHOD or an
-# OPTION name: a list of the choices with their descriptions.  Arrows move,
-# Enter or a double-click inserts over any part already typed, Escape closes.
+# In a USE type or a pipe's fittings: a list of the choices with their
+# descriptions.  Arrows move, Enter or a double-click inserts over any part
+# already typed, Escape closes.
 #==============================================================================
 sub pick_list {
     discard_proposal();
     my ($n, $col) = cursor();
-    my $ch = HardyCross::Editor::choices(buffer(), $n, $col);
+    my $ch = HardyCross::Editor::doc_choices(doc(), $n, $col);
     unless (@$ch) {
-        message('NO PICK LIST HERE: CTRL+SPACE WORKS IN A USE TYPE, A PIPE FITTING, UNITS, METHOD OR OPTION');
+        message('NO PICK LIST HERE: CTRL+SPACE WORKS IN A USE TYPE OR A PIPE FITTING');
         return;
     }
-    my $top = $mw->Toplevel(-background => $C{chrome});
-    $top->title('PICK LIST');
+    my $top = $mw->Toplevel(-background => $C{line});
+    $top->overrideredirect(1);
     $top->transient($mw);
-    my $lb = $top->Scrolled('Listbox', -scrollbars => 'oe', -height => 14, -width => 64,
-        -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
-        -selectbackground => $C{select}, -activestyle => 'none')
-        ->pack(-fill => 'both', -expand => 1, -padx => 4, -pady => 4);
+    my $lb = $top->Listbox(-height => 14, -width => 64, -font => $MONO, -background => $C{paper},
+        -foreground => $C{ink}, -selectbackground => $C{select}, -selectforeground => $C{ink},
+        -activestyle => 'none', -relief => 'flat', -borderwidth => 0, -highlightthickness => 0)
+        ->pack(-fill => 'both', -expand => 1, -padx => 1, -pady => 1);
     $lb->insert('end', sprintf('%-9s %s', @$_)) for @$ch;
     $lb->selectionSet(0);
     $lb->activate(0);
@@ -675,7 +1294,8 @@ sub pick_list {
     };
     $lb->bind('<Return>' => $choose);
     $lb->bind('<Double-ButtonRelease-1>' => $choose);
-    $lb->bind('<Escape>' => sub { $top->destroy });
+    $lb->bind('<Escape>' => sub { $top->destroy; $ed->focus });
+    $lb->bind('<FocusOut>' => sub { $top->destroy if Tk::Exists($top) });
     my @bb = $ed->bbox('insert');
     $top->geometry('+' . ($ed->rootx + $bb[0]) . '+' . ($ed->rooty + $bb[1] + $bb[3] + 2)) if @bb;
     $lb->focus;
@@ -698,27 +1318,74 @@ sub insert_choice {
 }
 
 #==============================================================================
-# Solve, F5.
+# VALIDATE (F4) and CALCULATE (F5).
 #==============================================================================
-sub solve {
+
+#------------------------------------------------------------------------------
+# validate -- check everything, list what is wrong, mark it in the editor.
+# When nothing is wrong the text is remembered, and CALCULATE is available
+# until the text changes.
+#------------------------------------------------------------------------------
+sub validate {
     discard_proposal();
-    my $text = buffer();
-    my $r = HardyCross::Editor::solve_text($text, $path);
+    my $full = full_text();
+    my $v = HardyCross::Editor::validate(doc());
+    $validation = { %$v, text => $full };
+    $valid_text = $v->{ok} ? $full : undef;
+    $ed->tagRemove('fault', '1.0', 'end');
+    for my $it (@{ $v->{items} }) {
+        next unless defined $it->{line};
+        # A line that stops short is at fault just past its end, where
+        # nothing can be seen; its last word is marked instead.
+        my ($a, $b) = ($it->{start}, $it->{end});
+        my $len = length $ed->get("$it->{line}.0", "$it->{line}.0 lineend");
+        if ($a >= $len) {
+            my $code = $ed->get("$it->{line}.0", "$it->{line}.0 lineend");
+            ($a, $b) = $code =~ /(\S+)\s*\z/ ? ($-[1], $+[1]) : (0, $len);
+        }
+        $ed->tagAdd('fault', "$it->{line}.$a", "$it->{line}.$b");
+    }
+    fill_validation();
+    select_tab($restabs, 'VALIDATION');
+    recolour();
+    update_actions();
+    my $n = @{ $v->{items} };
+    message($v->{ok} ? 'VALID - NO PROBLEMS FOUND. CALCULATE (F5) IS NOW AVAILABLE'
+                     : "$n PROBLEM" . ($n == 1 ? '' : 'S') . ' FOUND - SEE VALIDATION BELOW; CLICK ONE TO GO TO IT',
+            !$v->{ok});
+    return $v;
+}
+
+#------------------------------------------------------------------------------
+# calculate -- solve the model.  Refused unless the text is exactly what last
+# passed VALIDATE.
+#------------------------------------------------------------------------------
+sub calculate {
+    discard_proposal();
+    my $full = full_text();
+    unless (defined $valid_text && $valid_text eq $full) {
+        message('VALIDATE THE INPUTS FIRST (F4): CALCULATE RUNS ONLY ON A MODEL THAT HAS PASSED VALIDATION', 1);
+        return { ok => 0, not_validated => 1 };
+    }
+    my $r = HardyCross::Editor::doc_solve(doc(), $path);
     if (!$r->{ok}) {
         $solved = undef;
         fill_results();
-        fill_report("THE MODEL WAS NOT SOLVED\n\n$r->{error}\n");
+        fill_report("THE MODEL WAS NOT CALCULATED\n\n$r->{error}\n");
         go_to_line($r->{line}) if $r->{line};
         recolour();
+        update_actions();
         message($r->{error}, 1);
         return $r;
     }
-    $solved = { net => $r->{net}, converged => $r->{converged}, text => $text };
+    $solved = { net => $r->{net}, converged => $r->{converged}, text => $full };
     fill_results();
     fill_report($r->{report});
-    recolour();          # the WARNINGS list is the solve's
-    message($r->{converged} ? 'SOLVED - CONVERGED' : 'SOLVED - DID NOT CONVERGE: THE RESULTS MUST NOT BE USED',
-            !$r->{converged});
+    select_tab($restabs, 'PIPES');
+    recolour();          # the WARNINGS list is the calculation's
+    update_actions();
+    message($r->{converged} ? 'CALCULATED - CONVERGED'
+                            : 'CALCULATED - DID NOT CONVERGE: THE RESULTS MUST NOT BE USED', !$r->{converged});
     return $r;
 }
 
@@ -732,54 +1399,6 @@ sub fill_report {
 sub report_text { $report->get('1.0', 'end - 1 chars') }
 
 #==============================================================================
-# FILE > PROPERTIES: the file's units.
-#
-# One choice per quantity, set from the file's UNITS lines.  OK rewrites
-# those lines (HardyCross::Editor::set_units) as one undoable edit; nothing
-# else in the text changes.
-#==============================================================================
-sub properties {
-    my $units = HardyCross::Editor::units_of(buffer());
-    my $top = $mw->Toplevel(-background => $C{chrome});
-    $top->title('PROPERTIES - UNITS');
-    $top->transient($mw);
-    my %pick = %$units;
-    for my $q (@HardyCross::Phc::UNIT_QUANTITIES) {
-        my $row = $top->Frame(-background => $C{chrome})->pack(-fill => 'x', -padx => 8, -pady => 2);
-        $row->Label(-text => sprintf('%-10s', $q), -font => $MONO_B, -background => $C{chrome})->pack(-side => 'left');
-        my $be = $row->BrowseEntry(-variable => \$pick{$q}, -state => 'readonly', -width => 10,
-            -background => $C{paper}, -font => $MONO)->pack(-side => 'left');
-        $be->insert('end', @{ $HardyCross::Phc::UNIT_CHOICES{$q} });
-        $row->Label(-text => '  DEFAULT ' . $HardyCross::Phc::UNIT_DEFAULT{$q}, -background => $C{chrome},
-                    -foreground => $C{comment})->pack(-side => 'left');
-    }
-    my $btn = $top->Frame(-background => $C{chrome})->pack(-fill => 'x', -pady => 6);
-    $btn->Button(-text => 'OK', -command => sub { apply_units(\%pick); $top->destroy })->pack(-side => 'right', -padx => 8);
-    $btn->Button(-text => 'CANCEL', -command => sub { $top->destroy })->pack(-side => 'right');
-    return ($top, \%pick);
-}
-
-# apply_units -- write the units chosen into the buffer's UNITS lines.
-sub apply_units {
-    my $units = shift;
-    my $text = buffer();
-    my $new = HardyCross::Editor::set_units($text, $units);
-    return if $new eq $text;
-    my $at = $ed->index('insert');
-    # The delete and insert are grouped, so one Ctrl+Z puts the old units
-    # back rather than leaving an empty buffer.
-    my $t = text_widget();
-    $t->addGlobStart;
-    $ed->delete('1.0', 'end');
-    $ed->insert('1.0', $new);
-    $t->addGlobEnd;
-    $ed->markSet('insert', $at);
-    after_change();
-    recolour();
-    message('UNITS SET');
-}
-
-#==============================================================================
 # Files.
 #==============================================================================
 
@@ -790,8 +1409,8 @@ sub set_title {
     $mw->title('PHCP EDITOR - ' . uc($name) . ($ed && modified() ? ' *' : ''));
 }
 
-# modified -- whether the buffer differs from what was last opened or saved.
-sub modified { buffer() ne $saved_text }
+# modified -- whether the file differs from what was last opened or saved.
+sub modified { full_text() ne $saved_text }
 
 # ok_to_discard -- true if nothing is unsaved, or the user agrees to lose it.
 sub ok_to_discard {
@@ -804,6 +1423,7 @@ sub ok_to_discard {
 sub file_new {
     return unless ok_to_discard();
     $path = undef;
+    load_settings(HardyCross::Editor::new_settings());
     set_buffer('');
     set_title();
 }
@@ -816,7 +1436,8 @@ sub file_open {
     open_path($f);
 }
 
-# open_path -- load a .phc file into the editor.
+# open_path -- load a .phc file: its settings into the PROJECT tab, its
+# network into the editor.
 sub open_path {
     my $f = shift;
     my $r = eval { HardyCross::Editor::load_file($f) };
@@ -825,8 +1446,11 @@ sub open_path {
         message(HardyCross::is_model_error($e) ? $e->{msg} : "$e", 1);
         return;
     }
+    my $d = HardyCross::Editor::split_file($r->{text});
     $path = $r->{path};
-    set_buffer($r->{text});
+    load_settings($d->{settings});
+    set_buffer($d->{network});
+    select_tab($toptabs, 'NETWORK');
     set_title();
     return $r;
 }
@@ -845,28 +1469,29 @@ sub file_save_as {
     set_title();
 }
 
-# write_buffer -- save the text, ending with a newline.
+# write_buffer -- save the whole file, settings and network, ending with a
+# newline.
 sub write_buffer {
     my $f = shift;
-    my $text = buffer();
+    my $text = full_text();
     $text .= "\n" unless $text =~ /\n\z/;
     my $fh;
     unless (open $fh, '>', $f) { message("CANNOT WRITE $f: $!", 1); return 0 }
     print $fh $text;
     close $fh;
-    $saved_text = buffer();
+    $saved_text = full_text();
     message("SAVED $f");
     set_title();
     return 1;
 }
 
-# file_report -- solve if the last solve is not of this text, then write the
-# report as .pdf or .txt by the extension chosen.
+# file_report -- validate and calculate if the last calculation is not of
+# this text, then write the report as .pdf or .txt by the extension chosen.
 sub file_report {
     my $out = shift;
-    unless ($solved && $solved->{text} eq buffer()) {
-        my $r = solve();
-        return unless $r->{ok};
+    unless ($solved && $solved->{text} eq full_text()) {
+        return unless validate()->{ok};
+        return unless calculate()->{ok};
     }
     $out //= $mw->getSaveFile(-defaultextension => '.pdf',
         -initialfile => (($path // 'UNTITLED.PHC') =~ s{.*[/\\]}{}r) =~ s/\.phc\z//ir . '_REPORT.PDF',

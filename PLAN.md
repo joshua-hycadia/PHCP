@@ -201,37 +201,40 @@ Branch: `phc-editor`.
 
 ### Window
 
-Joshua's layout (28 October 2026): the editor above, with the command strip
-and status bar under it and an ERRORS / WARNINGS / NODES panel to its right;
-the results below, as PIPES, NODES, OUTLETS and REPORT tabs in sortable
-columns, with HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES.  Light blue and
-black.  Everything user-visible in capitals.  Monospace throughout.
+Joshua's layout and look (28 October 2026): a white, flat window - blue and
+black only as highlight colours, no bevels - with a toolbar (NEW OPEN SAVE,
+VALIDATE, CALCULATE, WRITE REPORT); NETWORK and PROJECT tabs; the editor with
+line numbers, syntax colours, the command strip and the status bar, and an
+ERRORS / WARNINGS / NODES panel to its right; below, VALIDATION, PIPES, NODES,
+OUTLETS and REPORT tabs in sortable columns, with HIDE NON-FLOWING PIPES and
+HIDE INACTIVE NODES.  Everything user-visible in capitals.
 
 ### Editor behaviour
 
 | feature | behaviour |
 |---|---|
-| colouring | command words in blue, comments grey; a line with an error is red, its message in the status bar when the cursor is on it and in ERRORS |
-| command strip | every command in its four groups; a click starts a line with it |
-| status bar | the field template of the current command, current field highlighted |
-| proposals | after Enter, the likely next line is shown greyed: same command, names stepped (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts; typing anything else discards it.  Holding Enter repeats |
-| pick list | Ctrl+Space in a `USE` type, a fitting, `UNITS`, `METHOD` or `OPTION` opens the choices with descriptions; arrows and Enter insert |
-| ERRORS / WARNINGS / NODES | lines in error; the last solve's warnings (convergence, velocity, outlets short of their requirement); nodes undefined or unconnected.  A click goes to the line |
-| solve | F5 solves the buffer and fills the tables and REPORT; an error moves the cursor to its line |
-| results on the cursor | after a solve, the status bar shows the solved flow, velocity and end pressures for the element on the cursor's line |
-| tables | PIPES has 21 columns with a right-click chooser (NAME fixed; NAME to PF, PS and VEL on at first); a heading click sorts, a second reverses |
-| units | FILE > PROPERTIES - UNITS rewrites the `UNITS` lines as one undoable edit |
-| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`).  `.phc` only; anything else is refused with the reason |
+| network only | the editor holds the network; title, project details, units, method and options are set in the PROJECT tab and written at the head of the `.phc` |
+| VALIDATE then CALCULATE | CALCULATE is available only while the model is as it was when it last passed VALIDATE.  VALIDATE lists what is wrong, why, and where, marks each fault in the editor, and a click goes to it |
+| syntax colours, line numbers | per field: command, name, reference, number, keyword, comment; a gutter of line numbers |
+| command strip | the network commands in their three groups; a click starts a line |
+| status bar | the field template of the current command, current field highlighted; the line's results after a calculation |
+| proposals | after Enter, the likely next line is shown greyed; Enter or Tab accepts |
+| pick list | Ctrl+Space in a `USE` type or a fitting |
+| ERRORS / WARNINGS / NODES | live; a click goes to the line or the PROJECT tab field |
+| tables | PIPES has 21 columns with a right-click chooser; a heading click sorts, a second reverses |
+| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT.  `.phc` only |
 | undo | Ctrl+Z / Ctrl+Y, Tk TextUndo |
 
 ### Tests
 
 - `tools/test_editor.pl`, headless: line statuses and the three lists,
-  proposals, pick lists, the status bar, colouring, results on the cursor,
-  the three tables and sorting, units, files.
-- `tools/test_editor_window.pl`, under Xvfb: layout, colours, command strip,
-  lists, proposals and undo, pick list, solve, sorting, the column chooser,
-  the HIDE boxes, the units dialog, files.
+  proposals, pick lists, the status bar, syntax colouring, results on the
+  cursor, the tables and sorting, the document (settings apart from the
+  network), VALIDATE's what, why and where, files.
+- `tools/test_editor_window.pl`, under Xvfb: layout and look, open, live
+  checks, command strip, proposals and undo, pick list, VALIDATE before
+  CALCULATE, the tables (a real heading click included), the PROJECT tab,
+  files.
 
 ### Windows
 
@@ -305,7 +308,8 @@ DLL.  AutoCAD first, possibly Revit later.
   point (README, "Fixed flows")
 - [x] PR 3 - `Editor.pm` and `phcp_editor.pl` (light blue and black, by Joshua's choice)
 - [x] PR 3 - spreadsheet removed, build script and licence updated
-- [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, units dialog, all capitals
+- [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
+- [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
 - [ ] PR 3 - Windows build run by Joshua
 - [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
 - [ ] PR 5 - `phcp.exe --json`, documented and tested
