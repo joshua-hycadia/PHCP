@@ -362,8 +362,10 @@ sub elem_hf {
     # rounding step off -- 34.0 mm where the correct duty gives 33.5.  EPANET
     # validation could not catch it, because EPANET has no concept of sizing a
     # plate; only the direct comparison against the C++ engine did.
-    if ($k eq 'FIXED_DROP' || $k eq 'ORIFICE_REQUIRED') {
-        # Contributes to the loop sum but not to the denominator.
+    if ($k eq 'FIXED_DROP' || $k eq 'ORIFICE_REQUIRED' || $k eq 'RATIO') {
+        # Contributes to the loop sum but not to the denominator.  A pressure
+        # ratio valve's drop is set from its inlet pressure by the outer loop
+        # (ratio_valves), and held fixed while the loops balance.
         return ($sg * $e->{dp}, 0);
     }
     if ($k eq 'ORIFICE') {
@@ -835,6 +837,54 @@ sub pump_status {
     return 1;
 }
 
+#------------------------------------------------------------------------------
+# ratio_valves -- set each pressure ratio valve's drop from its inlet pressure.
+#
+# A pressure ratio valve holds its outlet at its inlet pressure divided by its
+# ratio: a 3:1 valve with 1500 kPa upstream gives 500 kPa downstream, so it
+# drops 1500 x (1 - 1/3) = 1000 kPa.  The drop depends on a PRESSURE, which the
+# loop balance does not know until it has converged, so it is set here from
+# the converged inlet pressure and the network solved again, until the drops
+# stop changing.  (The valve holds the ratio to +/- 5 % of the inlet pressure
+# in the manufacturer's data; the nominal ratio is used.)
+#
+# Returns true if any drop moved by more than the loop tolerance.
+#------------------------------------------------------------------------------
+sub ratio_valves {
+    my $net = shift;
+    my $tol = $net->{opts}{tol_loop} // 0.01;
+    my $changed = 0;
+    for my $e (grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my $n   = $net->{nodes}[ $e->{n1} ];
+        my $pin = $n->{h} - $GAMMA_W * $n->{z};
+        my $dp  = $pin > 0 ? $pin * (1 - 1 / $e->{ratio}) : 0;
+        if (abs($dp - $e->{dp}) > $tol) {
+            $e->{dp} = $dp;
+            $changed = 1;
+        }
+        $e->{pin} = $pin;
+    }
+    return $changed;
+}
+
+# ratio_warnings -- what a solve must say about its pressure ratio valves.
+sub ratio_warnings {
+    my ($net, $settled) = @_;
+    my @w;
+    for my $e (grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        push @w, "pressure ratio valve $e->{id}: flow runs backwards through it, which a ratio "
+               . 'valve does not pass - the model needs another route for that water'
+            if $e->{q} < -$Q_TINY;
+        push @w, sprintf('pressure ratio valve %s: inlet pressure %.1f kPa is below its minimum '
+                       . 'inlet pressure of %.1f kPa; it will not hold its ratio', $e->{id},
+                         $e->{pin} // 0, $e->{mininlet})
+            if defined $e->{mininlet} && ($e->{pin} // 0) < $e->{mininlet};
+    }
+    push @w, 'the pressure ratio valve drops had not settled when the solve stopped; '
+           . 'the results must be checked' unless $settled;
+    return @w;
+}
+
 sub solve_model {
     my $net = shift;
     build_tree($net);
@@ -844,20 +894,25 @@ sub solve_model {
         maxiter  => $net->{opts}{maxiter},
         tol_flow => $net->{opts}{tol_flow},
         tol_loop => $net->{opts}{tol_loop});
-    # Outer loop: size orifice plates and settle pump check valves, re-solving
-    # after either changes anything.  Both are discrete decisions taken on a
-    # converged answer, so they cannot live inside the Hardy Cross iteration.
-    # Bounded: each settles in a pass or two, and an unbounded loop would hang
-    # on a duty that cannot be met.
-    for (1 .. 25) {
+    # Outer loop: size orifice plates, settle pump check valves and set
+    # pressure ratio valve drops, re-solving after any of them changes
+    # anything.  Each is decided on a converged answer, so none can live
+    # inside the Hardy Cross iteration.  Bounded: plates and pumps settle in a
+    # pass or two and ratio valves in a few; an unbounded loop would hang on a
+    # duty that cannot be met.
+    my $settled = 0;
+    for (1 .. 60) {
         my $sized  = size_orifices($net);
         my $pumped = pump_status($net);
-        last unless $sized || $pumped;
+        my $ratio  = ratio_valves($net);
+        unless ($sized || $pumped || $ratio) { $settled = 1; last }
         $ok = solve_network($net,
             maxiter  => $net->{opts}{maxiter},
             tol_flow => $net->{opts}{tol_flow},
             tol_loop => $net->{opts}{tol_loop});
     }
+    push @{ $net->{warnings} }, ratio_warnings($net, $settled)
+        if grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     return $ok;
 }
 

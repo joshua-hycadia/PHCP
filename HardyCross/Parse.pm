@@ -563,6 +563,18 @@ sub parse_row {
                 bore => (kv($tk, 'BORE') // 0) * $net->{f_dia},
                 pipedia => $pd, cd => $cd, q => 0, in_tree => 0,
             };
+        } elsif ($ty eq 'PRA') {
+            # A pressure ratio valve: outlet pressure = inlet / RATIO.  Its
+            # drop is set from the solved inlet pressure by the solver's outer
+            # loop (HardyCross::ratio_valves); it starts at zero.
+            my $r = kv($tk, 'RATIO') // 0;
+            HardyCross::fail("PRA %s needs RATIO= more than 1", $tk->[0]) if $r <= 1;
+            my $mi = kv($tk, 'MININLET');
+            push @{ $net->{elems} }, {
+                id => $tk->[0], kind => 'RATIO', n1 => $n1, n2 => $n2,
+                ratio => $r, dp => 0, q => 0, in_tree => 0,
+                (defined $mi ? (mininlet => $mi * $net->{f_pres}) : ()),
+            };
         } elsif ($ty eq 'BFP') {
             push @{ $net->{elems} }, {
                 id => $tk->[0], kind => 'BFP', n1 => $n1, n2 => $n2,

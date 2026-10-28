@@ -499,7 +499,7 @@ sub write_report {
             $out .= thin();
             my %nm = (PIPE => 'PIPE', PUMP => 'PUMP', SUPPLY_STATIC => 'SUPPLY',
                       SUPPLY_CURVE => 'SUPPLY', FIXED_DROP => 'PRV', ORIFICE => 'ORIFICE',
-                      ORIFICE_REQUIRED => 'ORIF_P', BFP => 'BFP');
+                      ORIFICE_REQUIRED => 'ORIF_P', BFP => 'BFP', RATIO => 'PRA');
             my $p;              # running pressure, carried forward by hand
             my $worst = 0;
             my $k = 0;
@@ -599,7 +599,7 @@ sub write_report {
     }
 
     #---------------------------------------------- 8. supplies and devices
-    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP)/ }
+    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP|RATIO)/ }
               @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     if (@sup) {
         $out .= title('10. SUPPLIES, PUMPS AND PRESSURE DEVICES');
@@ -608,13 +608,17 @@ sub write_report {
         $out .= thin();
         my %nm = (SUPPLY_STATIC => 'STATIC', SUPPLY_CURVE => 'CURVE', PUMP => 'PUMP',
                   FIXED_DROP => 'PRV', ORIFICE => 'ORIFICE', ORIFICE_REQUIRED => 'ORIFICE_P',
-                  BFP => 'BFP');
+                  BFP => 'BFP', RATIO => 'PRA');
         for my $e (@sup) {
             my ($hf) = $e->{closed} ? (0) : HardyCross::elem_hf($e, $e->{q}, $o);
             my $note = $e->{closed} ? 'CHECK VALVE CLOSED - would run backwards'
                      : $e->{kind} eq 'ORIFICE' && $e->{bore}
                         ? sprintf('bore %.2f mm in %.2f mm pipe, beta %.3f',
                                   $e->{bore}, $e->{pipedia}, $e->{bore} / $e->{pipedia})
+                     : $e->{kind} eq 'RATIO'
+                        # Outlet = inlet / ratio, so the reader can check it.
+                        ? sprintf('ratio %g:1, inlet %.1f, outlet %.1f', $e->{ratio},
+                                  ($e->{pin} // 0) / $up, (($e->{pin} // 0) - $e->{dp}) / $up)
                      : '';
             $out .= sprintf " %-12s %-11s %-8s %-8s %11.*f %11.*f   %s\n",
                 $e->{id}, $nm{ $e->{kind} } // $e->{kind},
