@@ -297,7 +297,7 @@ named, and no person is named.
 | `HardyCross/Phc.pm` | `translate` returns rows; `read_string` hands each to the network builder directly - no `.hcx` text in between |
 | `HardyCross/Parse.pm` | the block-text reader removed; `parse_row` is the network builder |
 | `HardyCross/Demand.pm`, `HardyCross/Report.pm` | the demand point and the PRA top-of-band solve re-read the `.phc` text (engine files: approved) |
-| `tools/baseline/*.hcx` | replaced by `*.expected`: each example's solved flows and pressures, frozen from the `.hcx` solve before it was removed |
+| `tools/baseline/*.hcx` | replaced by `*.expected`: each example's solved flows and pressures, frozen from the `.hcx` solve before it was removed (example 04: pipe and node names only) |
 | `tools/stress_invariance.pl` | builds its random networks as `.phc` |
 | `OPTION PROFILE`, `epanet_adapter.pl`, `crosscheck.py` | removed: they served a comparison against another program, and the C++ engine, neither in this repository |
 | every file | no person named; decisions carry their date |
