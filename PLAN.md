@@ -338,3 +338,4 @@ named, and no person is named.
 - [ ] PR 5 - AutoCAD SOLVE command run inside AutoCAD
 - [x] v1.0 - `.hcx` removed throughout, no other program or person named
 - [x] v1.0 - program icon: on the editor window, and in both `.exe` files
+- [x] Report: a supply graph for each supply when there are several, then all combined - flows added at equal pressure, the combined duty at one common pressure; example 09, three pumps in parallel (engine files Report, PDF, Demand: no solved number changes)
