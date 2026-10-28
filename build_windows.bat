@@ -97,7 +97,7 @@ if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
+    call pp --gui -I . %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
     if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.

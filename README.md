@@ -21,6 +21,7 @@ perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
+perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
@@ -364,6 +365,7 @@ there and selects it.
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
+| QUICK TOOLS tab | velocity, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
@@ -428,6 +430,36 @@ go, what the sheet shows - with no Tk in it; `tools/test_graph.pl` checks
 the curves against figures worked by a formula written out in the test,
 every refusal, the file, and the sheet's PDF (where the plot, curves, points
 and duties are drawn).
+
+## Quick tools
+
+The editor's QUICK TOOLS tab holds four small calculators, each answering
+as it is typed.  Like the GRAPH tab they are independent of the model.  Flow
+in L/min, pressure in kPa, length in m, bore and roughness in mm.
+
+| calculator | give | get |
+|---|---|---|
+| VELOCITY | a pipe type and size (or BORE and a bore in mm), and a flow | the bore, the area, the velocity, and whether it is above the PROJECT tab's velocity limit |
+| K-FACTOR | any two of K, Q and P; K per root kPa or per root bar | the third, from Q = K x sqrt(P), and K in both units |
+| K-FACTOR CONVERTER | a K in US units (gpm per root psi), or metric per root bar or per root kPa | the K in all three.  K5.6 (US) is K80.7 metric - the K80 it is sold as |
+| PRESSURE LOSS | a pipe type and size, a flow, and optionally a length (blank: 1 m), C and roughness | the friction loss by Hazen-Williams and by Darcy-Weisbach side by side, per metre and over the length; the velocity, Reynolds number, regime and friction factor |
+
+The numbers are a calculation's own.  The bore is the pipe and fitting
+database's for the type and size; the C factor defaults to the type's, and the
+roughness to 0.045 mm, the program's default (the database holds no
+roughness).  Both losses are the solver's own routine applied to one pipe,
+with the program's default options - the Hazen-Williams constant 6.05e7 and
+exponents 1.85 and 4.87; water at 20 C - so a pipe here loses exactly what
+the same pipe loses in a model.  The K converter uses the exact US gallon
+(3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5) = 14.4163 x K(US).
+
+A problem is named under its calculator and the field at fault is outlined
+red.  `HardyCross/Tools.pm` does the work, with no Tk in it;
+`tools/test_tools.pl` checks every answer against a formula written out in
+the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
+Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
+laminar, and the solver's blend of the two between Re 2000 and 4000) - for
+every pipe type and size in the database.
 
 ## The report: cover sheet
 
@@ -744,7 +776,8 @@ others on the page, and the report says which check to make.
 | report hand-checks, 8 models | 419 / 419 |
 | PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 130 / 130 |
+| text editor window, under Xvfb | 142 / 142 |
+| quick tools | 39 / 39 |
 | water supply graph | 43 / 43 |
 | database editing and location | 37 / 37 |
 | invariance stress | 9 584 / 9 584 |
