@@ -839,7 +839,12 @@ sub device_row {
         return ('DEVICES', join(' ', $id, $s, $x, 'ORIFICE_D',
                                 'BORE=' . fmt(size_mm($a->{pos}[1], $units->{SIZE})), @where, @cd), $n);
     }
-    $at->($n, 'PRA, THE PRESSURE RATIO VALVE, IS NOT YET AVAILABLE IN THE SOLVER') if $k eq 'PRA';
+    if ($k eq 'PRA') {
+        # Outlet pressure = inlet / ratio; the solver sets the drop from the
+        # solved inlet pressure.
+        return ('DEVICES', join(' ', $id, $s, $x, 'PRA', 'RATIO=' . fmt(ratio_value($a->{pos}[1])),
+                                (@{ $a->{opt} } ? "MININLET=$a->{opt}[0]" : ())), $n);
+    }
     die "device_row: no translation for $k\n";    # a programming error
 }
 

@@ -168,6 +168,7 @@ my @CASES = (
     [ 'PRV P2 0 50',                        [2, 3] ],
     [ 'OPP P2 20',                          [2] ],
     [ 'OFD P2 60',                          [2] ],
+    [ 'PRA P2 3:1 300',                     [3] ],
 );
 for my $case (@CASES) {
     my ($line, $nums) = @$case;
@@ -203,7 +204,6 @@ refused('fittings on a USE BORE pipe', $BASE . 'PIPE P9 B C 3 50 2E', $L, qr/FIT
 refused('extra fields', $BASE . 'NODE D 2.5 9', $L, qr/UNEXPECTED FIELD/);
 refused('a negative length', $BASE . 'PIPE P9 B C -3 50', $L, qr/CANNOT BE NEGATIVE/);
 refused('a single BFP pair must be at flow 0', $BASE . 'BFP P2 100 10', $L, qr/FIXED LOSS: ITS FLOW MUST BE 0/);
-refused('PRA waits for the solver', $BASE . 'PRA P2 3:1', $L, qr/NOT YET AVAILABLE/);
 refused('a PRA ratio must reduce', $BASE . 'PRA P2 1:2', $L, qr/MUST BE MORE THAN 1/);
 
 print "   settings and names given twice name both lines\n";
@@ -331,6 +331,27 @@ print "5. COPIES, CHANGES AND DEVICES\n";
     }
     my ($d) = read_phc("${m}BP P1 300 2000 250\n");
     is('a solve runs through a pipe with a pump in it', $d && HardyCross::solve_model($d));
+
+    # The pressure ratio valve, as the manufacturer's worked example: a tank
+    # 153 m up gives about 1500 kPa at a 3:1 valve, and 500 kPa after it.
+    my $t = join "\n", 'WATER TANK 153 0', 'NODE A 0', 'NODE B 0', 'USE S40 120',
+        'PIPE P1 TANK A 200000 100', 'PIPE P2 A B 1000 100', 'FIXEDFLOW F B 100', '';
+    my ($r, $re) = read_phc($t . "PRA P2 3:1 300\n");
+    is('PRA P2 3:1 reads: a RATIO element in pipe P2', $r && { elems_by_id($r) }->{'P2.PRA'}{kind} eq 'RATIO', $re);
+    my $ok = HardyCross::solve_model($r);
+    my ($q, $p) = results($r);
+    is(sprintf('   outlet = inlet / 3: %.1f kPa in, %.1f kPa out', $p->{A}, $p->{'P2~'}),
+       $ok && abs($p->{'P2~'} - $p->{A} / 3) < 0.05 && abs($p->{A} - 1499) < 2);
+    my $rep = HardyCross::Report::write_report($r, $ok, 't.phc');
+    is('   the report shows the ratio, inlet and outlet, and no warning',
+       $rep =~ /P2\.PRA\s+PRA\s+A\s+P2~.*ratio 3:1, inlet 1499\.\d, outlet 499\.\d/ && $rep =~ /No warnings\./);
+    my ($lo) = read_phc($t . "PRA P2 3:1 2000\n");
+    my $rl = HardyCross::Report::write_report($lo, HardyCross::solve_model($lo), 't.phc');
+    is('   an inlet below the stated minimum is a warning', $rl =~ /below its minimum\s+inlet pressure/);
+    my ($two) = read_phc($t . "PRA P2 2:1\n");
+    HardyCross::solve_model($two);
+    my (undef, $p2) = results($two);
+    is('   a 2:1 valve halves it', abs($p2->{'P2~'} - $p2->{A} / 2) < 0.05);
 }
 
 #==============================================================================

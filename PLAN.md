@@ -121,8 +121,7 @@ BFP       <PIPE> <FLOW> <LOSS> [<FLOW> <LOSS> ...]      // backflow preventer; a
 PRV       <PIPE> <FLOW> <LOSS> [<FLOW> <LOSS> ...]      // pressure reducing valve, as BFP
 OPP       <PIPE> <DROP> [<CD>]                          // orifice plate: drop given, plate sized
 OFD       <PIPE> <BORE> [<CD>]                          // orifice plate: bore given, drop found
-PRA       <PIPE> ...                                    // pressure ratio valve: awaiting the
-                                                       // technical data; a new solver element
+PRA       <PIPE> <RATIO> [<MININLET>]                   // pressure ratio valve: outlet = inlet / ratio
 ```
 
 A device in a pipe sits at the pipe's start: the pipe is split at a node named
@@ -244,7 +243,8 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 - [x] PR 2 - `.phc` reader, examples, `test_phc.pl` (first version, `KEY=value` syntax)
 - [x] PR 2 - reworked to the positional layout: SPRINKLER HYDRANT HREEL FIXEDFLOW WATER,
   PC NC CHANGEPIPE EQV, BP BFP PRV OPP OFD in pipes, UNITS per quantity; converter dropped
-- [ ] PR 2 - PRA pressure ratio valve in the solver (engine change, data from Joshua)
+- [x] PR 2 - PRA pressure ratio valve in the solver: outlet = inlet / ratio, set in the
+  outer loop; warnings for low inlet, reverse flow, unsettled drops
 - [x] PR 2 - supply, pump and loss curves interpolated on Q^1.85 through every point
   (engine change, approved by Joshua 28 October 2026; `tools/test_curves.pl`)
 - [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
