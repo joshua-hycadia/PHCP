@@ -1,0 +1,53 @@
+PROJECT
+  TITLE              Level 2 sprinkler range - demonstration
+  PROJECT            Hycadia report demonstration
+  JOB                HYC-DEMO-017
+  COMPANY            Hycadia Pty Ltd
+  ADDRESS            Level 1, 166 Epping Road, Lane Cove West NSW 2066
+  LICENCE            NSW DBP DEP0000871, FPAS F046963D
+  DESIGNER           J Von Bischoffshausen
+  CHECKER            T Sewell
+  REVISION           A
+  DATE               2026-09-21
+  LOCATION           12 Example Street, Sydney NSW 2000
+  STANDARD           AS 2118.1:2017
+  HAZARD             Ordinary Hazard 1
+  DENSITY            5.0
+  AREA_PER_SPRINKLER 12.0
+  BASE_OF_RISER      R1
+  AUTHORITY          Fire and Rescue NSW
+  AUTHORITY_PHONE    02 9265 2999
+END
+UNITS
+  FLOW LPM
+  PRESSURE KPA
+  LENGTH M
+  DIAMETER MM
+END
+OPTIONS
+  METHOD HW
+END
+NODES
+  SUP 0
+  R1  4.5
+  R2  4.5
+  H1  4.5
+  H2  4.5
+  H3  4.5
+END
+PIPES
+  M1  SUP R1 12.0 100 TYPE=ASAM FIT=1T,2E,1GV,1CV
+  M2  R1  R2  6.0 80  TYPE=ASAM FIT=1E
+  B1  R2  H1  3.2 50  TYPE=ASAM FIT=1T
+  B2  H1  H2  3.2 40  TYPE=ASAM
+  B3  H2  H3  3.2 32  TYPE=ASAM
+  X1  R1  H3  9.0 65  TYPE=S40  FIT=2E
+END
+SUPPLIES
+  TOWN SUP STATIC 650
+END
+DISCHARGES
+  S1 H1 SPRINKLER K=80 P=50
+  S2 H2 SPRINKLER K=80 P=50
+  S3 H3 SPRINKLER K=80 P=50
+END
