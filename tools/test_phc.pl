@@ -9,7 +9,8 @@
 #
 #   perl tools/test_phc.pl          every check; example 04 compared as parsed
 #                                   networks, not solved (it takes minutes)
-#   perl tools/test_phc.pl --full   also solve example 04 both ways
+#   perl tools/test_phc.pl --full   also solve example 04 both ways and compare
+#                                   its flows and pressures (several minutes)
 #
 # What it proves, in order:
 #
@@ -25,8 +26,10 @@
 #      ways of writing fittings mean the same thing; Units can go anywhere.
 #   5. THE LINE CHECKER.  check_line's status, template, pick lists and
 #      proposal for each command, headless.
-#   6. TRAPS CLOSED.  A node with no Node line, MINP= on a Flow, '#' in a line,
-#      END as an id, and a parser error reported on the .phc line it came from.
+#   6. TRAPS CLOSED.  A node with no Node line, '#' in a line, END as an id,
+#      and a parser error reported on the .phc line it came from.
+#   7. FIXED-FLOW MINIMUM PRESSURE.  Flow MINP= is read, passed or failed in
+#      the report, and governs the demand point when its margin is the least.
 #==============================================================================
 use strict;
 use warnings;
@@ -39,6 +42,7 @@ use HardyCross::Parse;
 use HardyCross::Phc;
 use HardyCross::Convert;
 use HardyCross::Report;
+use HardyCross::Demand;
 
 my $FULL = grep { $_ eq '--full' } @ARGV;
 my $EX   = "$FindBin::Bin/../examples";
@@ -140,6 +144,17 @@ for my $hcx (sort glob("$EX/*.hcx")) {
     my $okb = HardyCross::solve_model($b);
     is("   same iterations ($a->{iters})", $a->{iters} == $b->{iters},
        "$a->{iters} against $b->{iters}");
+    if ($base =~ /grid1000/) {
+        # Its report is not written: the demand point re-solves the whole
+        # network dozens of times, hours at 1000 nodes.  The solved flows and
+        # pressures, which everything in the report is computed from, are
+        # compared instead -- exactly, since the networks are identical.
+        my ($qa, $pa) = results($a);
+        my ($qb, $pb) = results($b);
+        is('   identical solved flows and pressures (report not written: hours)',
+           worst($qa, $qb) == 0 && worst($pa, $pb) == 0);
+        next;
+    }
     is("   report identical apart from the model file name",
        report_body($a, $oka, $hcx) eq report_body($b, $okb, $phcpath));
 }
@@ -169,7 +184,7 @@ my @CASES = (
     [ 'Head H2 C K=80 P=50 Z=1',                  [],           [] ],
     [ 'Hydrant HY C Q=600 P=200',                 [],           [] ],
     [ 'HoseReel HR C K=7.5 P=220',                [],           [] ],
-    [ 'Flow F1 C Q=100',                          [],           ['Q'] ],
+    [ 'Flow F1 C Q=100 MINP=150 Z=1',             [],           ['Q'] ],
     [ 'BFP BF A C 0 0 1000 20',                   [4, 5, 6, 7], [] ],
     [ 'PRV PR A C DP=50',                         [],           ['DP'] ],
     [ 'Orifice OR A C DP=20 DN=50 CD=0.6',        [],           ['DP', 'DN'] ],
@@ -412,8 +427,6 @@ refused('a node with no Node line: named, at the first line using it',
 refused('several undefined nodes: all named',
         "Node A 0\nPipe P1 A B 10 100\nPipe P2 B C 10 100\n", 2,
         qr/node B has no Node line \(also C on line 3\)/);
-refused('Flow MINP=: refused, not silently ignored', $BASE . 'Flow F1 C Q=100 MINP=200', $L,
-        qr/MINP= is not supported/);
 refused("'#' in a line is refused, not taken as a comment", $BASE . 'Title JOB #12', $L,
         qr/'#' cannot be used/);
 refused("'!' likewise", $BASE . 'Pipe P2 B C 5 ! 50', $L, qr/'!' cannot be used/);
@@ -441,8 +454,12 @@ refused('an unpaired curve value, on its own line after blank and comment lines'
     is('converter lists what it drops (TRACE FULL in example 01)',
        $ex01 =~ m{^//\s+line 15: OPTIONS TRACE FULL - not an option}m);
     my $ex02 = HardyCross::Convert::hcx_to_phc(slurp("$EX/02_full_network.hcx"), '02.hcx');
-    is('converter drops MINP= from a fixed flow and says so',
-       $ex02 =~ m{^Flow\s+FF1 B Q=300$}m && $ex02 =~ m{not used for a fixed flow: MINP=200}m);
+    is('converter keeps MINP= on a fixed flow',
+       $ex02 =~ m{^Flow\s+FF1 B Q=300 MINP=200$}m);
+    (my $p = slurp("$EX/02_full_network.hcx")) =~ s/Q=300  MINP=200/Q=300 P=210 MINP=200 K=3/;
+    my $c = HardyCross::Convert::hcx_to_phc($p, 'p.hcx');
+    is('   P= on a fixed flow is its minimum (the parser reads P first); MINP=, K= dropped',
+       $c =~ m{^Flow\s+FF1 B Q=300 MINP=210$}m && $c =~ m{not used for a fixed flow: MINP=200 K=3}m);
 }
 {
     my ($net) = read_phc("Node A 0 // the supply node\nNode B 0\nSupply S A STATIC 500 // tank\n"
@@ -451,6 +468,48 @@ refused('an unpaired curve value, on its own line after blank and comment lines'
     my $p = "$FindBin::Bin/../examples/01_single_branch.phc";
     my $m = eval { HardyCross::Parse::read_model($p) };
     is('read_model dispatches .phc to the .phc reader', $m && $m->{phc_text});
+}
+
+#==============================================================================
+print "7. FIXED-FLOW MINIMUM PRESSURE - read, checked, and able to govern\n";
+#==============================================================================
+{
+    # C is 20 m above the supply, so the fixed flow there has far less
+    # pressure to spare than the head at B, and governs.
+    my $m = join "\n", 'Node A 0', 'Node B 0', 'Node C 20', 'Supply S A STATIC 600',
+        'Pipe P1 A B 50 100', 'Pipe P2 B C 30 50', 'Head H B K=80 P=50', '';
+    my ($net, $err) = read_phc($m . "Flow F C Q=100 MINP=250\n");
+    is('Flow MINP= reads', $net, $err);
+    my $ok = HardyCross::solve_model($net);
+    my $f = $net->{fixed}[0];
+    is('   the fixed flow is kept by id with its minimum (250 kPa)',
+       $f && $f->{id} eq 'F' && $f->{preq} == 250 && $f->{qreq} == 100);
+    is('   the flow is still exactly the fixed 100 L/min (the solve is unchanged)',
+       abs(HardyCross::continuity_error($net)) < 1e-6 && $net->{nodes}[ $f->{n1} ]{demand} == 100);
+    my ($gov, $gm) = HardyCross::Demand::governing_outlet($net);
+    is('   the fixed flow governs (least margin)', $gov && $gov->{id} eq 'F', $gov && $gov->{id});
+    my $dm = HardyCross::Demand::demand_point($net);
+    my ($df) = @{ $dm->{net}{fixed} || [] };
+    my $pf = $df ? HardyCross::Demand::gauge($dm->{net}, $df->{n1}) : -1;
+    is(sprintf('   at the demand point it has exactly its minimum (%.2f kPa)', $pf),
+       abs($pf - 250) < 0.05);
+    my $rep = HardyCross::Report::write_report($net, $ok, 'm.phc');
+    is('   report section 7 lists it, K fixed, PASS',
+       $rep =~ /^ F\s+C\s+fixed\s+100\.0\s+100\.0\s+250\.0\s+[\d.]+\s+PASS$/m);
+    is('   report section 8 names it as the governing fixed flow',
+       $rep =~ /^ Fixed flow F: pressure [\d.]+ kPa, required 250\.0/m);
+
+    my ($bad) = read_phc($m . "Flow F C Q=100 MINP=900\n");
+    my $okb = HardyCross::solve_model($bad);
+    my $rb = HardyCross::Report::write_report($bad, $okb, 'm.phc');
+    is('a minimum above the pressure available FAILS in the report',
+       $rb =~ /^ F\s+C\s+fixed.*\*\*\* FAIL$/m && $rb =~ /1 OUTLET\(S\) BELOW REQUIREMENT/);
+    my ($none) = read_phc($m . "Flow F C Q=100\n");
+    HardyCross::solve_model($none);
+    my ($g2) = HardyCross::Demand::governing_outlet($none);
+    is('a fixed flow with no minimum cannot govern', $g2 && $g2->{id} eq 'H');
+    refused('a negative minimum is refused', $BASE . 'Flow F1 C Q=100 MINP=-5', $L,
+            qr/negative minimum pressure/);
 }
 
 print "\n$pass passed, $fail failed\n";

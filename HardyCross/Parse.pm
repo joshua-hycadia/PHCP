@@ -458,7 +458,9 @@ sub parse_row {
     # "id node TYPE [K=] [Q=] [P=]": an outlet -- sprinkler, hydrant, hose reel
     # -- as an edge from its node back to the reference node.  Any two of K,
     # Q and P fix the third through Q = K sqrt(P).  FIXEDFLOW is different: a
-    # set demand with no K, added to the node and never corrected.
+    # set demand with no K, added to the node and never corrected.  Its MINP=
+    # (or P=) is the pressure it needs at that flow: it does not change the
+    # solve, but it is checked -- see the fixed-flow note below.
     if ($section eq 'DISCHARGES') {
         my $n  = node_index($net, $tk->[1]);
         my $ty = uc $tk->[2];
@@ -473,9 +475,22 @@ sub parse_row {
 
         if ($ty eq 'FIXEDFLOW' || $ty eq 'FIXED') {
             HardyCross::fail("FIXEDFLOW needs Q=") unless defined $qq;
+            HardyCross::fail("FIXEDFLOW %s has a negative minimum pressure", $tk->[0])
+                if defined $pp && $pp < 0;
             # A fixed-flow outlet is a nodal demand: it sits outside every loop
             # and is never corrected, which is what "fixed" has to mean.
             $net->{nodes}[$n]{demand} += $qq;
+            # Kept as well, by id, so its minimum pressure can be CHECKED: the
+            # outlet compliance table passes or fails it, and the governing
+            # outlet and demand point count it like any other outlet.  The
+            # minimum used to be read and then thrown away, so a fixed flow at
+            # a node far below its required pressure was reported as if all
+            # were well.  The flow itself stays fixed whatever the pressure --
+            # that is what the designer asked for -- so the solve is unchanged.
+            push @{ $net->{fixed} }, {
+                id => $tk->[0], kind => 'FIXEDFLOW', n1 => $n,
+                qreq => $qq, q => $qq, preq => $pp, z => $z,
+            };
             return;
         }
         my $given = grep { defined } ($kk, $qq, $pp);

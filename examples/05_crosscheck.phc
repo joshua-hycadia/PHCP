@@ -2,7 +2,6 @@
 // Comments in the .hcx file are not carried over.
 // Dropped from the .hcx because they had no effect on the result:
 //   line 15: OPTIONS TRACE NONE - not an option the .hcx reader acts on
-//   line 45: DISCHARGES F1 B FIXEDFLOW Q=400 MINP=200 - not used for a fixed flow: MINP=200
 
 Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
 Method   HW
@@ -32,4 +31,4 @@ Supply   SUP2 D CURVE 0 900 2000 780 5000 400
 Head     S1 C K=80 P=50
 Head     S2 E K=115 P=50
 Head     S3 F K=80 P=50
-Flow     F1 B Q=400
+Flow     F1 B Q=400 MINP=200

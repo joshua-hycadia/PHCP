@@ -121,7 +121,7 @@ my %CMD = (
     FLOW     => { name => 'Flow', kind => 'element', block => 'DISCHARGES',
                   otype => 'FIXEDFLOW',
                   fixed => [ [ 'id', 'id' ], [ 'node', 'node' ] ],
-                  keys => ['Q'], need => ['Q'] },
+                  keys => [qw(Q MINP Z)], need => ['Q'] },
     BFP      => { name => 'BFP', kind => 'element', block => 'DEVICES',
                   fixed => [ [ 'id', 'id' ], [ 'n1', 'node' ], [ 'n2', 'node' ] ],
                   rest => 'curve' },
@@ -260,13 +260,6 @@ sub analyse {
         if ($t =~ /=/) {
             my ($k, $v) = split /=/, $t, 2;
             $k = uc $k;
-            # A fixed-flow outlet's MINP= is accepted by the .hcx reader but
-            # never used: the solver applies the flow and checks no pressure.
-            # Accepting it here would let a designer believe a minimum
-            # pressure was being enforced.  See README, "Fixed flows".
-            return $bad->('MINP= is not supported on a Flow: PHCP applies the flow only '
-                        . 'and does not check a minimum pressure')
-                if $word eq 'FLOW' && $k eq 'MINP';
             return $bad->("%s= is not an option of %s%s", $k, $c->{name},
                           %allowed ? ' (it takes ' . join(' ', map { "$_=" } @{ $c->{keys} }) . ')'
                                    : ' (it takes no KEY= options)')
@@ -443,7 +436,9 @@ sub hcx_row {
         return ('PUMPS', join ' ', @p, @{ $a->{rest} });
     }
     if ($c->{otype}) {
-        return ('DISCHARGES', join ' ', @p, $c->{otype}, $opts->(qw(K Q P Z)));
+        # A Flow's MINP= is the pressure it needs at its fixed flow: checked,
+        # not used to change the flow (see README, "Fixed flows").
+        return ('DISCHARGES', join ' ', @p, $c->{otype}, $opts->(qw(K Q P MINP Z)));
     }
     if ($key eq 'BFP') {
         return ('DEVICES', join ' ', @p, 'BFP', @{ $a->{rest} });

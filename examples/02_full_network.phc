@@ -2,7 +2,6 @@
 // Comments in the .hcx file are not carried over.
 // Dropped from the .hcx because they had no effect on the result:
 //   line 29: OPTIONS TRACE SUMMARY - not an option the .hcx reader acts on
-//   line 91: DISCHARGES FF1 B FIXEDFLOW Q=300 MINP=200 - not used for a fixed flow: MINP=200
 
 Title    Combined sprinkler and hydrant network - worked example
 Project  PROJECT Hardy Cross solver demonstration model
@@ -59,4 +58,4 @@ Head     S1 X2 K=80 P=50
 Head     S2 Y2 K=115 Q=225
 Hydrant  HYD1 HY Q=1200 P=250
 HoseReel HR1 A K=7.5 P=220
-Flow     FF1 B Q=300
+Flow     FF1 B Q=300 MINP=200

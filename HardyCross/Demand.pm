@@ -42,14 +42,21 @@ sub outlet_margin {
 # "Most remote" in the hydraulic sense: the outlet with the LEAST pressure to
 # spare over its requirement, which is the one that fails first as the supply
 # weakens.  It is not necessarily the one furthest away on the drawing -- a
-# near head on a small pipe, or a high one, can govern.  Fixed-flow demands are
-# excluded: their flow is set, so they have no pressure margin to govern with.
+# near head on a small pipe, or a high one, can govern.
+#
+# A fixed flow with a minimum pressure (FIXEDFLOW MINP=, .phc Flow MINP=) is a
+# candidate too: its flow is set, but it still needs that pressure to deliver
+# it, and it fails first if its margin is the least.  It is returned as the
+# fixed-flow record from the parser ($net->{fixed}), which carries the same
+# n1, preq and q fields as an outlet element, and kind FIXEDFLOW.  A fixed flow
+# with no minimum pressure has no margin and cannot govern.
 #------------------------------------------------------------------------------
 sub governing_outlet {
     my $net = shift;
     my ($best, $bm);
-    for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
-        next unless $e->{kind} eq 'DISCHARGE';
+    my @cand = ((grep { $_->{kind} eq 'DISCHARGE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]),
+                (grep { defined $_->{preq} } @{ $net->{fixed} || [] }));
+    for my $e (@cand) {
         my $m = outlet_margin($net, $e);
         ($best, $bm) = ($e, $m) if !defined $bm || $m < $bm;
     }
@@ -144,7 +151,7 @@ sub demand_point {
     my $text = $net->{source_text}
         or return { reason => 'the model text is not available to re-solve' };
     my ($go) = governing_outlet($net);
-    return { reason => 'the model has no pressure-dependent outlet' } unless $go;
+    return { reason => 'the model has no outlet with a required pressure' } unless $go;
 
     my $p_now = gauge($net, $s->{n2});
     my ($lo, $hi) = (0, $p_now > 1 ? $p_now : 100);

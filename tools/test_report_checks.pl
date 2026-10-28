@@ -125,6 +125,15 @@ for my $m (@models) {
                      $k * ulp($ap) / (2 * sqrt($ap)) + sqrt($ap) * ulp($k) / 2 + ulp($aq));
         }
 
+        # OUTLET COMPLIANCE, fixed flows:  ACT Q = REQ Q (the flow is set), and
+        # PASS exactly when ACT P >= REQ P.
+        if ($sec eq '7' && $l =~ /^ (\S+)\s+\S+\s+fixed\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+(PASS|\*\*\* FAIL)/) {
+            my ($id, $rq, $aq, $rp, $ap, $res) = ($1, $2, $3, $4, $5, $6);
+            close_to("$name fixed flow $id ACT Q = REQ Q", $aq, $rq, ulp($aq));
+            close_to("$name fixed flow $id result agrees with ACT P against REQ P",
+                     ($ap >= $rp) == ($res eq 'PASS') ? 0 : 1, 0, 0);
+        }
+
         # NODE SCHEDULE:  PRESSURE + ELEV HEAD = TOTAL HEAD
         if ($sec eq '5' && $l =~ /^ \S+\s+-?[\d.]+\s+-?[\d.]+\s+-?[\d.]+\s+-?[\d.]+\s+/) {
             my @f = split ' ', $l;
