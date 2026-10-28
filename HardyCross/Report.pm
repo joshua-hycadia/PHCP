@@ -896,10 +896,13 @@ sub cover_sheet {
 
 #------------------------------------------------------------------------------
 # The report as a PDF: the same text, paginated.  Made from the same call to
-# write_report, so the PDF and the text file cannot say different things.
+# write_report, so the PDF and the text file cannot say different things.  The
+# supply graph's numbers, worked out by that call, are passed on so the PDF can
+# draw the graph with lines where the text report draws it in characters.
 #------------------------------------------------------------------------------
 sub write_pdf_report {
     my ($net, $ok, $model_path, $pdf_path) = @_;
+    delete $net->{supply_graph};
     my $text = write_report($net, $ok, $model_path);
     my $pj = $net->{project} || {};
     (my $model = $model_path // '') =~ s{.*[/\\]}{};
@@ -910,7 +913,8 @@ sub write_pdf_report {
         date     => $pj->{DATE}     // '',
         designer => $pj->{DESIGNER} // '',
         model    => $model,
-        program  => "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program");
+        program  => "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program",
+        graph    => $net->{supply_graph});
 }
 
 #------------------------------------------------------------------------------
@@ -921,12 +925,34 @@ sub write_pdf_report {
 # -- which is what lets an engineer read margin off it by eye.  The system curve
 # is not sketched: each dot is a full solve of the network at a different supply
 # pressure.  The operating point is where it crosses the supply.
+#
+# The graph is worked out once, by supply_graph_data, and drawn twice from the
+# same numbers: in characters here for the text report (which is 7-bit ASCII),
+# and as lines and text by HardyCross::PDF for the PDF.  So the two cannot
+# disagree, and the ten extra solves run once.
 #------------------------------------------------------------------------------
-sub supply_graph {
+
+#------------------------------------------------------------------------------
+# supply_graph_data -- everything either drawing needs, in the network's
+# internal units (L/min, kPa); the display factors and unit names come with it.
+#
+#   qmax, pmax    the axes' extents: 0 .. qmax flow, 0 .. pmax pressure
+#   avail         a sub: the supply's pressure at a flow
+#   supply        [ [q, p] ... ] the supply curve sampled evenly in q^1.85,
+#                 fine enough to draw as a smooth line
+#   tests         [ [q, p] ... ] the points the supply curve was entered as
+#                 (none for a static supply)
+#   sys           [ [q, p] ... ] the system curve, each a full solve, by flow
+#   demand, oper  [ q, p ] the demand and operating points
+#   p_avail, margin   at the demand flow
+#   xticks, yticks    round values for the gridlines, in internal units
+#   uf, up, qu, pu    display factors and unit names
+#   kind, id, node    the supply
+#------------------------------------------------------------------------------
+sub supply_graph_data {
     my ($net, $dm) = @_;
     my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
     my $s = $dm->{supply};
-    my ($W, $H) = (64, 16);
     my $avail = sub {
         my $q = shift;
         return $s->{kind} eq 'SUPPLY_STATIC' ? $s->{pstat}
@@ -943,6 +969,7 @@ sub supply_graph {
         my ($x) = grep { ($_->{id} // '') eq $s->{id} } @{ $n->{elems} }[1 .. $#{ $n->{elems} }];
         push @sys, [ abs $x->{q}, $p ] if $x;
     }
+    @sys = sort { $a->[0] <=> $b->[0] } @sys;
 
     my $qmax = $dm->{q_oper} > $dm->{q_demand} ? $dm->{q_oper} : $dm->{q_demand};
     $qmax = $_->[0] for grep { $_->[0] > $qmax } @sys;
@@ -952,7 +979,68 @@ sub supply_graph {
         $pmax = $v if $v > $pmax;
     }
     $pmax *= 1.1;
-    return '' unless $qmax > 0 && $pmax > 0;
+    return undef unless $qmax > 0 && $pmax > 0;
+
+    # The supply, sampled evenly along the q^1.85 axis: within the entered
+    # points it is straight on this paper; beyond them the curve continues
+    # linearly in q, which on this paper bends, so it is sampled throughout.
+    my @supply;
+    for my $k (0 .. 200) {
+        my $q = $qmax * ($k / 200) ** (1 / 1.85);
+        push @supply, [ $q, $avail->($q) ];
+    }
+    my @tests = $s->{kind} eq 'SUPPLY_STATIC' ? ()
+              : map { [ $s->{curve}{q}[$_], $s->{curve}{p}[$_] ] } 0 .. $#{ $s->{curve}{q} };
+
+    return {
+        qmax => $qmax, pmax => $pmax, avail => $avail, supply => \@supply,
+        tests => [ grep { $_->[0] <= $qmax } @tests ], sys => \@sys,
+        demand => [ $dm->{q_demand}, $dm->{p_demand} ], oper => [ $dm->{q_oper}, $dm->{p_oper} ],
+        p_avail => $dm->{p_avail}, margin => $dm->{margin},
+        xticks => [ map { $_ * $uf } nice_ticks($qmax / $uf, 10) ],
+        yticks => [ map { $_ * $up } nice_ticks($pmax / $up, 8) ],
+        uf => $uf, up => $up, qu => sym($net->{u_flow}), pu => sym($net->{u_pres}),
+        kind => $s->{kind}, id => $s->{id}, node => $net->{nodes}[ $s->{n2} ]{id},
+        # The key figures as Section 9 prints them, for the key beside the
+        # drawn graph: [ label, flow or '', pressure ].
+        figures => [
+            [ 'DEMAND',    sprintf('%.1f %s', $dm->{q_demand} / $uf, sym($net->{u_flow})),
+                           sprintf('%.1f %s', $dm->{p_demand} / $up, sym($net->{u_pres})) ],
+            [ 'AVAILABLE', '', sprintf('%.1f %s', $dm->{p_avail} / $up, sym($net->{u_pres})) ],
+            [ $dm->{margin} >= 0 ? 'MARGIN' : 'SHORTFALL', '',
+                           sprintf('%.1f %s', abs($dm->{margin}) / $up, sym($net->{u_pres})) ],
+            [ 'OPERATING', sprintf('%.1f %s', $dm->{q_oper} / $uf, sym($net->{u_flow})),
+                           sprintf('%.1f %s', $dm->{p_oper} / $up, sym($net->{u_pres})) ],
+        ],
+    };
+}
+
+#------------------------------------------------------------------------------
+# nice_ticks -- round gridline values from 0 to $max: a step of 1, 2, 2.5 or 5
+# times a power of ten, giving about $n divisions or fewer.
+#------------------------------------------------------------------------------
+sub nice_ticks {
+    my ($max, $n) = @_;
+    return (0) unless $max > 0;
+    my $raw = $max / $n;
+    my $mag = 10 ** int(log($raw) / log(10) - ($raw < 1 ? 1 : 0));
+    my ($step) = grep { $_ * $mag >= $raw } 1, 2, 2.5, 5, 10;
+    $step *= $mag;
+    my @t;
+    for (my $v = 0; $v <= $max * (1 + 1e-9); $v += $step) { push @t, 0 + sprintf('%.10g', $v) }
+    return @t;
+}
+
+#------------------------------------------------------------------------------
+# supply_graph -- the graph in characters, for the text report.  The PDF draws
+# the same data with lines instead (HardyCross::PDF::draw_graph).
+#------------------------------------------------------------------------------
+sub supply_graph {
+    my ($net, $dm) = @_;
+    my $d = supply_graph_data($net, $dm) or return '';
+    $net->{supply_graph} = $d;          # for the PDF, drawn from the same numbers
+    my ($qmax, $pmax, $uf, $up) = @{$d}{qw(qmax pmax uf up)};
+    my ($W, $H) = (64, 16);
 
     my @g = map { [ (' ') x $W ] } 1 .. $H;
     my $col = sub { my $x = ($_[0] / $qmax) ** 1.85; int($x * ($W - 1) + 0.5) };
@@ -964,15 +1052,14 @@ sub supply_graph {
 
     for my $c (0 .. $W - 1) {                         # the supply, a continuous line
         my $q = $qmax * ($c / ($W - 1)) ** (1 / 1.85);
-        my $pa = $avail->($q);
+        my $pa = $d->{avail}->($q);
         $put->($q, $pa, '*') if $pa >= 0;
     }
-    $put->(@$_, '.') for @sys;                        # the system, solved point by point
-    $put->($dm->{q_demand}, $dm->{p_demand}, 'D');
-    $put->($dm->{q_oper},   $dm->{p_oper},   'O');
+    $put->(@$_, '.') for @{ $d->{sys} };              # the system, solved point by point
+    $put->(@{ $d->{demand} }, 'D');
+    $put->(@{ $d->{oper} },   'O');
 
-    my $pu = sym($net->{u_pres});
-    my $qu = sym($net->{u_flow});
+    my ($pu, $qu) = @{$d}{qw(pu qu)};
     my $out = "\n SUPPLY GRAPH - pressure against flow^1.85\n\n";
     for my $r (0 .. $H - 1) {
         my $label = ($r == 0 || $r == int(($H - 1) / 2) || $r == $H - 1)
@@ -980,7 +1067,6 @@ sub supply_graph {
         $out .= sprintf " %s |%s\n", $label, join '', @{ $g[$r] };
     }
     $out .= ' ' x 10 . '+' . '-' x $W . "\n";
-    my $ticks = ' ' x 11;
     my @at = (0, int(($W - 1) / 3), int(2 * ($W - 1) / 3), $W - 1);
     my $line = ' ' x ($W + 12);
     for my $c (@at) {
