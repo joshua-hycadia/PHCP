@@ -687,7 +687,7 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, line checker and pressure ratio valves | 265 / 265 |
+| `.phc` language, line checker and pressure ratio valves | 266 / 266 |
 | AutoCAD exporter, structure | 5 / 5 |
 | JSON interface | 81 / 81 |
 | supply, pump and loss curves, and supplies combined | 18 / 18 |
