@@ -478,6 +478,17 @@ point a full solve), the demand point and the operating point.  With more than
 one supply a single demand point is not defined, and the report says so rather
 than inventing one.
 
+The graph is worked out once and drawn twice from the same numbers.  The text
+report draws it in characters.  The PDF draws it on flow^1.85 graph paper:
+gridlines at round flows crowding to the right as on printed hydraulic graph
+paper, the supply as a solid line (straight between its entered points, which
+are marked), the system curve dashed through its solved points, D and O
+marked, the margin dimensioned at the demand flow, and beside it a key and the
+four figures of Section 9.  Black on white in the report's typeface.
+`tools/test_pdf.pl` checks that D and O sit where the report's own figures put
+them - worked independently from the printed numbers - and that every flow
+label is at its place on the q^1.85 axis and clear of the next.
+
 **Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
 rounding of the printed figures allowed for: 351 checks across the seven
@@ -492,21 +503,26 @@ too few in bar/m for PF/M x T to reproduce PF.
 `phcp.pl model.phc report.pdf`, or FILE > WRITE REPORT in the editor with a
 .pdf name.  The
 PDF is a faithful print of the text report - the same characters in the same
-columns, Courier 9 pt on A4 landscape - with a running header (title, job,
-revision, date) and a footer (program, model, page n of m).  Both come from
-one call on the same solved network, so they cannot disagree.
+columns, DejaVu Sans Mono 9 pt on A4 landscape - with a running header (title,
+job, revision, date) and a footer (program, model, page n of m).  The rules of
+the text report are drawn as ruled lines, and the supply graph is drawn (see
+Section 9 above).  Both come from one call on the same solved network, so they
+cannot disagree.
 
 Page breaks follow the report's structure: a section heading is never left at
 the foot of a page; a table that runs onto a new page repeats its column
 headings under "(continued)"; the supply graph and short note paragraphs move
 to the next page whole rather than split.
 
-It is written in core Perl.  The report is 7-bit ASCII by construction, so it
-needs only Courier - one of the fourteen fonts every PDF reader supplies - and
-nothing is embedded or installed.  `tools/test_pdf.pl` checks each file the way
-the specification says a reader should: every cross-reference offset landing on
-its object, stream lengths exact, the page count true, and every line of the
-text report present.  Readers silently repair broken PDFs, so "it opened" is
+It is written in core Perl.  The typeface, DejaVu Sans Mono, is embedded from
+`data/fonts` (its own licence is beside it, and LICENSE says so): Courier, the
+one monospace face every PDF reader supplies, printed thin and looked dated.
+The fonts are compressed into each PDF whole, about 400 kB a report; if the
+font files are missing the PDF falls back to Courier rather than fail.
+`tools/test_pdf.pl` checks each file the way the specification says a reader
+should: every cross-reference offset landing on its object, stream lengths
+exact, the page count true, every line of the text report present and every
+rule drawn, the typeface embedded, and the graph as above.  Readers silently repair broken PDFs, so "it opened" is
 not evidence; this is.
 
 ## Windows
@@ -647,7 +663,7 @@ others on the page, and the report says which check to make.
 | JSON interface | 72 / 72 |
 | supply, pump and loss curves | 14 / 14 |
 | report hand-checks, 7 models | 351 / 351 |
-| PDF structure, 7 models | 49 / 49 |
+| PDF structure, typeface and graph, 7 models | 93 / 93 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 116 / 116 |
 | database editing and location | 37 / 37 |
