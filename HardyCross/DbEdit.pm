@@ -95,6 +95,9 @@ sub open_db {
     $text =~ s/\r\n/\n/g;
     my @lines;
     for my $l (split /\n/, $text, -1) {
+        # A stray carriage return, from a file with mixed line endings, is
+        # not part of the last field: '41.1\r' is not a number.
+        $l =~ s/\r+\z//;
         if ($l =~ /^\s*(#|$)/) { push @lines, { text => $l }; next }
         my ($kind, @f) = split /\|/, $l, -1;
         # A pipe type from a database written before ROUGHNESS MM was added:
