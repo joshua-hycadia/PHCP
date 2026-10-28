@@ -25,14 +25,14 @@
 #                 at their places and clear of each other; the graph above
 #                 the footer
 #
-#   perl tools/test_pdf.pl [model.hcx ...]
+#   perl tools/test_pdf.pl [model.phc ...]
 #==============================================================================
 use strict;
 use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
 
-my @models = @ARGV ? @ARGV : grep { !/grid1000/ } glob("$FindBin::Bin/../examples/*.{hcx,phc}");
+my @models = @ARGV ? @ARGV : grep { !/grid1000/ } glob("$FindBin::Bin/../examples/*.phc");
 my ($checks, $fails) = (0, 0);
 sub ok {
     my ($what, $c) = @_;
