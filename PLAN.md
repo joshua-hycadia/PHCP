@@ -1,7 +1,8 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1 merged.  PR 2 (`.phc` language) being reworked to the positional
-layout Joshua chose on 28 October 2026; PR 3 (editor) open on top of it.
+Status: PR 1 merged.  PR 2 (`.phc` language, reworked to the positional layout
+Joshua chose on 28 October 2026) and PR 3 (text editor, built on PR 2) open for
+review.  PR 4 and PR 5 not started.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -189,9 +190,10 @@ Branch: `phc-editor`.
 
 | file | purpose |
 |---|---|
-| `HardyCross/Editor.pm` | editor logic with no Tk: proposals, completion, undefined nodes, results lookup |
+| `HardyCross/Editor.pm` | editor logic with no Tk: line checks, the three lists, proposals, completion, results tables, units |
 | `phcp_editor.pl` | the Tk window, kept thin |
 | `tools/test_editor.pl` | headless tests of `Editor.pm` |
+| `tools/test_editor_window.pl` | the window, driven under Xvfb |
 | `phcp_gui.pl`, `tools/test_gui_document.pl`, `tools/test_gui_editing.pl` | **removed** - the spreadsheet is retired |
 | `phcp_viewer.pl` | kept; reads `.phc` through `read_model` |
 | `build_windows.bat` | builds `phcp.exe` and `phcp_editor.exe`; Tk::TableMatrix no longer needed |
@@ -199,36 +201,90 @@ Branch: `phc-editor`.
 
 ### Window
 
-Two panes side by side - EDITOR on the left, REPORT on the right - with a
-status bar and a problems list below.  Labels and menus in capitals, as the
-rest of PHCP.  Monospace throughout.
+Joshua's layout and look (28 October 2026): a white, flat window - blue and
+black only as highlight colours, no bevels - with a toolbar (NEW OPEN SAVE,
+VALIDATE, CALCULATE, WRITE REPORT); NETWORK and PROJECT tabs; the editor with
+line numbers, syntax colours, the command strip and the status bar, and an
+ERRORS / WARNINGS / NODES panel to its right; below, VALIDATION, PIPES, NODES,
+OUTLETS and REPORT tabs in sortable columns, with HIDE NON-FLOWING PIPES and
+HIDE INACTIVE NODES.  Everything user-visible in capitals.
 
 ### Editor behaviour
 
 | feature | behaviour |
 |---|---|
-| colouring | command words in blue, comments grey; a line with an error is red, its message in the status bar when the cursor is on it and in the problems list |
-| status bar | the field template of the current command, current field highlighted |
-| proposals | after Enter, the likely next line is shown greyed: same command, ids stepped (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts; typing anything else discards it.  Holding Enter repeats |
-| pick list | Ctrl+Space in a `Use` type field or a fitting field opens the codes from the database, with descriptions; arrows and Enter insert |
-| undefined nodes | a panel lists nodes used but not defined, with the line that first uses each |
-| solve | F5 solves the buffer and fills the REPORT pane; an error moves the cursor to its line |
-| results on the cursor | after a solve, the status bar shows the solved flow, velocity and end pressures for the element on the cursor's line |
-| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`).  Opening a `.hcx` converts it into a new unsaved `.phc` buffer and says so |
-| undo | Ctrl+Z / Ctrl+Y, Tk text undo |
+| network only | the editor holds the network; title, project details, units, method and options are set in the PROJECT tab and written at the head of the `.phc` |
+| VALIDATE then CALCULATE | CALCULATE is available only while the model is as it was when it last passed VALIDATE.  VALIDATE lists what is wrong, why, and where, marks each fault in the editor, and a click goes to it |
+| syntax colours, line numbers | per field: command, name, reference, number, keyword, comment; a gutter of line numbers |
+| command strip | the network commands in their three groups; a click starts a line |
+| status bar | the field template of the current command, current field highlighted; the line's results after a calculation |
+| proposals | after Enter, the likely next line is shown greyed; Enter or Tab accepts |
+| pick list | Ctrl+Space in a `USE` type or a fitting |
+| ERRORS / WARNINGS / NODES | live; a click goes to the line or the PROJECT tab field |
+| tables | PIPES has 21 columns with a right-click chooser; a heading click sorts, a second reverses |
+| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT.  `.phc` only |
+| undo | Ctrl+Z / Ctrl+Y, Tk TextUndo |
 
 ### Tests
 
-- `tools/test_editor.pl`, headless: proposals for each command, pick-list
-  contents, undefined-node detection, results lookup after a solve.
-- Window: run under Xvfb if available.  If the window itself cannot be run in
-  the build environment, the README says "not yet run" for it.
+- `tools/test_editor.pl`, headless: line statuses and the three lists,
+  proposals, pick lists, the status bar, syntax colouring, results on the
+  cursor, the tables and sorting, the document (settings apart from the
+  network), VALIDATE's what, why and where, files.
+- `tools/test_editor_window.pl`, under Xvfb: layout and look, open, live
+  checks, command strip, proposals and undo, pick list, VALIDATE before
+  CALCULATE, the tables (a real heading click included), the PROJECT tab,
+  files.
 
 ### Windows
 
 Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 
 ---
+
+## PR 4 - one file type
+
+Branch: `phc-only`.  Decided by Joshua: there are no `.hcx` models in use -
+the format only ever served the prototype - so `.phc` becomes the one file
+type a user sees.
+
+| file | change |
+|---|---|
+| `autocad/phcp_export.lsp`, `autocad/AUTOCAD.md` | the exporter writes `.phc` |
+| `phcp.pl`, `phcp_viewer.pl` | read `.phc` only; a `.hcx` is refused with "convert it first: phcp.pl --convert" |
+| `phcp_editor.pl` | unchanged: OPEN still converts a `.hcx` into a new `.phc` |
+| `examples/*.hcx` | moved to `tools/baseline/`, kept as the converter's regression baseline |
+| `tools/test_report_checks.pl`, `tools/test_pdf.pl` | run on `examples/*.phc` |
+| `README.md` | one format; `.hcx` described only as what `--convert` reads |
+
+Inside, `.phc` lines are still translated into `.hcx` rows for the existing
+parser (`HardyCross::Parse`); that is how the checks stay in one place, and
+the user never sees it.  `tools/stress_invariance.pl` builds its networks as
+`.hcx` text for the parser and is unaffected.
+
+## PR 5 - the phcp.exe JSON interface
+
+Branch: `phc-json`.  Decided by Joshua: other programs call `phcp.exe`, not a
+DLL.  AutoCAD first, possibly Revit later.
+
+    phcp.exe --json model.phc          results as JSON on standard output
+    phcp.exe --json -                  the model read from standard input
+    phcp.exe --json model.phc --report out.pdf
+
+- Output: status, converged, iterations, units, every element (id, kind,
+  nodes, flow, velocity for a pipe), every node (elevation, pressure), outlet
+  compliance including fixed flows, the governing outlet, the demand point,
+  and errors with their `.phc` line numbers.  Values in the model's units,
+  the units named in the output.
+- Exit status as now: 0 converged, 1 not converged, 2 input error - and the
+  JSON is written in every case, so a caller always has something to read.
+- JSON::PP, which is core Perl.  The contract is documented in the README
+  with an example, and versioned (`"interface": 1`) so a caller can check it.
+- `tools/test_json.pl`: every example, the JSON parsed back and checked
+  against the solved network; an input error; standard input.
+- The AutoCAD exporter gains a SOLVE command that runs `phcp.exe --json` and
+  shows the governing outlet and any failing outlets; it has not been run
+  inside AutoCAD until Joshua runs it.
 
 ## Definition of done, each PR
 
@@ -250,6 +306,11 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 - [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
   passed or failed in the report and counted in the governing outlet and demand
   point (README, "Fixed flows")
-- [ ] PR 3 - `Editor.pm` and `phcp_editor.pl`
-- [ ] PR 3 - spreadsheet removed, build script and licence updated
+- [x] PR 3 - `Editor.pm` and `phcp_editor.pl` (light blue and black, by Joshua's choice)
+- [x] PR 3 - spreadsheet removed, build script and licence updated
+- [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
+- [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
 - [ ] PR 3 - Windows build run by Joshua
+- [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
+- [ ] PR 5 - `phcp.exe --json`, documented and tested
+- [ ] PR 5 - AutoCAD SOLVE command run by Joshua

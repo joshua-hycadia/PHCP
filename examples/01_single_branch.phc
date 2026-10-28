@@ -1,6 +1,6 @@
-// 01 - single branch validation case
-// Static 900 kPa supply -> 100 m of DN100 (C=120) -> one K80 sprinkler.
-// Closed-form answer: Q = 80*sqrt(900 - 1.5689e-4*Q^1.85)  ->  Q ~ 2090 L/min
+// 01 - SINGLE BRANCH VALIDATION CASE
+// STATIC 900 KPA SUPPLY -> 100 M OF DN100 (C=120) -> ONE K80 SPRINKLER.
+// CLOSED-FORM ANSWER: Q = 80*SQRT(900 - 1.5689E-4*Q^1.85)  ->  Q ~ 2090 L/MIN
 
 UNITS     LENGTH M
 UNITS     ELEVATION M

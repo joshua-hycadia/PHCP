@@ -1,13 +1,13 @@
 @echo off
 rem ===========================================================================
-rem build_windows.bat -- build phcp.exe and phcp_gui.exe on a Windows PC.
+rem build_windows.bat -- build phcp.exe and phcp_editor.exe on a Windows PC.
 rem
 rem Copyright (c) 2026 Hycadia Pty Ltd.  SPDX-License-Identifier: MIT
 rem
 rem The command-line program, phcp.exe, needs nothing beyond Strawberry Perl
-rem and is always built.  The spreadsheet, phcp_gui.exe, also needs Tk and
-rem Tk::TableMatrix, which have to be COMPILED here from source -- and that is
-rem the step that can fail.  So the two are built independently: if Tk will
+rem and is always built.  The text editor, phcp_editor.exe, also needs Tk,
+rem which has to be COMPILED here from source -- and that is the step that can
+rem fail.  So the two are built independently: if Tk will
 rem not build, you still get a working phcp.exe, and the Tk build log is copied
 rem to tk_build.log in this folder so the cause can be read.
 rem
@@ -56,7 +56,7 @@ perl -MPAR::Packer -e1 >nul 2>&1 || (echo ERROR: PAR::Packer is not available. &
 echo        ok
 
 echo.
-echo [3/6] Tk and Tk::TableMatrix (needed only for the spreadsheet)...
+echo [3/6] Tk (needed only for the text editor)...
 perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     echo        Installing the patched Tk 804.036_001 from the Strawberry Perl project...
@@ -66,16 +66,6 @@ perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     set GUI=no
     call :savelog tk_build.log
-) else (
-    perl -MTk::TableMatrix -e1 >nul 2>&1
-    if errorlevel 1 (
-        call cpanm --notest Tk::TableMatrix
-    )
-    perl -MTk::TableMatrix -e1 >nul 2>&1
-    if errorlevel 1 (
-        set GUI=no
-        call :savelog tablematrix_build.log
-    )
 )
 
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
@@ -91,10 +81,10 @@ call pp -I . %MODS% %DATA% -o phcp.exe phcp.pl
 if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
 
 echo.
-echo [5/6] Building phcp_gui.exe (spreadsheet)...
+echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . %MODS% -M Tk -M Tk::NoteBook -M Tk::TableMatrix -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Storable %DATA% -o phcp_gui.exe phcp_gui.pl
-    if errorlevel 1 (echo ERROR: pp failed building phcp_gui.exe & set GUI=no)
+    call pp --gui -I . %MODS% -M HardyCross::Editor -M Tk -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Canvas -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar %DATA% -o phcp_editor.exe phcp_editor.pl
+    if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
 )
@@ -112,12 +102,12 @@ echo        ok - .hcx and .phc examples solved and converged, PDF report written
 echo.
 echo ===========================================================================
 if "!GUI!"=="yes" (
-    echo  Built: phcp.exe and phcp_gui.exe
+    echo  Built: phcp.exe and phcp_editor.exe
 ) else (
     echo  Built: phcp.exe  ^(command line, working^)
-    echo  NOT built: phcp_gui.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
-    echo  The compiler output is saved in this folder as tk_build.log or
-    echo  tablematrix_build.log.  Send the last 40 lines of it for diagnosis.
+    echo  NOT built: phcp_editor.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
+    echo  The compiler output is saved in this folder as tk_build.log.
+    echo  Send the last 40 lines of it for diagnosis.
 )
 echo ===========================================================================
 endlocal

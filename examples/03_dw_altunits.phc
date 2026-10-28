@@ -1,8 +1,8 @@
-// 03 - Darcy-Weisbach with alternative user units
+// 03 - DARCY-WEISBACH WITH ALTERNATIVE USER UNITS
 // 
-// Same physical grid as example 02 but expressed in L/s and bar, solved with
-// Colebrook-White instead of Hazen-Williams.  Roughness EPS is in the declared
-// diameter unit (mm here).
+// SAME PHYSICAL GRID AS EXAMPLE 02 BUT EXPRESSED IN L/S AND BAR, SOLVED WITH
+// COLEBROOK-WHITE INSTEAD OF HAZEN-WILLIAMS.  ROUGHNESS EPS IS IN THE DECLARED
+// DIAMETER UNIT (MM HERE).
 
 UNITS     LENGTH M
 UNITS     ELEVATION M
@@ -36,7 +36,7 @@ PIPE      BR3 C HY 15.0 100.0
 
 FIXEDFLOW FF1 B 5.0 2.0
 
-// PRV1 sits in a pipe of no length from TM to K1
+// PRV1 SITS IN A PIPE OF NO LENGTH FROM TM TO K1
 USE       BORE 120
 PIPE      PRV1 TM K1 0 150
 PRV       PRV1 0 1.5

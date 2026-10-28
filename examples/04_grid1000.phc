@@ -1,6 +1,6 @@
-// 04 - stress test: 20x50 fully gridded array, 1000 nodes, 1051 loops.
-// Converges, but takes ~11000 iterations - see the performance note in README.
-// auto-generated 20x50 grid : 1000 nodes, full gridded array
+// 04 - STRESS TEST: 20X50 FULLY GRIDDED ARRAY, 1000 NODES, 1051 LOOPS.
+// CONVERGES, BUT TAKES ~11000 ITERATIONS - SEE THE PERFORMANCE NOTE IN README.
+// AUTO-GENERATED 20X50 GRID : 1000 NODES, FULL GRIDDED ARRAY
 
 UNITS     LENGTH M
 UNITS     ELEVATION M
@@ -2947,6 +2947,6 @@ PIPE      H1928 N19_46 N19_47 3.0 50.0
 PIPE      H1929 N19_47 N19_48 3.0 50.0
 PIPE      H1930 N19_48 N19_49 3.0 50.0
 
-// N0_0S is joined to N0_0 by a pipe of no length
+// N0_0S IS JOINED TO N0_0 BY A PIPE OF NO LENGTH
 USE       BORE 120
 PIPE      N0_0S N0_0 N0_0S 0 150

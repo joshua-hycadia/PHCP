@@ -6,8 +6,9 @@
 #
 #==============================================================================
 # The read-only viewer: open a model, solve it, look at the results.  Kept for
-# checking a model without any risk of editing it; the spreadsheet,
-# phcp_gui.pl, is the program for building and changing one.
+# checking a model without any risk of editing it; the text editor,
+# phcp_editor.pl, is the program for building and changing one.  It reads
+# .phc and .hcx alike, through HardyCross::Parse::read_model.
 #==============================================================================
 # phcp_viewer.pl -- the read-only PHCP viewer.
 #
@@ -44,14 +45,16 @@ use HardyCross;
 use HardyCross::Parse;
 
 # --- design tokens, named once ---------------------------------------------
-my $INK      = '#1D1D1F';
-my $INK2     = '#6E6E73';
-my $SURFACE  = '#FFFFFF';
-my $SURFACE2 = '#FAFAFA';
-my $ACCENT   = '#0B63CE';
-my $BAD      = '#B3261E';
-my $GOOD     = '#0B6B4F';
-my $HAIR     = '#E8E8E6';
+# The light blue and black scheme of the text editor (phcp_editor.pl): pale
+# blue paper, black type, a deeper blue for headings and frames.
+my $INK      = '#000000';
+my $INK2     = '#1B2631';
+my $SURFACE  = '#D6EAF8';
+my $SURFACE2 = '#AED6F1';
+my $ACCENT   = '#002B7F';
+my $BAD      = '#B00020';
+my $GOOD     = '#0B5345';
+my $HAIR     = '#85C1E9';
 my $MONO     = 'Monospace 10';
 my $UI       = 'Helvetica 9';
 my $UI_B     = 'Helvetica 9 bold';

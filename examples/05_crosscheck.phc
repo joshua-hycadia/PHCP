@@ -1,7 +1,7 @@
-// 05 - independent cross-check case
-// Two loops, two supplies (static + falling curve), three pressure-dependent
-// sprinklers and one fixed-flow outlet.  Solved independently by a nodal
-// Newton method in tools/crosscheck.py to verify the Hardy Cross result.
+// 05 - INDEPENDENT CROSS-CHECK CASE
+// TWO LOOPS, TWO SUPPLIES (STATIC + FALLING CURVE), THREE PRESSURE-DEPENDENT
+// SPRINKLERS AND ONE FIXED-FLOW OUTLET.  SOLVED INDEPENDENTLY BY A NODAL
+// NEWTON METHOD IN TOOLS/CROSSCHECK.PY TO VERIFY THE HARDY CROSS RESULT.
 
 UNITS     LENGTH M
 UNITS     ELEVATION M
