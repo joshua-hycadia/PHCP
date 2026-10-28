@@ -21,6 +21,9 @@
 #   colour_spans   where on a line the command word and the comment are
 #   solve_text     solve the buffer; the report, or the error and its line
 #   results_at     the solved figures for the element on a line
+#   result_tables  the PIPES, NODES and OUTLETS tables under the editor
+#   sort_rows      a table sorted on one column, as the column headings do
+#   diagnostics    the ERRORS, WARNINGS and NODES lists beside the editor
 #   load_file      read a .phc, or convert a .hcx into a new .phc buffer
 #   write_report_file   the report as .pdf or .txt
 #
@@ -324,9 +327,8 @@ sub results_at {
     my ($e) = grep { ($_->{id} // '') eq $id } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     return undef unless $e;
     if ($e->{kind} eq 'PIPE') {
-        # Velocity from flow and bore: Q in L/min to m3/s, bore in mm to m.
-        my $area = 3.14159265358979 * ($e->{dia} / 1000) ** 2 / 4;
-        my $v = abs($e->{q}) / 60000 / $area;
+        # The engine's own velocity, as the report prints it.
+        my $v = abs HardyCross::pipe_velocity($e->{q}, $e->{dia});
         my ($b, $t) = $e->{q} >= 0 ? ($e->{n1}, $e->{n2}) : ($e->{n2}, $e->{n1});
         return sprintf '%s  Q %.1f %s  V %.2f m/s  %s %.1f %s -> %s %.1f %s', $id,
             abs($e->{q}) / $uf, $qu, $v, $nid->($b), $p->($b), $pu, $nid->($t), $p->($t), $pu;
@@ -342,6 +344,207 @@ sub results_at {
     # Pumps and devices: flow, and the pressure each side.
     return sprintf '%s  Q %.1f %s  %s %.1f %s -> %s %.1f %s', $id, $e->{q} / $uf, $qu,
         $nid->($e->{n1}), $p->($e->{n1}), $pu, $nid->($e->{n2}), $p->($e->{n2}), $pu;
+}
+
+#==============================================================================
+# The results tables, shown under the editor after a solve.
+#
+# Each table is { columns => [ [heading, unit, align], ... ],
+#                 rows    => [ { cells => [text, ...], keys => [sort value, ...],
+#                               active => 0|1 }, ... ] }
+# cells are what is shown, already formatted; keys are what the column sorts
+# on (numbers as numbers), so sorting 9.5 before 10.2 does not depend on the
+# text.  active is false for a pipe carrying no flow or a node no water passes
+# through, which the HIDE boxes leave out.  Units in the headings are the
+# model's own.
+#==============================================================================
+sub result_tables {
+    my $net = shift or return {};
+    my ($uf, $up, $ul) = ($net->{f_flow}, $net->{f_pres}, $net->{f_len});
+    my ($qu, $pu, $lu) = (unit_label($net->{u_flow}), unit_label($net->{u_pres}),
+                          lc $net->{u_len});
+    my $o = $net->{opts};
+    my $node = sub { $net->{nodes}[ shift ] };
+    my $gauge = sub { my $n = $node->(shift); ($n->{h} - $GW * $n->{z}) / $up };
+    my $row = sub { my ($fmt, $act) = (shift, shift); { cells => [ map { $_->[0] } @$fmt ],
+                    keys => [ map { $_->[1] } @$fmt ], active => $act } };
+    my $num = sub { my ($v, $dp) = @_; [ sprintf('%.*f', $dp, $v), $v ] };
+    my $txt = sub { my $t = shift // ''; [ $t, $t ] };
+    my %t;
+
+    #------------------------------------------------------------ PIPES
+    # Written in the direction of flow, as the report's pipe schedule is: SNODE
+    # upstream, Q positive, PE the pressure lost to the rise from SNODE to ENODE.
+    $t{pipes}{columns} = [ [ 'NAME', '', 'w' ], [ 'SNODE', '', 'w' ], [ 'ENODE', '', 'w' ],
+        [ 'NOM', 'mm', 'e' ], [ 'I.D.', 'mm', 'e' ], [ 'MAT', '', 'w' ], [ 'C', '', 'e' ],
+        [ 'L', $lu, 'e' ], [ 'F', $lu, 'e' ], [ 'T', $lu, 'e' ], [ 'FIT K', '', 'e' ],
+        [ 'Q', $qu, 'e' ], [ 'PF', $pu, 'e' ], [ 'VEL', 'm/s', 'e' ],
+        [ 'PF/L', "$pu/$lu", 'e' ], [ 'PE', $pu, 'e' ] ];
+    for my $e (grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my $fwd = $e->{q} >= 0;
+        my ($b, $f) = $fwd ? ($e->{n1}, $e->{n2}) : ($e->{n2}, $e->{n1});
+        my ($hf) = HardyCross::elem_hf($e, $e->{q}, $o);
+        my $pf = abs($hf) / $up;
+        my $lt = ($e->{len} + $e->{eqv}) / $ul;
+        my $pe = $GW * ($node->($f)->{z} - $node->($b)->{z}) / $up;
+        push @{ $t{pipes}{rows} }, $row->([
+            $txt->($e->{id}), $txt->($node->($b)->{id}), $txt->($node->($f)->{id}),
+            (defined $e->{dn} ? $num->($e->{dn}, 0) : [ '-', -1 ]), $num->($e->{dia}, 1),
+            $txt->($e->{ptype} // 'BORE'), $num->($e->{c}, 0),
+            $num->($e->{len} / $ul, 2), $num->($e->{eqv} / $ul, 2), $num->($lt, 2),
+            $num->($e->{kfit}, 2), $num->(abs($e->{q}) / $uf, qdp($net)),
+            $num->($pf, pdp($net)), $num->(abs HardyCross::pipe_velocity($e->{q}, $e->{dia}), 2),
+            ($lt > 0 ? $num->($pf / $lt, pdp($net) + 3) : [ '-', 0 ]), $num->($pe, pdp($net)),
+        ], abs($e->{q}) > 1e-6);
+    }
+
+    #------------------------------------------------------------ NODES
+    # Discharge is everything leaving the network at the node: outlets and
+    # fixed flows.  REQUIRED is the highest pressure an outlet or fixed flow
+    # there needs.
+    $t{nodes}{columns} = [ [ 'NAME', '', 'w' ], [ 'ELEV', $lu, 'e' ], [ 'PRESSURE', $pu, 'e' ],
+        [ 'TOTAL HEAD', $pu, 'e' ], [ 'DISCHARGE', $qu, 'e' ], [ 'REQUIRED', $pu, 'e' ],
+        [ 'OUTLET', '', 'w' ] ];
+    my (%out, %req, %tag);
+    for my $e (grep { $_->{kind} eq 'DISCHARGE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        $out{ $e->{n1} } += abs $e->{q};
+        $req{ $e->{n1} } = $e->{preq} if $e->{preq} > ($req{ $e->{n1} } // -1);
+        push @{ $tag{ $e->{n1} } }, $e->{id};
+    }
+    for my $f (@{ $net->{fixed} || [] }) {
+        $req{ $f->{n1} } = $f->{preq} if defined $f->{preq} && $f->{preq} > ($req{ $f->{n1} } // -1);
+        push @{ $tag{ $f->{n1} } }, $f->{id};
+    }
+    for my $i (1 .. $#{ $net->{nodes} }) {
+        my $n = $node->($i);
+        next if $n->{id} eq 'REF';
+        my $d = ($out{$i} // 0) + ($n->{demand} // 0);
+        push @{ $t{nodes}{rows} }, $row->([
+            $txt->($n->{id}), $num->($n->{z} / $ul, 3), $num->($gauge->($i), pdp($net)),
+            $num->($n->{h} / $up, pdp($net)), $num->($d / $uf, qdp($net)),
+            (defined $req{$i} ? $num->($req{$i} / $up, pdp($net)) : [ '-', -1 ]),
+            $txt->(join ' ', @{ $tag{$i} || [] }),
+        ], HardyCross::Report::node_throughput($net, $i) > 1e-6 || $d > 0);
+    }
+
+    #------------------------------------------------------------ OUTLETS
+    # Required and achieved flow and pressure, the margin, PASS or FAIL: the
+    # report's outlet compliance, sortable -- sort on MARGIN to see what
+    # governs.  Fixed flows are listed with K "fixed".
+    $t{outlets}{columns} = [ [ 'NAME', '', 'w' ], [ 'NODE', '', 'w' ], [ 'TYPE', '', 'w' ],
+        [ 'K', '', 'e' ], [ 'REQ Q', $qu, 'e' ], [ 'ACT Q', $qu, 'e' ], [ 'REQ P', $pu, 'e' ],
+        [ 'ACT P', $pu, 'e' ], [ 'MARGIN', $pu, 'e' ], [ 'RESULT', '', 'w' ] ];
+    for my $e (grep { $_->{kind} eq 'DISCHARGE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my $p = ($node->($e->{n1})->{h} - $GW * $e->{z}) / $up;
+        my $pass = abs($e->{q}) >= $e->{qreq} - 1e-6 && $p >= $e->{preq} / $up - 1e-6;
+        push @{ $t{outlets}{rows} }, $row->([
+            $txt->($e->{id}), $txt->($node->($e->{n1})->{id}), $txt->($e->{otype}),
+            $num->($e->{k} * sqrt($up) / $uf, 3), $num->($e->{qreq} / $uf, qdp($net)),
+            $num->(abs($e->{q}) / $uf, qdp($net)), $num->($e->{preq} / $up, pdp($net)),
+            $num->($p, pdp($net)), $num->($p - $e->{preq} / $up, pdp($net)),
+            $txt->($pass ? 'PASS' : 'FAIL'),
+        ], 1);
+    }
+    for my $f (grep { defined $_->{preq} } @{ $net->{fixed} || [] }) {
+        my $p = ($node->($f->{n1})->{h} - $GW * $f->{z}) / $up;
+        push @{ $t{outlets}{rows} }, $row->([
+            $txt->($f->{id}), $txt->($node->($f->{n1})->{id}), $txt->('FIXEDFLOW'),
+            [ 'fixed', -1 ], $num->($f->{qreq} / $uf, qdp($net)), $num->($f->{q} / $uf, qdp($net)),
+            $num->($f->{preq} / $up, pdp($net)), $num->($p, pdp($net)),
+            $num->($p - $f->{preq} / $up, pdp($net)),
+            $txt->($p >= $f->{preq} / $up - 1e-6 ? 'PASS' : 'FAIL'),
+        ], 1);
+    }
+    $t{$_}{rows} ||= [] for keys %t;
+    return \%t;
+}
+
+# Decimal places for a flow and a pressure in the model's units: fewer in
+# L/min and kPa, more in L/s and bar, where the figures are small.
+sub qdp { my $n = shift; $n->{f_flow} > 1.5 ? 3 : 1 }
+sub pdp { my $n = shift; $n->{f_pres} > 1.5 ? 3 : 1 }
+
+# unit_label -- a model unit code as it reads in a heading: LPM is L/min.
+sub unit_label {
+    my $u = uc(shift // '');
+    my %l = (LPM => 'L/min', 'L/MIN' => 'L/min', LPS => 'L/s', 'L/S' => 'L/s',
+             KPA => 'kPa', BAR => 'bar', MPA => 'MPa', PSI => 'psi', M3H => 'm3/h',
+             GPM => 'gpm', USGPM => 'gpm', IGPM => 'igpm');
+    return $l{$u} // lc $u;
+}
+
+#------------------------------------------------------------------------------
+# sort_rows -- a table's rows sorted on column $col, descending if $desc.
+#
+# Numbers sort as numbers and text as text (case-insensitively); ties keep
+# their order, so sorting on one column and then another groups as expected.
+#------------------------------------------------------------------------------
+sub sort_rows {
+    my ($rows, $col, $desc) = @_;
+    my $numeric = !grep { $_->{keys}[$col] !~ /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\z/ } @$rows;
+    my @i = 0 .. $#$rows;
+    my @s = $numeric
+        ? sort { $rows->[$a]{keys}[$col] <=> $rows->[$b]{keys}[$col] || $a <=> $b } @i
+        : sort { lc $rows->[$a]{keys}[$col] cmp lc $rows->[$b]{keys}[$col] || $a <=> $b } @i;
+    @s = reverse @s if $desc;
+    return [ @{$rows}[@s] ];
+}
+
+#------------------------------------------------------------------------------
+# diagnostics -- the three lists beside the editor.
+#
+# Returns {
+#   errors   => [ { line, message } ]  lines the reader refuses (check_buffer)
+#   warnings => [ { line, message } ]  what a solve found: no convergence, a
+#                                      pipe over the velocity limit, an outlet
+#                                      or fixed flow below its requirement, and
+#                                      the engine's own warnings
+#   nodes    => [ { line, message } ]  nodes used but never defined (an error
+#                                      when solving), and nodes defined but
+#                                      used by nothing (the solve refuses an
+#                                      unconnected node)
+# }
+# $net is the last solve, or undef; warnings need one.  Each entry carries the
+# .phc line it belongs to, so a click can go there.
+#------------------------------------------------------------------------------
+sub diagnostics {
+    my ($text, $net, $editing) = @_;
+    my $chk  = check_buffer($text, $editing);
+    my $scan = scan($text);
+    my %d = (errors => $chk->{problems}, warnings => [], nodes => []);
+
+    push @{ $d{nodes} }, { line => $_->{line}, message => "$_->{node} - used, but has no Node line" }
+        for @{ $chk->{undefined} };
+    my %used;
+    for my $a (grep { $_ && $_->{status} eq 'ok' } @{ $scan->{a} }) {
+        $used{$_} = 1 for HardyCross::Phc::nodes_used($a);
+    }
+    for my $id (sort { $scan->{nodes}{$a} <=> $scan->{nodes}{$b} } keys %{ $scan->{nodes} }) {
+        push @{ $d{nodes} }, { line => $scan->{nodes}{$id}, message => "$id - defined, but nothing uses it" }
+            unless $used{$id};
+    }
+
+    if ($net) {
+        my $line = sub { $scan->{ids}{ shift() } };
+        push @{ $d{warnings} }, { line => undef, message => 'the solve did NOT converge: the results must not be used' }
+            if defined $net->{iters} && $net->{iters} >= ($net->{opts}{maxiter} // 0) && !$net->{converged_flag};
+        my $t = result_tables($net);
+        my $vl = $net->{opts}{vel_limit} // 6;
+        for my $r (@{ $t->{pipes}{rows} }) {
+            my $v = $r->{keys}[13];
+            push @{ $d{warnings} }, { line => $line->($r->{keys}[0]),
+                message => sprintf('%s - velocity %.2f m/s is over the limit of %g m/s', $r->{keys}[0], $v, $vl) }
+                if $v > $vl;
+        }
+        for my $r (@{ $t->{outlets}{rows} }) {
+            next unless $r->{keys}[9] eq 'FAIL';
+            push @{ $d{warnings} }, { line => $line->($r->{keys}[0]),
+                message => sprintf('%s - below its requirement: %s %s against %s required',
+                                   $r->{keys}[0], $r->{cells}[7], 'P', $r->{cells}[6]) };
+        }
+        push @{ $d{warnings} }, map { { line => undef, message => $_ } } @{ $net->{warnings} || [] };
+    }
+    return \%d;
 }
 
 #------------------------------------------------------------------------------
