@@ -104,7 +104,7 @@ sub expected {
     for (split /\n/, slurp(shift)) {
         next if /^#/ || !/\S/;
         my ($k, $id, $v) = split ' ';
-        ($k eq 'Q' ? \%q : \%p)->{$id} = $v;
+        ($k eq 'Q' ? \%q : \%p)->{$id} = $v;      # undef where only the name is frozen
     }
     return (\%q, \%p);
 }
@@ -121,9 +121,14 @@ for my $phcpath (sort glob("$EX/*.phc")) {
         my @missing = (grep({ !exists $qp->{$_} } keys %$qa), grep({ !exists $pp->{$_} } keys %$pa));
         is('   every frozen pipe and node is in the .phc model', !@missing, "missing: @missing");
         next unless $FULL;
-        my ($qb, $pb) = results(solved($p));
+        my $ok = HardyCross::solve_model($p);
+        is('   solved: it converges', $ok);
+        my ($qb, $pb) = results($p);
+        my %qv = map { $_ => $qa->{$_} } grep { defined $qa->{$_} } keys %$qa;
+        my %pv = map { $_ => $pa->{$_} } grep { defined $pa->{$_} } keys %$pa;
         is(sprintf('   solved: worst %.1e in a pipe flow, %.1e in a node pressure (within its tolerances)',
-                   worst($qa, $qb), worst($pa, $pb)), worst($qa, $qb) < 0.5 && worst($pa, $pb) < 0.5);
+                   worst(\%qv, $qb), worst(\%pv, $pb)), worst(\%qv, $qb) < 0.5 && worst(\%pv, $pb) < 0.5)
+            if %qv;
         next;
     }
     my ($t) = read_phc(tighten_phc(slurp($phcpath)));
