@@ -2,7 +2,6 @@
 // Comments in the .hcx file are not carried over.
 // Dropped from the .hcx because they had no effect on the result:
 //   line 18: OPTIONS TRACE SUMMARY - not an option the .hcx reader acts on
-//   line 55: DISCHARGES FF1 B FIXEDFLOW Q=5.0 MINP=2.0 - not used for a fixed flow: MINP=2.0
 
 Units    FLOW=LPS PRESSURE=BAR LENGTH=M DIAMETER=MM
 Method   DW
@@ -34,4 +33,4 @@ PRV      PRV1 TM K1 DP=1.5
 
 Hydrant  HYD1 HY Q=20 P=2.5
 HoseReel HR1 A K=0.395 P=2.2
-Flow     FF1 B Q=5.0
+Flow     FF1 B Q=5.0 MINP=2.0

@@ -180,6 +180,9 @@ not used: only the flow is applied.  `.phc` must not accept `MINP=` silently.
 Either make it a reported error ("not supported") or raise it with Joshua
 before implementing it.  Record the decision in the README.
 
+Resolved in PR 2, by Joshua's decision: the minimum pressure is checked (see
+the checklist and README, "Fixed flows").
+
 ---
 
 ## PR 3 - the text editor
@@ -242,8 +245,9 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 
 - [x] PR 1 - import PHCP, editable pipe database, report states database SHA-256
 - [x] PR 2 - `.phc` reader, converter, examples, `test_phc.pl`
-- [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: refused as "not supported" (README,
-  "Fixed flows"); whether to implement it awaits Joshua
+- [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
+  passed or failed in the report and counted in the governing outlet and demand
+  point (README, "Fixed flows")
 - [ ] PR 3 - `Editor.pm` and `phcp_editor.pl`
 - [ ] PR 3 - spreadsheet removed, build script and licence updated
 - [ ] PR 3 - Windows build run by Joshua

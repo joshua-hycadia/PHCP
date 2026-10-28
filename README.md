@@ -84,7 +84,7 @@ new node.)
 | `Head` | id node - any two of `K= Q= P=`, and `[Z=]` (a sprinkler) |
 | `Hydrant` | id node - any two of `K= Q= P=`, and `[Z=]` |
 | `HoseReel` | id node - any two of `K= Q= P=`, and `[Z=]` |
-| `Flow` | id node `Q=` - a fixed flow |
+| `Flow` | id node `Q=` `[MINP=] [Z=]` - a fixed flow, with the pressure it needs |
 | `BFP` | id n1 n2 q1 p1 q2 p2 ... - a backflow preventer's loss curve |
 | `PRV` | id n1 n2 `DP=` |
 | `Orifice` | id n1 n2 `DP=` (sizes the plate) or `BORE=` (known bore), `DN=` or `PIPEDIA=`, `[CD=]` |
@@ -113,18 +113,29 @@ parser's own errors, which are mapped back from the translated row.
 comment, the settings, a `Node` line for every node, then the elements in their
 `.hcx` order with `Use` lines where the pipe type changes.  Values are copied
 exactly as typed.  Anything the `.hcx` reader ignored - an unknown option, a
-stray field, `MINP=` on a fixed flow - had no effect on the result, so it is
+stray field, `K=` on a fixed flow - had no effect on the result, so it is
 dropped and listed in the header comment.  Comments in the `.hcx` are not
 carried over; the header says so.  An existing output file is never
 overwritten.  Every example converts to a `.phc` whose report is identical to
 the `.hcx` original's apart from the model file name.
 
-**Fixed flows.**  `.hcx` accepts `FIXEDFLOW ... MINP=`, but the minimum
-pressure is never used: the solver applies the flow as a nodal demand and checks
-no pressure at that node.  `.phc` therefore refuses `MINP=` on a `Flow` line
-with "not supported", rather than accept a setting that does nothing.  Checking
-a minimum pressure at a fixed flow would change solved results and has not
-been implemented.
+**Fixed flows.**  A `Flow` (`.hcx`: `FIXEDFLOW`) takes exactly its `Q=`
+whatever the pressure - it is a nodal demand, outside every loop - and its
+`MINP=` is the pressure it needs to deliver that flow.  The minimum is CHECKED:
+
+- Section 5 shows it as the node's REQUIRED P;
+- Section 7 lists the fixed flow after the outlets, K shown as `fixed`, PASS
+  or FAIL on pressure alone (its flow cannot fall short - it is set);
+- the governing outlet and the demand point count it like any other outlet,
+  so a fixed flow with the least pressure to spare governs, and the demand
+  point is the supply pressure at which it receives exactly its minimum.
+
+The flow itself is not reduced when the pressure is short; the report shows
+the shortfall as a FAIL instead.  In `.hcx`, `P=` on a FIXEDFLOW means the same
+as `MINP=`.  Until this change the minimum was read and thrown away, so a fixed
+flow far below its required pressure was reported as if all were well.  The
+solved flows and pressures are unchanged by it; the compliance table, and the
+demand point of a model whose fixed flow governs, are new.
 
 **Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
 typed, without Tk, for the text editor planned in `PLAN.md`: whether it is
@@ -376,7 +387,7 @@ than inventing one.
 
 **Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
-rounding of the printed figures allowed for: 180 checks across six models.  Its
+rounding of the printed figures allowed for: 308 checks across seven models.  Its
 first run found two faults that had been in the report since it was written:
 outlet K printed with its unit factors inverted - 36 times too large in L/s and
 bar, invisible in L/min and kPa - and loss per metre printed to four places,
@@ -448,7 +459,7 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases | 0 problems |
 | direct comparison with the C++ engine | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, converter and line checker | 267 / 267 |
+| `.phc` language, converter and line checker | 277 / 277 |
 | spreadsheet load, save and undo | 12 / 12 |
 | spreadsheet editing and cell validation | 18 / 18 |
 | invariance stress | 9 574 / 9 574 |
