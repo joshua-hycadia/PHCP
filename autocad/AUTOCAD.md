@@ -37,6 +37,12 @@ end is not on the network.
 Open the `.phc` in the PHCP editor to validate, calculate and write the report,
 or run `phcp.exe model.phc report.pdf`.
 
+9. **PHCPSOLVE** - exports to a `.phc` beside the drawing, runs
+   `phcp.exe --json` on it, and shows the result at the command line and in a
+   box: whether it converged, the governing outlet and its margin, every
+   outlet that fails, and whether the supply meets the demand.  The first time,
+   it asks where `phcp.exe` is and remembers it.
+
 ## What the export looks like
 
 `examples/08_autocad_export_format.phc` is a file exactly as PHCPEXPORT
