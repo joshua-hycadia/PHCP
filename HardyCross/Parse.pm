@@ -560,10 +560,18 @@ sub parse_row {
             my $r = kv($tk, 'RATIO') // 0;
             HardyCross::fail("PRA %s needs RATIO= more than 1", $tk->[0]) if $r <= 1;
             my $mi = kv($tk, 'MININLET');
+            # BAND= the valve's tolerance, as a percentage of its inlet
+            # pressure (the manufacturer's +/- 5 % unless given); the solve
+            # designs to the bottom of it (HardyCross::ratio_valves).
+            my $band = kv($tk, 'BAND') // 5;
+            HardyCross::fail("PRA %s: BAND= cannot be negative", $tk->[0]) if $band < 0;
+            HardyCross::fail("PRA %s: a band of %g%% of the inlet pressure is more than the %g%% "
+                             . "a %g:1 valve passes - the bottom of the band would be no pressure at all",
+                             $tk->[0], $band, 100 / $r, $r) if $band / 100 >= 1 / $r;
             push @{ $net->{elems} }, {
                 id => $tk->[0], kind => 'RATIO', n1 => $n1, n2 => $n2,
-                ratio => $r, dp => 0, q => 0, in_tree => 0,
-                (defined $mi ? (mininlet => $mi * $net->{f_pres}) : ()),
+                ratio => $r, band => $band / 100, dp => 0, q => 0, in_tree => 0,
+                (defined $mi && $mi > 0 ? (mininlet => $mi * $net->{f_pres}) : ()),
             };
         } elsif ($ty eq 'BFP') {
             push @{ $net->{elems} }, {
