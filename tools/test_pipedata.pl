@@ -108,5 +108,27 @@ is('commas inside FIT= survive the tokeniser (was cut to the first fitting)',
 my $all = $R->(type=>'ASAM', dn=>100, spec=>'1T+2E+1GV+1CV');
 near('   and all four resolve: 6.1 + 2x3.0 + 0.6 + 6.7', $all->{total}, 19.4, 0.001);
 
+print "ROUGHNESS\n";
+{
+    my %k = map { $_ => HardyCross::PipeData::pipe_type($_)->{eps} } HardyCross::PipeData::pipe_types();
+    is('every pipe type has a roughness for Darcy-Weisbach', !grep { !defined $k{$_} || $k{$_} <= 0 } keys %k);
+    # A database written before the roughness column: still read, roughness none.
+    require File::Temp;
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    open my $in, '<:raw', HardyCross::PipeData::path() or die;
+    my $old = do { local $/; <$in> };
+    close $in;
+    $old =~ s/^(PIPETYPE\|[^\n]*)\|[^|\n]*$/$1/mg;
+    open my $o, '>:raw', "$dir/pipes.dat" or die;
+    print $o $old;
+    close $o;
+    my $was = HardyCross::PipeData::path();
+    HardyCross::PipeData::load("$dir/pipes.dat");
+    is('   a database without the column still loads; roughness none published',
+       HardyCross::PipeData::pipe_type('ASAM') && !defined HardyCross::PipeData::pipe_type('ASAM')->{eps}
+       && HardyCross::PipeData::bore('ASAM', 50) == 53.0);
+    HardyCross::PipeData::load($was);
+}
+
 printf "\n%d passed, %d failed\n", $pass, $fail;
 exit($fail ? 1 : 0);
