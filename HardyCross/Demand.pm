@@ -126,6 +126,21 @@ sub flow_path {
 #------------------------------------------------------------------------------
 sub margin_at {
     my ($text, $sid, $p) = @_;
+    my ($ok, $net) = solve_at($text, $sid, $p);
+    return unless $ok;
+    my (undef, $m) = governing_outlet($net);
+    return unless defined $m;
+    return ($m, $net);
+}
+
+#------------------------------------------------------------------------------
+# solve_at -- (converged, network): the model re-read from its text and solved
+# with supply $sid held at pressure $p (a static supply at the same node and
+# elevation, in place of its curve).  Every other supply is left as modelled.
+# (undef) when the text does not read or the supply is not in it.
+#------------------------------------------------------------------------------
+sub solve_at {
+    my ($text, $sid, $p) = @_;
     require HardyCross::Phc;
     my $net = eval { HardyCross::Phc::read_string($text) } or return;
     my ($sup) = grep { ($_->{id} // '') eq $sid } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
@@ -135,10 +150,7 @@ sub margin_at {
     %$sup = (%$sup, kind => 'SUPPLY_STATIC', pstat => $p, z => $z);
     delete $sup->{curve};
     my $ok = eval { HardyCross::solve_model($net) };
-    return unless $ok;
-    my (undef, $m) = governing_outlet($net);
-    return unless defined $m;
-    return ($m, $net);
+    return ($ok, $net);
 }
 
 sub demand_point {
