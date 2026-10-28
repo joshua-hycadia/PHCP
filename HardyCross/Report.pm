@@ -171,6 +171,7 @@ sub write_report {
     $out .= "\n Node head is total head referred to datum: H = p + 9.80665 z  (kPa, m).\n";
     $out .= " Loops are fundamental loops of a spanning tree; supplies and outlets are\n";
     $out .= " edges to a reference node at datum, so pseudo-loops tie fixed-grade points.\n";
+    $out .= design_areas($net) if $net->{areas};
 
     #-------------------------------------------------------- 2. pipe data
     # Which pipe types were used, the standard each is made to, the C factors
@@ -1238,6 +1239,47 @@ sub supply_graph {
 # pump_curves -- what the report says under Section 10 about each pump's
 # curve against its rated duty (HardyCross::PumpCheck).
 #------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+# design_areas -- Section 1's list of the design areas (AREA): each area's
+# governing outlet and, with one supply, its demand point; which area governs
+# and why.  Or, with OPTION DESIGN_AREA, the one area this report is for.
+#------------------------------------------------------------------------------
+sub design_areas {
+    my $net = shift;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($fu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my ($qd, $pd) = (qdp($net->{u_flow}), pdp($net->{u_pres}));
+    my $out = sub_t('DESIGN AREAS');
+    my $res = $net->{area_results};
+    unless ($res) {
+        my ($a) = grep { $_->{name} eq $net->{design_area} } @{ $net->{areas} };
+        return $out . wrap(' ', sprintf('This report is for design area %s (%d outlets), chosen by OPTION '
+            . 'DESIGN_AREA.  The other areas (%s) were not solved.  Outlets in no area flow in every area.',
+            $a->{name}, scalar @{ $a->{outlets} },
+            join(', ', map { $_->{name} } grep { $_ ne $a } @{ $net->{areas} }) || 'none'));
+    }
+    $out .= sprintf " %-12s %7s  %-14s %14s %14s %14s %14s\n", 'AREA', 'OUTLETS', 'GOVERNING',
+        "MARGIN $pu", "DEMAND $fu", "DEMAND $pu", "SUPPLY MARGIN";
+    $out .= thin();
+    for my $r (@$res) {
+        my $d = $r->{demand};
+        $out .= sprintf " %-12s %7d  %-14s %14s %14s %14s %14s%s\n", $r->{name}, $r->{outlets},
+            $r->{governing} // '-', defined $r->{margin} ? fx($r->{margin} / $up, $pd) : '-',
+            $d ? fx($d->{q} / $uf, $qd) : '-', $d ? fx($d->{p} / $up, $pd) : '-',
+            $d ? fx($d->{margin} / $up, $pd) : '-',
+            !$r->{ok} ? '  NOT CONVERGED' : $r->{governs} ? '  <- GOVERNS' : '';
+    }
+    my ($g) = grep { $_->{governs} } @$res;
+    my $why = { SUPPLY => 'it has the least margin at the supply: available minus demand',
+                OUTLET => 'its governing outlet has the least pressure to spare at the operating point',
+              }->{ $net->{area_basis} } // 'its solve did not converge, so nothing about it can be relied on';
+    $out .= "\n" . wrap(' ', "Each area is solved with only its own outlets flowing, and those in no area.  "
+        . "This report is for area $g->{name}, which governs: $why.  MARGIN is the governing outlet's "
+        . "pressure over its requirement; DEMAND is the supply flow and pressure at which that outlet has "
+        . "exactly its requirement.");
+    return $out;
+}
+
 sub pump_curves {
     my $net = shift;
     my ($uf, $up) = @{$net}{qw(f_flow f_pres)};

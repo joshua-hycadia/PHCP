@@ -81,6 +81,11 @@ my $net = eval {
 fail_out($@) unless $net;
 my $ok = eval { HardyCross::solve_model($net) };
 fail_out($@) unless defined $ok;
+# With design areas (AREA), each is solved and the governing one reported.
+if ($net->{areas}) {
+    require HardyCross::Areas;
+    ($net, $ok) = eval { HardyCross::Areas::governing($net, $ok) } or fail_out($@);
+}
 
 # With a report path, write the full calculation report there.
 if (defined $report_path) {

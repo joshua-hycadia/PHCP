@@ -78,6 +78,12 @@ for my $m (grep { !/grid1000/ } sort glob("$EX/*.phc")) {
     }
     my $nfix = () = slurp($m) =~ /^FIXEDFLOW\s+\S+\s+\S+\s+\S+\s+\S+/mg;
     my $nout = () = slurp($m) =~ /^(SPRINKLER|HYDRANT|HREEL)\b/mg;
+    # With design areas, the outlets of the area reported and those in no area.
+    if (my @ar = slurp($m) =~ /^AREA\s+(.*)$/mg) {
+        my (%in, %open);
+        for (@ar) { my ($a, @o) = split; $in{$_} = 1 for @o; if ($a eq ($j->{design_area} // '')) { $open{$_} = 1 for @o } }
+        $nout -= grep { !$open{$_} } keys %in;
+    }
     is("   every outlet listed ($nout outlets, $nfix fixed flows with a minimum)",
        @{ $j->{outlets} } == $nout + $nfix);
     if (@{ $j->{outlets} }) {
