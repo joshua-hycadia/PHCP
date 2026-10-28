@@ -302,6 +302,20 @@ named, and no person is named.
 | `OPTION PROFILE`, `epanet_adapter.pl`, `crosscheck.py` | removed: they served a comparison against another program, and the C++ engine, neither in this repository |
 | every file | no person named; decisions carry their date |
 
+## v1.0 - the GRAPH tab
+
+Asked for: a tab that makes Q^1.85 water supply graphs and prints them,
+independent of the calculation.
+
+| file | change |
+|---|---|
+| `HardyCross/Graph.pm` | new: the figures, their checks, the curves (A supply, B loss, C = A - B, D pump, E = C + D) by the solver's own curve rule, the duties against the design curve, the `.phg` file, and the PDF sheet |
+| `HardyCross/PDF.pm` | the page frame and the file writing split out (`frame`, `fonts`, `geometry`, `write_pages`) so the sheet is printed exactly as the report is; the report's PDF is byte-identical.  The font folder is found from the module's own place (it looked one folder too high, and found the fonts only when run from the repository root) |
+| `phcp_editor.pl` | the GRAPH tab: the figures, the live graph, the problems list, NEW / OPEN / SAVE GRAPH and PRINT TO PDF |
+| `examples/10_supply_graph.phg` | a town main with a booster pump |
+| `tools/test_graph.pl`, `tools/test_editor_window.pl` | the graph headless, and the tab driven |
+| `build_windows.bat` | packs HardyCross::Graph |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -339,3 +353,4 @@ named, and no person is named.
 - [x] v1.0 - `.hcx` removed throughout, no other program or person named
 - [x] v1.0 - program icon on the editor window and taskbar (the .exe files keep the default: PAR::Packer has no --icon)
 - [x] Report: a supply graph for each supply when there are several, then all combined - flows added at equal pressure, the combined duty at one common pressure; example 09, three pumps in parallel (engine files Report, PDF, Demand: no solved number changes)
+- [x] v1.0 - GRAPH tab: Q^1.85 water supply graphs from figures typed in, printed to PDF
