@@ -76,10 +76,15 @@ set DPI=
 perl -MWin32::API -e1 >nul 2>&1 || call cpanm --notest Win32::API
 perl -MWin32::API -e1 >nul 2>&1 && set DPI=-M Win32::API
 
-rem The program icon: the editor sets it on its own window and taskbar
-rem button when it runs.  PAR::Packer no longer writes an icon into an .exe
-rem (its --icon option was removed), so the .exe files themselves show the
-rem default icon in Explorer.
+rem The program icon.  PAR::Packer no longer writes an icon into an .exe (its
+rem --icon option was removed), so tools\pack_with_icon.pl does what it used
+rem to: it sets data\phcp.ico on a copy of the packager's loader before the
+rem program is added to it.  That needs Win32::Exe.  If any step fails the
+rem program is built the plain way, without the icon -- an icon never costs a
+rem working program.  The editor sets the icon on its window either way.
+set ICON=no
+perl -MWin32::Exe -e1 >nul 2>&1 || call cpanm --notest Win32::Exe
+perl -MWin32::Exe -e1 >nul 2>&1 && set ICON=yes
 
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
 rem so it is listed here by name rather than left to the dependency scan.
@@ -91,14 +96,29 @@ set DATA=-a "data/pipes.dat;lib/data/pipes.dat" -a "data/fonts;lib/data/fonts"
 
 echo.
 echo [4/6] Building phcp.exe (command line)...
-call pp -I . %MODS% %DATA% -o phcp.exe phcp.pl
-if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
+set BUILT=no
+if "!ICON!"=="yes" (
+    perl tools\pack_with_icon.pl data\phcp.ico console phcp.exe -I . %MODS% %DATA% phcp.pl && set BUILT=yes
+    if "!BUILT!"=="no" echo        the icon could not be added - building without it
+)
+if "!BUILT!"=="no" (
+    call pp -I . %MODS% %DATA% -o phcp.exe phcp.pl
+    if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
+)
 
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
-    if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
+    set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
+    set BUILT=no
+    if "!ICON!"=="yes" (
+        perl tools\pack_with_icon.pl data\phcp.ico gui phcp_editor.exe -I . !EDMODS! %DATA% phcp_editor.pl && set BUILT=yes
+        if "!BUILT!"=="no" echo        the icon could not be added - building without it
+    )
+    if "!BUILT!"=="no" (
+        call pp --gui -I . !EDMODS! %DATA% -o phcp_editor.exe phcp_editor.pl
+        if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
+    )
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
 )
