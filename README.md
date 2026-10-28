@@ -90,7 +90,7 @@ line that uses it.  Every pipe name is unique.
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
 | `OFD` | PIPE BORE [CD] - an orifice plate of that bore; the drop is calculated |
-| `PRA` | PIPE RATIO [MININLET] - a pressure ratio valve (`3:1`); recognised, not yet solved |
+| `PRA` | PIPE RATIO [MININLET] - a pressure ratio valve, ratio written `3:1` or `1.5` |
 
 **Outlets.**  `SPRINKLER`, `HYDRANT` and `HREEL` define their node and the
 outlet on it together, so the report counts sprinklers apart from hydrants and
@@ -98,15 +98,24 @@ hose reels.  MINFLOW is the least flow the outlet must give; a negative MINFLOW
 is instead the least pressure (`-50` is 50 kPa).  A K of 0 turns the outlet
 off and leaves the node.
 
-**Devices in pipes.**  `BP`, `BFP`, `PRV`, `OPP` and `OFD` name the pipe they
+**Devices in pipes.**  `BP`, `BFP`, `PRV`, `OPP`, `OFD` and `PRA` name the pipe they
 sit in, one device to a pipe.  The device is placed at the pipe's start: PHCP
 splits the pipe at a node named `<pipe>~` at the start node's elevation, and
 the device appears in the report as `<pipe>.<device>` (`51.BP`).  A `BFP` or
 `PRV` with one pair at flow 0 (`BFP 51 0 35`) is a loss that does not vary with
 flow.  An orifice plate takes its pipe's nominal size and its bore from the
-pipe and fitting database.  The pressure ratio valve needs a new kind of
-element in the solver and is refused with "not yet available" until it is
-added.
+pipe and fitting database.
+
+**Pressure ratio valves.**  A `PRA` holds its outlet at its inlet pressure
+divided by its ratio: 1500 kPa into a 3:1 valve gives 500 kPa out.  The drop
+depends on the inlet pressure, which the loop balance only knows once it has
+converged, so the solver sets each valve's drop from the solved inlet pressure
+and solves again until the drops settle.  Section 10 of the report shows each
+valve's ratio, inlet and outlet pressure.  The report warns if the inlet is
+below the MININLET given (the manufacturer's minimum, 200 kPa screwed or
+300 kPa flanged in the data supplied), if flow runs backwards through a valve,
+or if the drops did not settle.  The nominal ratio is used; the valve holds it
+to within 5 % of the inlet pressure in the manufacturer's data.
 
 **Sizes and fittings.**  Under `USE <PIPETYPE>` the size is the nominal size
 and the bore comes from the database; under `USE BORE` it is the bore.  Before
@@ -506,7 +515,7 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language and line checker | 247 / 247 |
+| `.phc` language, line checker and pressure ratio valves | 256 / 256 |
 | supply, pump and loss curves | 14 / 14 |
 | spreadsheet load, save and undo | 12 / 12 |
 | spreadsheet editing and cell validation | 18 / 18 |
