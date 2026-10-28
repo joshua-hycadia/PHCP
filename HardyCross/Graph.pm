@@ -357,10 +357,24 @@ sub read_file {
 #------------------------------------------------------------------------------
 sub write_pdf {
     my ($g, $path, %meta) = @_;
+    my ($s, $sr, %m) = sheet($g, 1, 1, %meta);
+    my ($reg, $bold) = HardyCross::PDF::fonts();
+    HardyCross::PDF::write_pages([ $s ], $path, $reg, $bold, %m,
+                                 title => 'Q^1.85 water supply graph' . (length $m{title} ? " - $m{title}" : ''));
+    return $sr;
+}
+
+#------------------------------------------------------------------------------
+# sheet -- the sheet's page content, as page $page of $npages: (stream,
+# series, the frame's fields).  write_pdf makes it a file of its own; a
+# model's report adds it as a page after its text (SUPPLYGRAPH).
+#------------------------------------------------------------------------------
+sub sheet {
+    my ($g, $page, $npages, %meta) = @_;
     my $chk = check($g);
     die join("\n", map { $_->[1] } @{ $chk->{errors} }) . "\n" unless $chk->{ok};
     my $sr = series($chk);
-    my ($reg, $bold) = HardyCross::PDF::fonts();
+    HardyCross::PDF::fonts();     # the face in use sets the character width
     my $geo = HardyCross::PDF::geometry();
     my ($L, $cw, $adv) = @{$geo}{qw(left char_w advance)};
     my $R = $L + $geo->{cols} * $cw;
@@ -376,7 +390,7 @@ sub write_pdf {
              job => clean($pj->{JOB}), date => clean($pj->{DATE}), designer => clean($pj->{BY}),
              program => $meta{program} // "PHCP $HardyCross::VERSION - Perl Hydraulic Calculation Program",
              model => $meta{model} // '');
-    my $s = HardyCross::PDF::frame(1, 1, %m);
+    my $s = HardyCross::PDF::frame($page, $npages, %m);
 
     # Title block.
     my $y = $geo->{top};
@@ -524,7 +538,7 @@ sub write_pdf {
     $head->("POINTS ENTERED, $fu AT $pu");
     for my $c (sort keys %{ $sr->{points} }) {
         $line->();
-        my $t = "$c  " . join('   ', map { sprintf '%g at %g', @$_ } @{ $sr->{points}{$c} });
+        my $t = "$c  " . join(', ', map { sprintf '%g at %g', @$_ } @{ $sr->{points}{$c} });
         for my $part (wrap_to($t, 52)) {
             $s .= $txt->($kx, $ky, $part, 6.5);
             $ky -= 9;
@@ -541,9 +555,47 @@ sub write_pdf {
         $ky -= 8;
     }
 
-    HardyCross::PDF::write_pages([ $s ], $path, $reg, $bold, %m,
-                                 title => 'Q^1.85 water supply graph' . (length $m{title} ? " - $m{title}" : ''));
-    return $sr;
+    return ($s, $sr, %m);
+}
+
+#------------------------------------------------------------------------------
+# text_sheet -- the sheet as 7-bit ASCII lines, for a model's text report:
+# the project, the points entered and the duty points against the curve
+# designed against.  The PDF report draws the sheet itself as well.
+#------------------------------------------------------------------------------
+sub text_sheet {
+    my $g = shift;
+    my $chk = check($g);
+    return map { "  $_->[1]" } @{ $chk->{errors} } unless $chk->{ok};
+    my $sr = series($chk);
+    my ($fu, $pu) = map { $UNIT_NAME{$_} } @{ $sr->{units} }{qw(FLOW PRESSURE)};
+    my @l;
+    for my $k (grep { !blank($g->{project}{$_}) } @PROJECT) {
+        push @l, sprintf ' %-26s %s', $PROJECT_LABEL{$k}, clean($g->{project}{$k});
+    }
+    push @l, sprintf(' %-26s flow %s, pressure %s', 'UNITS', $fu, $pu), '';
+    push @l, ' CURVES' . ' ' x 31 . 'POINTS ENTERED, FLOW AT PRESSURE';
+    for my $c (qw(A B C D E)) {
+        next unless $sr->{lines}{$c};
+        my $pts = $sr->{points}{$c}
+            ? join(', ', map { sprintf '%g at %g', @$_ } @{ $sr->{points}{$c} })
+            : $c eq 'C' ? 'A - B, at equal flow' : 'C + D, at equal flow';
+        my @w = wrap_to($pts, 96);
+        push @l, sprintf(' %s  %-32s %s', $c, $CURVE_NAME{$c}, shift @w), map { ' ' x 37 . $_ } @w;
+    }
+    push @l, '', " The curve designed against is $sr->{design}.";
+    if (@{ $sr->{duty} }) {
+        push @l, '', sprintf(' %-8s %12s %12s %12s %14s  %s', 'DUTY', "FLOW $fu", "NEEDS $pu", "HAS $pu",
+                             "MARGIN $pu", 'DESCRIPTION');
+        for my $d (@{ $sr->{duty} }) {
+            push @l, sprintf ' %-8s %12.4g %12.4g %12.4g %14s  %s', $d->{label}, $d->{q}, $d->{p}, $d->{avail},
+                ($d->{margin} < 0 ? 'SHORT ' : '') . sprintf('%.4g', abs $d->{margin}), clean($d->{desc});
+        }
+    }
+    push @l, '', map { " $_" } wrap_to('Every curve passes through its points and is straight between them on '
+        . 'Q^1.85 paper; beyond its last point it continues straight in flow.  The figures are as entered: '
+        . 'this sheet is not a calculation of the network in this report.', 120);
+    return @l;
 }
 
 # wrap_to -- text cut into lines of at most $w characters, at spaces.

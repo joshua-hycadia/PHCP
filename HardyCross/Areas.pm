@@ -55,7 +55,7 @@ sub governing {
     $text .= "\n" unless $text =~ /\n\z/;
     my @res;
     for my $a (@{ $net->{areas} }) {
-        my $n = HardyCross::Phc::read_string($text . "OPTION DESIGN_AREA $a->{name}\n");
+        my $n = HardyCross::Phc::read_string($text . "OPTION DESIGN_AREA $a->{name}\n", $net->{model_dir});
         my $c = HardyCross::solve_model($n);
         $n->{converged} = $c;
         my ($go, $m) = HardyCross::Demand::governing_outlet($n);
