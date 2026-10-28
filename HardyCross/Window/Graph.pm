@@ -17,7 +17,7 @@ package main;
 use strict;
 use warnings;
 
-our ($UI, $UI_S_N, %C, $MONO, $UI_B, $UI_S, $mw);   # the window's globals, from phcp_editor.pl
+our ($UI, $UI_S_N, %C, $MONO, $UI_B, $UI_S, $mw, $settings, @dd_refresh);   # the window's globals, from phcp_editor.pl
 #==============================================================================
 # The GRAPH tab: a Q^1.85 water supply graph from figures typed in.
 #
@@ -48,7 +48,7 @@ sub build_graph {
                         ->pack(-side => 'left', -padx => px(4));
     $gv{file} = $bar->Label(-text => '', -font => $UI, -background => $C{paper}, -foreground => $C{muted})
                     ->pack(-side => 'left', -padx => px(12));
-    $bar->Label(-text => 'L/MIN AND KPA.  INDEPENDENT OF THE MODEL - NOTHING HERE COMES FROM THE NETWORK.',
+    $bar->Label(-text => 'INDEPENDENT OF THE MODEL - NOTHING HERE COMES FROM THE NETWORK.',
                 -font => $UI_S_N, -background => $C{paper}, -foreground => $C{muted})->pack(-side => 'right');
     rule($page, 'x', -side => 'top');
 
@@ -86,11 +86,14 @@ sub build_graph {
         $gv{fields}{$name} = $e;
         return $e;
     };
+    # label -- a label; one naming a unit (U:FLOW, U:PRESSURE) is redrawn
+    # when the graph's units change (graph_unit_labels).
     my $label = sub {
         my ($g, $text, $row, $col, %o) = @_;
-        $g->Label(-text => $text, -font => $o{head} ? $UI_S : $UI, -background => $C{paper},
-                  -foreground => $C{muted}, -anchor => 'w')
-          ->grid(-row => $row, -column => $col, -sticky => 'w', -padx => px([0, 10]), -columnspan => $o{span} // 1);
+        my $l = $g->Label(-text => $text, -font => $o{head} ? $UI_S : $UI, -background => $C{paper},
+                          -foreground => $C{muted}, -anchor => 'w');
+        $l->grid(-row => $row, -column => $col, -sticky => 'w', -padx => px([0, 10]), -columnspan => $o{span} // 1);
+        push @{ $gv{ulabels} }, [ $l, $text ] if $text =~ /U:/;
     };
 
     # The sheet: project details and the axes.
@@ -102,8 +105,16 @@ sub build_graph {
         $field->($g, $k, \$graph->{project}{$k}, 30, $r++, 1);
     }
     $r = 0;
+    # The units: the PROJECT tab's when a graph is begun; kept with it.
+    for my $q (qw(FLOW PRESSURE)) {
+        $label->($g, "$q UNIT", $r, 2);
+        my $dd = drop_down($g, \$graph->{units}{$q},
+                           $q eq 'FLOW' ? \@HardyCross::Graph::FLOW_UNITS : \@HardyCross::Graph::PRESSURE_UNITS,
+                           sub { graph_changed() });
+        $dd->grid(-row => $r++, -column => 3, -sticky => 'w', -pady => px(2));
+    }
     for my $k (@HardyCross::Graph::AXIS) {
-        $label->($g, $HardyCross::Graph::AXIS_LABEL{$k}, $r, 2);
+        $label->($g, $HardyCross::Graph::AXIS_LABEL{$k} . ($k eq 'QMAX' ? ', U:FLOW' : ', U:PRESSURE'), $r, 2);
         $field->($g, $k, \$graph->{axis}{$k}, 8, $r++, 3);
     }
     $label->($g, 'AXES LEFT BLANK ARE WORKED OUT FROM THE FIGURES', $r, 2, span => 2);
@@ -111,7 +122,7 @@ sub build_graph {
     # The curves: three tables side by side.
     $heading->($wrap, 'CURVES', 'FLOWS RISING FROM ROW TO ROW, NO GAPS');
     my $cf = $wrap->Frame(-background => $C{paper})->pack(-fill => 'x');
-    my %note = (A => 'AT LEAST TWO POINTS', B => 'ONE POINT: A LOSS LINE THROUGH 0', D => 'FROM CHURN, 0 L/MIN; OR NONE');
+    my %note = (A => 'AT LEAST TWO POINTS', B => 'ONE POINT: A LOSS LINE THROUGH 0', D => 'FROM CHURN, NO FLOW; OR NONE');
     for my $c (@HardyCross::Graph::CURVES) {
         my $t = $cf->Frame(-background => $C{paper})->pack(-side => 'left', -anchor => 'n', -padx => px([0, 22]));
         $t->Label(-text => "$c  $HardyCross::Graph::CURVE_NAME{$c}", -font => $UI_B, -background => $C{paper},
@@ -120,8 +131,8 @@ sub build_graph {
                   -anchor => 'w')->pack(-fill => 'x', -pady => px([0, 4]));
         my $tg = $t->Frame(-background => $C{paper})->pack(-anchor => 'w');
         $label->($tg, '', 0, 0, head => 1);
-        $label->($tg, 'FLOW L/MIN', 0, 1, head => 1);
-        $label->($tg, 'PRESSURE KPA', 0, 2, head => 1);
+        $label->($tg, 'FLOW U:FLOW', 0, 1, head => 1);
+        $label->($tg, 'PRESSURE U:PRESSURE', 0, 2, head => 1);
         for my $i (0 .. $HardyCross::Graph::ROWS - 1) {
             $tg->Label(-text => $i + 1, -font => $UI_S_N, -background => $C{paper}, -foreground => $C{faint})
                ->grid(-row => $i + 1, -column => 0, -sticky => 'e', -padx => px([0, 6]));
@@ -137,8 +148,8 @@ sub build_graph {
     my $dg = $wrap->Frame(-background => $C{paper})->pack(-anchor => 'w');
     $label->($dg, 'NO', 0, 0, head => 1);
     $label->($dg, 'DESCRIPTION', 0, 1, head => 1);
-    $label->($dg, 'FLOW L/MIN', 0, 2, head => 1);
-    $label->($dg, 'PRESSURE KPA', 0, 3, head => 1);
+    $label->($dg, 'FLOW U:FLOW', 0, 2, head => 1);
+    $label->($dg, 'PRESSURE U:PRESSURE', 0, 3, head => 1);
     for my $i (0 .. $HardyCross::Graph::DUTY_ROWS - 1) {
         my @w = ($field->($dg, 'DUTY' . ($i + 1) . 'L', \$graph->{duty}[$i][0], 5,  $i + 1, 0),
                  $field->($dg, 'DUTY' . ($i + 1) . 'D', \$graph->{duty}[$i][1], 34, $i + 1, 1),
@@ -169,10 +180,20 @@ sub build_graph {
 # graph_text -- the figures as they would be saved, to tell whether they changed.
 sub graph_text {
     my @f = (map({ $graph->{project}{$_} } @HardyCross::Graph::PROJECT), map({ $graph->{axis}{$_} } @HardyCross::Graph::AXIS),
+             map({ $graph->{units}{$_} } qw(FLOW PRESSURE)),
              map({ map { @$_ } @{ $graph->{$_} } } @HardyCross::Graph::CURVES), map { @$_ } @{ $graph->{duty} });
     return join "\x00", map { $_ // '' } @f;
 }
 sub graph_modified { return graph_text() ne $gv{saved} }
+
+# graph_unit_labels -- every label naming a unit, in the graph's units.
+sub graph_unit_labels {
+    my $u = HardyCross::Graph::units($graph);
+    for my $l (@{ $gv{ulabels} || [] }) {
+        (my $t = $l->[1]) =~ s/U:(FLOW|PRESSURE)/uc $HardyCross::Graph::UNIT_NAME{ $u->{$1} }/ge;
+        $l->[0]->configure(-text => $t);
+    }
+}
 
 # graph_changed -- after any change: capitals, a fresh check, the shading, the
 # problems list and the drawing.  Run a moment after typing stops.
@@ -184,6 +205,7 @@ sub graph_refresh {
     $_ = uc for grep { defined } values %{ $graph->{project} };
     $_->[1] = uc $_->[1] for grep { defined $_->[1] } @{ $graph->{duty} };
     $_->[0] = uc $_->[0] for grep { defined $_->[0] } @{ $graph->{duty} };
+    graph_unit_labels();
     my $chk = HardyCross::Graph::check($graph);
     $gv{check} = $chk;
     for my $w (values %{ $gv{fields} }) { $w->configure(-background => $C{paper}) }
@@ -260,8 +282,9 @@ sub graph_draw {
         $c->createText($x, $pb + px(4), -text => $t, -anchor => 'n', -font => $UI_S_N, -fill => $C{muted});
         $last = $x + px(4) * length $t;
     }
-    $c->createText($pl - px(5), $pt - px(8), -text => 'PRESSURE, KPA', -anchor => 'w', -font => $UI_S, -fill => $C{ink});
-    $c->createText(($pl + $pr) / 2, $pb + px(26), -text => 'FLOW, L/MIN, ON A FLOW^1.85 SCALE', -font => $UI_S, -fill => $C{ink});
+    my ($fu, $pu) = map { uc $HardyCross::Graph::UNIT_NAME{$_} } @{ $sr->{units} }{qw(FLOW PRESSURE)};
+    $c->createText($pl - px(5), $pt - px(8), -text => "PRESSURE, $pu", -anchor => 'w', -font => $UI_S, -fill => $C{ink});
+    $c->createText(($pl + $pr) / 2, $pb + px(26), -text => "FLOW, $fu, ON A FLOW^1.85 SCALE", -font => $UI_S, -fill => $C{ink});
     $c->createRectangle($pl, $pt, $pr, $pb, -outline => $C{ink});
 
     # Line styles as on the sheet: A thin, B dotted, C dashed, D dash-dot; the
@@ -322,9 +345,9 @@ sub graph_draw {
                             -fill => $d->{margin} < 0 ? $C{error} : $C{ink}, -outline => '');
         $c->createText($pl + px(34), $ky, -anchor => 'w', -font => $UI_S_N, -tags => [ 'key' ],
                        -fill => $d->{margin} < 0 ? $C{error} : $C{ink},
-                       -text => sprintf('%s  %.0f L/MIN AT %.0f KPA - %s HAS %.0f KPA, %s %.0f KPA%s', $d->{label},
-                                        $d->{q}, $d->{p}, $sr->{design}, $d->{avail},
-                                        $d->{margin} < 0 ? 'SHORT BY' : 'MARGIN', abs $d->{margin},
+                       -text => sprintf('%s  %.4g %s AT %.4g %s - %s HAS %.4g %s, %s %.4g %s%s', $d->{label},
+                                        $d->{q}, $fu, $d->{p}, $pu, $sr->{design}, $d->{avail}, $pu,
+                                        $d->{margin} < 0 ? 'SHORT BY' : 'MARGIN', abs $d->{margin}, $pu,
                                         length $d->{desc} ? "  ($d->{desc})" : ''));
         $ky += px(15);
     }
@@ -345,6 +368,8 @@ sub graph_load {
     my $g = shift;
     $graph->{project}{$_} = $g->{project}{$_} for @HardyCross::Graph::PROJECT;
     $graph->{axis}{$_}    = $g->{axis}{$_}    for @HardyCross::Graph::AXIS;
+    $graph->{units}{$_}   = HardyCross::Graph::units($g)->{$_} for qw(FLOW PRESSURE);
+    $_->() for @dd_refresh;
     # Element by element: a list assigned to a row would make new scalars and
     # leave the fields tied to the old ones.
     for my $c (@HardyCross::Graph::CURVES) {
@@ -355,7 +380,10 @@ sub graph_load {
 }
 sub graph_new {
     return unless graph_ok_to_discard();
-    graph_load(HardyCross::Graph::new_graph());
+    # A new graph takes the PROJECT tab's flow and pressure units.
+    my $g = HardyCross::Graph::new_graph();
+    $g->{units}{$_} = $settings->{units}{$_} || $g->{units}{$_} for qw(FLOW PRESSURE);
+    graph_load($g);
     $gv{path} = undef;
     $gv{saved} = graph_text();
     graph_refresh();

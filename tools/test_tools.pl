@@ -102,13 +102,14 @@ print "2. K-FACTOR - Q = K sqrt(P)\n";
 print "3. K CONVERTER - US gpm/psi^0.5 and metric L/min/bar^0.5, L/min/kPa^0.5\n";
 #==============================================================================
 {
-    # 1 US gal = 3.785411784 L; 1 psi = 6.894757293168 kPa = 0.06894757 bar.
+    # 1 US gal = 3.785411784 L; 1 psi = 6.894757293 kPa (the model's table
+    # rounds it to 6.894757, so these agree to 1e-7).
     my $f = 3.785411784 / sqrt(0.06894757293168);
     my $r = HardyCross::Tools::kconvert(value => 5.6, from => 'US');
     is(sprintf('K5.6 (US) is K%.2f metric per root bar - the K80 it is sold as', 5.6 * $f),
-       $r->{ok} && rel($r->{bar}, 5.6 * $f) < 1e-12 && abs($r->{bar} - 80.7) < 0.05 && rel($r->{kpa}, $r->{bar} / 10) < 1e-12);
+       $r->{ok} && rel($r->{bar}, 5.6 * $f) < 1e-7 && abs($r->{bar} - 80.7) < 0.05 && rel($r->{kpa}, $r->{bar} / 10) < 1e-12);
     $r = HardyCross::Tools::kconvert(value => 80, from => 'BAR');
-    is(sprintf('K80 metric is K%.3f US', 80 / $f), $r->{ok} && rel($r->{us}, 80 / $f) < 1e-12 && rel($r->{kpa}, 8) < 1e-12);
+    is(sprintf('K80 metric is K%.3f US', 80 / $f), $r->{ok} && rel($r->{us}, 80 / $f) < 1e-7 && rel($r->{kpa}, 8) < 1e-12);
     $r = HardyCross::Tools::kconvert(value => 8, from => 'KPA');
     is('K8 per root kPa is K80 per root bar', $r->{ok} && rel($r->{bar}, 80) < 1e-12);
     $r = HardyCross::Tools::kconvert(value => 11.2, from => 'US');
@@ -189,6 +190,53 @@ sub colebrook {
        $r->{dw}{regime} eq 'LAMINAR' && rel($r->{dw}{f}, 64 / ($v * 0.002 / 1.004e-6)) < 1e-12);
     is('   and DW against HW is DW - HW, as a percentage of HW',
        rel($one->{diff_pct}, 100 * ($one->{dw}{per_m} - $one->{hw}{per_m}) / $one->{hw}{per_m}) < 1e-12);
+}
+
+#==============================================================================
+print "6. UNITS - read in the units chosen, the sums in L/min, kPa, m and mm\n";
+#==============================================================================
+{
+    my $r = HardyCross::Tools::velocity(type => 'ASAM', size => 50, flow => 500 / 60, units => { FLOW => 'LPS' });
+    is('500 L/min typed as 8.333 L/s: the same 3.777 m/s', rel($r->{velocity}, 3.7773) < 1e-4 && rel($r->{q}, 500) < 1e-12);
+    $r = HardyCross::Tools::velocity(type => 'BORE', size => 4, flow => 1500, units => { SIZE => 'IN' });
+    is('a bore of 4 in is 101.6 mm', rel($r->{bore}, 101.6) < 1e-12);
+    my $base = HardyCross::Tools::loss(type => 'ASAM', size => 65, flow => 1000, length => 25);
+    $r = HardyCross::Tools::loss(type => 'ASAM', size => 65, flow => 16.6666667, length => 25000,
+                                 units => { FLOW => 'LPS', LENGTH => 'MM' });
+    is('loss: 1000 L/min over 25 m, typed as L/s and mm, is the same',
+       rel($r->{hw}{total}, $base->{hw}{total}) < 1e-6 && rel($r->{length}, 25) < 1e-12);
+    is('   and shown in bar: a hundredth of the kPa',
+       rel(HardyCross::Tools::show('PRESSURE', $r->{hw}{total}, { PRESSURE => 'BAR' }), $base->{hw}{total} / 100) < 1e-6);
+    $r = HardyCross::Tools::loss(type => 'ASAM', size => 50, flow => 500, eps => '0.0059055', units => { SIZE => 'IN' });
+    is('a roughness in the SIZE unit: 0.0059055 in is 0.15 mm', rel($r->{eps}, 0.15) < 1e-4);
+    $r = HardyCross::Tools::kfactor(k => 5.6, p => 7, unit => 'GPM/PSI', units => { FLOW => 'GPM', PRESSURE => 'PSI' });
+    is(sprintf('K 5.6 (US) at 7 psi: %.3f gpm = 5.6 sqrt(7)', 5.6 * sqrt 7),
+       rel(HardyCross::Tools::show('FLOW', $r->{q}, { FLOW => 'GPM' }), 5.6 * sqrt(7)) < 1e-9);
+    $r = HardyCross::Tools::kconvert(value => 1.346, from => 'LPS/BAR');
+    is('K 1.346 L/s per root bar is 80.76 L/min per root bar', rel($r->{bar}, 80.76) < 1e-12);
+    $r = HardyCross::Tools::kconvert(value => 80, from => 'LPM/BAR');
+    is('every K unit given: 80 LPM/BAR is 8 LPM/KPA, 1.333 LPS/BAR, 0.1333 LPS/KPA, 5.549 GPM/PSI',
+       rel($r->{all}{'LPM/KPA'}, 8) < 1e-12 && rel($r->{all}{'LPS/BAR'}, 80 / 60) < 1e-12
+       && rel($r->{all}{'LPS/KPA'}, 8 / 60) < 1e-12 && rel($r->{all}{'GPM/PSI'}, 80 / (3.785411784 / sqrt(0.06894757293168))) < 1e-7);
+}
+
+#==============================================================================
+print "7. FITTINGS - equivalent lengths, as for a model's pipe\n";
+#==============================================================================
+{
+    my $r = HardyCross::Tools::fittings(type => 'ASAM', size => 100, spec => '1T 2E G C');
+    is('1T 2E G C on DN100 medium steel: 6.1 + 2 x 3.0 + 0.6 + 6.7 = 19.4 m',
+       $r->{ok} && abs($r->{total} - 19.4) < 1e-9 && @{ $r->{rows} } == 4, join '; ', map { $_->[1] } @{ $r->{errors} || [] });
+    my $m = HardyCross::PipeData::resolve(type => 'ASAM', dn => 100, spec => '1T+2E+1GV+1CV');
+    is('   the same as a model\'s pipe with those fittings', abs($r->{total} - $m->{total}) < 1e-12);
+    is('   2E,1T and 2E 1T are the same', abs(HardyCross::Tools::fittings(type => 'ASAM', size => 50, spec => '2E,1T')->{total}
+       - HardyCross::Tools::fittings(type => 'ASAM', size => 50, spec => '2E 1T')->{total}) < 1e-12);
+    $r = HardyCross::Tools::fittings(type => 'ASAM', size => 100, spec => '1T', c => 150);
+    is('a C other than 120 corrects the length: (150/120)^1.85', abs($r->{total} - 6.1 * (150 / 120) ** 1.85) < 1e-9, $r->{total});
+    refused('a fitting the database lacks is refused, not zero', HardyCross::Tools::fittings(type => 'ASAM', size => 100, spec => '1ZZ'),
+            'SPEC', qr/ZZ/);
+    refused('BORE has no fittings', HardyCross::Tools::fittings(type => 'BORE', size => 100, spec => '1E'), 'TYPE', qr/NOT BORE/);
+    refused('no fittings given', HardyCross::Tools::fittings(type => 'ASAM', size => 100, spec => ''), 'SPEC', qr/GIVE THE FITTINGS/);
 }
 
 #==============================================================================
