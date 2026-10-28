@@ -130,9 +130,13 @@ sub load {
         my $kind = shift @f;
         if    ($kind eq 'DATASET')  { ($DATASET, $ISSUED) = @f }
         elsif ($kind eq 'PIPETYPE') {
-            my ($code, $name, $std, $range, $c) = @f;
+            # The roughness (mm, for Darcy-Weisbach) is the last field; a
+            # database written before it was added has none, and DASH is none
+            # published -- either way undef, and the caller's default applies.
+            my ($code, $name, $std, $range, $c, $eps) = @f;
+            $eps = undef if defined $eps && ($eps eq 'DASH' || $eps !~ /^\s*(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*\z/);
             $PIPETYPE{$code} = { name => $name, std => $std, range => $range,
-                                 c => $c };
+                                 c => $c, eps => $eps };
         }
         elsif ($kind eq 'PIPE') {
             my ($code, $dn, $od, $bore, $k) = @f;

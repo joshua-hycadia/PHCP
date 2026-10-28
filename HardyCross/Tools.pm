@@ -23,9 +23,10 @@
 #   handed to HardyCross::elem_hf with the program's default options -- the
 #   Hazen-Williams constant 6.05e7 and exponents 1.85 and 4.87, water at
 #   20 C (kinematic viscosity 1.004e-6 m2/s) -- so a pipe here loses exactly
-#   what the same pipe loses in a model.  The C factor defaults to the pipe
-#   type's, from the database; the roughness to 0.045 mm, the program's
-#   default (the database holds no roughness).  Either can be changed.
+#   what the same pipe loses in a model.  The C factor and the roughness
+#   default to the pipe type's, from the database (a type with no roughness
+#   published, and BORE, take 0.045 mm, the program's default).  Either can
+#   be changed.
 #   Darcy-Weisbach's friction factor is the solver's: an explicit solution of
 #   the Colebrook equation when turbulent (Re 4000 and above), 64/Re when
 #   laminar (below 2000), and a straight blend of the two between.
@@ -75,6 +76,15 @@ sub type_c {
     HardyCross::Parse::ensure_db();
     my $t = $type ne $BORE && HardyCross::PipeData::pipe_type($type);
     return $t ? $t->{c} : 120;
+}
+
+# type_eps -- the pipe type's roughness in mm, from the database; 0.045, the
+# program's default, for BORE or a type with none published.
+sub type_eps {
+    my $type = shift // '';
+    HardyCross::Parse::ensure_db();
+    my $t = $type ne $BORE && HardyCross::PipeData::pipe_type($type);
+    return $t && defined $t->{eps} ? $t->{eps} + 0 : $EPS_DEFAULT;
 }
 
 #------------------------------------------------------------------------------
@@ -184,7 +194,7 @@ sub kconvert {
 
 #------------------------------------------------------------------------------
 # loss -- { type, size, flow, length, c, eps } as typed.  Length blank is one
-# metre; C blank is the pipe type's; roughness blank is 0.045 mm.  Returns
+# metre; C and roughness blank are the pipe type's.  Returns
 #   { ok => 1, bore, velocity, length, c, eps,
 #     hw => { per_m, total },
 #     dw => { per_m, total, re, f, regime },
@@ -210,7 +220,7 @@ sub loss {
         my ($v, $ce) = number('C FACTOR', $f{c});
         if ($ce) { push @err, [ 'C', $ce ] } else { $c = $v }
     }
-    my $eps = $EPS_DEFAULT;
+    my $eps = $f{type} && !$de ? type_eps($f{type}) : $EPS_DEFAULT;
     unless (blank($f{eps})) {
         my ($v, $ee) = number('ROUGHNESS', $f{eps}, 'nonneg');
         if ($ee) { push @err, [ 'EPS', $ee ] } else { $eps = $v }
