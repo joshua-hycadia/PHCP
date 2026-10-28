@@ -11,13 +11,14 @@
 #
 # WHY THIS EXISTS
 #   PAR::Packer's pp once had --icon; it was removed.  An .exe made by pp is
-#   its loader (parl.exe, or parlw.exe for a windowed program) with the
-#   program's archive appended.  Rewriting the finished .exe's resources would
+#   its loader (parl.exe) with the program's archive appended; a windowed
+#   program (pp --gui) is the same loader with its subsystem set to windows.  Rewriting the finished .exe's resources would
 #   move or drop that appended archive, so the icon is set where pp itself
 #   used to set it: on a copy of the LOADER, before the archive is added.
 #
 #     1. pp -p   packs the script and its modules into a .par archive
-#     2. a copy of parl.exe (parlw.exe) has its icon replaced (Win32::Exe)
+#     2. a copy of parl.exe has its icon replaced, and for a windowed
+#        program its subsystem set to windows (Win32::Exe)
 #     3. that copy writes the .exe:  loader -B -O<out.exe> <archive.par>
 #        (-B bundles the core modules, as pp does by default)
 #
@@ -37,9 +38,8 @@ die "usage: pack_with_icon.pl icon.ico console|gui out.exe pp-options... script\
 die "pack_with_icon: $icon not found\n" unless -f $icon;
 die "pack_with_icon: Win32::Exe is not installed\n" unless eval { require Win32::Exe; 1 };
 
-# The loader: parl.exe for a console program, parlw.exe for a windowed one,
-# found beside the perl that runs this, or on the PATH.
-my $name = $mode eq 'gui' ? 'parlw.exe' : 'parl.exe';
+# The loader, parl.exe, found beside the perl that runs this, or on the PATH.
+my $name = 'parl.exe';
 my ($loader) = grep { -f } map { File::Spec->catfile($_, $name) }
     grep { defined && length } $Config{sitebin}, $Config{bin}, $Config{scriptdir},
     split /;/, $ENV{PATH} // '';
@@ -60,12 +60,28 @@ system($cmd) == 0 && -s $par
 # 2. the loader, with the icon.
 copy($loader, $tmp) or die "pack_with_icon: cannot copy $loader: $!\n";
 my $exe = Win32::Exe->new($tmp) or die "pack_with_icon: Win32::Exe cannot read $tmp\n";
-$exe->update(icon => $icon);
+$exe->update(icon => $icon, ($mode eq 'gui' ? (gui => 1) : ()));
 $exe->write($tmp);
 
-# 3. the program: the loader with the archive.
-system($tmp, '-B', "-O$out", $par) == 0 && -s $out
-    or die "pack_with_icon: the loader did not write $out\n";
+# 3. the program: the loader with the archive.  Its own output is shown if it
+# fails; and an untouched copy of the loader is tried, so the log says
+# whether the packing or the icon was at fault.
+my $run = sub {
+    my ($l) = @_;
+    unlink $out;
+    my $said = qx{"$l" -B "-O$out" "$par" 2>&1};
+    return ($? == 0 && -s $out, $said);
+};
+my ($ok, $said) = $run->($tmp);
+unless ($ok) {
+    print "pack_with_icon: the loader with the icon did not write $out:\n$said\n";
+    my $plain = "$stem.plain-loader.exe";
+    copy($loader, $plain);
+    my ($pok, $psaid) = $run->($plain);
+    unlink $plain, $out;
+    die $pok ? "pack_with_icon: an untouched loader writes it - so setting the icon spoils the loader\n"
+             : "pack_with_icon: an untouched loader does not write it either:\n$psaid\n";
+}
 unlink $par, $tmp;
 print "pack_with_icon: $out written with the icon $icon\n";
 exit 0;
