@@ -228,6 +228,23 @@ they opened it - rather than overwrite the first person's change.
 101 pipe sizes across eight pipe types, 219 fitting equivalent lengths, and 19
 PPI factors for PE.
 
+**Roughness.**  Each pipe type carries an absolute roughness k (mm) for
+Darcy-Weisbach beside its Hazen-Williams C, each value's source given in the
+file's header:
+
+| pipe type | k, mm | source |
+|---|---|---|
+| ASAM, ASAH, S20, S40 (steel) | 0.045 | commercial steel, new: Moody (1944).  Galvanised bore is rougher (0.15 mm) |
+| PVCM16 (PVC-M) | 0.003 | Vinidex Hydro PVC-M catalogue, water at 20 C; agrees with AS 2200 |
+| PE11, PE9 (PE100) | 0.007 | Iplex POLIplex PE100 hydraulic design, water at 20 C |
+| CPVC | 0.003 | none published for the product (its maker gives C 150 only): the AS 2200 value for clean thermoplastics pipe |
+
+These are for new, clean pipe; AS 2200 gives 0.003 to 0.015 mm for
+thermoplastics, the upper end allowing for slime and jointing.  The QUICK
+TOOLS pressure loss calculator takes them by default.  A database from before
+the column still reads: its pipe types show DASH (none published), and the
+program's default, 0.045 mm, applies.
+
 **Traceability.**  Because the data can change, every report states the
 database's DATASET name and date, its file name and the SHA-256 of the exact
 bytes read (Section 4) - with its full path when it is a team folder's or an
@@ -445,9 +462,9 @@ in L/min, pressure in kPa, length in m, bore and roughness in mm.
 | PRESSURE LOSS | a pipe type and size, a flow, and optionally a length (blank: 1 m), C and roughness | the friction loss by Hazen-Williams and by Darcy-Weisbach side by side, per metre and over the length; the velocity, Reynolds number, regime and friction factor |
 
 The numbers are a calculation's own.  The bore is the pipe and fitting
-database's for the type and size; the C factor defaults to the type's, and the
-roughness to 0.045 mm, the program's default (the database holds no
-roughness).  Both losses are the solver's own routine applied to one pipe,
+database's for the type and size; the C factor and the roughness default to
+the type's (see Roughness, under Pipe and fitting database; BORE takes
+0.045 mm, the program's default).  Both losses are the solver's own routine applied to one pipe,
 with the program's default options - the Hazen-Williams constant 6.05e7 and
 exponents 1.85 and 4.87; water at 20 C - so a pipe here loses exactly what
 the same pipe loses in a model.  The K converter uses the exact US gallon
@@ -768,7 +785,7 @@ others on the page, and the report says which check to make.
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
-| pipe and fitting database | 35 / 35 |
+| pipe and fitting database | 37 / 37 |
 | `.phc` language, line checker and pressure ratio valves | 266 / 266 |
 | AutoCAD exporter, structure | 5 / 5 |
 | JSON interface | 81 / 81 |
@@ -777,9 +794,9 @@ others on the page, and the report says which check to make.
 | PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 142 / 142 |
-| quick tools | 39 / 39 |
+| quick tools | 42 / 42 |
 | water supply graph | 43 / 43 |
-| database editing and location | 37 / 37 |
+| database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |
 
 ## Stress testing

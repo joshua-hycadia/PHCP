@@ -10,15 +10,36 @@
 # treats it as missing data and stops, never as zero.
 DATASET|Hycadia pipe and fitting database|28 October 2026
 
-# PIPETYPE|code|name|standard|range|C
-PIPETYPE|ASAM|AS 1074 Medium steel tube|AS 1074|DN20–DN150|120
-PIPETYPE|ASAH|AS 1074 Heavy steel tube|AS 1074|DN20–DN150|120
-PIPETYPE|S20|Australian Schedule 20 steel|ASME B36.10M|DN200–DN600|120
-PIPETYPE|S40|Schedule 40 steel|ASME B36.10M|DN25–DN600|120
-PIPETYPE|CPVC|BlazeMaster CPVC, SDR 13.5|ASTM F442|DN20–DN80|150
-PIPETYPE|PE11|PE100 polyethylene, SDR 11, PN16|AS/NZS 4130|DN63–DN630|150
-PIPETYPE|PE9|PE100 polyethylene, SDR 9, PN20|AS/NZS 4130|DN63–DN630|150
-PIPETYPE|PVCM16|Vinidex Hydro PVC-M, Series 2, PN16|AS/NZS 4765|DN100–DN450|150
+# PIPETYPE|code|name|standard|range|C|roughness_mm
+#
+# ROUGHNESS is the absolute roughness k, in mm, for the Darcy-Weisbach
+# (Colebrook-White) friction factor: the bore of new, clean pipe carrying
+# water.  Sources:
+#   steel (ASAM ASAH S20 S40)  0.045  commercial steel, new: Moody, "Friction
+#                                     factors for pipe flow", Trans. ASME 66
+#                                     (1944), 0.00015 ft.  Galvanised bore is
+#                                     rougher (0.15 mm, Moody); old or
+#                                     corroded steel much more.
+#   PVCM16                     0.003  Vinidex Hydro PVC-M catalogue (VIN186):
+#                                     k = 0.003 mm, water at 20 C; agrees with
+#                                     AS 2200 for clean thermoplastics pipe.
+#   PE11 PE9                   0.007  Iplex POLIplex PE100 hydraulic design:
+#                                     k = 0.007 mm, water at 20 C.
+#   CPVC                       0.003  no roughness is published for
+#                                     BlazeMaster (Lubrizol gives C 150 only);
+#                                     the AS 2200 value for clean
+#                                     thermoplastics pipe is used.
+# AS 2200 gives 0.003 to 0.015 mm for clean thermoplastics pipe: the upper
+# end allows for slime and jointing.  DASH: none published (the program then
+# uses 0.045 mm, its default).
+PIPETYPE|ASAM|AS 1074 Medium steel tube|AS 1074|DN20–DN150|120|0.045
+PIPETYPE|ASAH|AS 1074 Heavy steel tube|AS 1074|DN20–DN150|120|0.045
+PIPETYPE|S20|Australian Schedule 20 steel|ASME B36.10M|DN200–DN600|120|0.045
+PIPETYPE|S40|Schedule 40 steel|ASME B36.10M|DN25–DN600|120|0.045
+PIPETYPE|CPVC|BlazeMaster CPVC, SDR 13.5|ASTM F442|DN20–DN80|150|0.003
+PIPETYPE|PE11|PE100 polyethylene, SDR 11, PN16|AS/NZS 4130|DN63–DN630|150|0.007
+PIPETYPE|PE9|PE100 polyethylene, SDR 9, PN20|AS/NZS 4130|DN63–DN630|150|0.007
+PIPETYPE|PVCM16|Vinidex Hydro PVC-M, Series 2, PN16|AS/NZS 4765|DN100–DN450|150|0.003
 
 # PIPE|code|DN|OD_mm|bore_mm|K
 PIPE|ASAM|20|26.9|21.6|0.00273

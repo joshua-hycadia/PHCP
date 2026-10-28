@@ -1249,7 +1249,7 @@ sub build_tools {
 
     # PRESSURE LOSS.
     $g = $card->('LOSS', 'PRESSURE LOSS', 'THE FRICTION LOSS IN A PIPE AT A FLOW, BY HAZEN-WILLIAMS AND BY DARCY-WEISBACH, '
-        . 'WITH THE SOLVER\'S OWN FORMULAS.  BLANK: 1 M OF PIPE, THE TYPE\'S C, 0.045 MM ROUGHNESS.', 3, 10);
+        . 'WITH THE SOLVER\'S OWN FORMULAS.  BLANK: 1 M OF PIPE, AND THE TYPE\'S C AND ROUGHNESS FROM THE DATABASE.', 3, 10);
     $r = 0;
     $pipe->($g, 'LOSS');
     $label->($g, 'FLOW');
@@ -1259,7 +1259,7 @@ sub build_tools {
     $label->($g, 'C FACTOR (HW)');
     $entry->($g, 'LOSS', 'C', 10);
     $label->($g, 'ROUGHNESS (DW)');
-    $entry->($g, 'LOSS', 'EPS', 10, 'MM - BLANK: 0.045');
+    $entry->($g, 'LOSS', 'EPS', 10, 'MM - BLANK: THE TYPE\'S');
 
     tools_refresh();
 }

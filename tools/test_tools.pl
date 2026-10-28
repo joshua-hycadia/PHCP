@@ -21,7 +21,8 @@
 #                      Darcy-Weisbach against the Colebrook equation solved
 #                      here by iteration, 64/Re when laminar and the blend
 #                      of the two in the transitional zone; length, C and
-#                      roughness each followed.
+#                      roughness each followed, each type's own roughness
+#                      from the database.
 #   5. REFUSED.        Each problem names its field.
 #==============================================================================
 use strict;
@@ -151,14 +152,15 @@ sub colebrook {
         for my $dn (HardyCross::Tools::sizes($type)) {
             my $d = HardyCross::PipeData::bore($type, $dn);
             my $c = HardyCross::PipeData::pipe_type($type)->{c};
+            my $k = HardyCross::PipeData::pipe_type($type)->{eps};
             for my $q (100, 1000, 5000) {
                 my $x = HardyCross::Tools::loss(type => $type, size => $dn, flow => $q);
                 $bad++ unless rel($x->{hw}{per_m}, $hw->($q, $c, $d)) < 1e-12
-                           && rel($x->{dw}{per_m}, $dw->($q, 0.045, $d)) < 0.01;
+                           && $x->{eps} == $k && rel($x->{dw}{per_m}, $dw->($q, $k, $d)) < 0.01;
             }
         }
     }
-    is('every type and size at 100, 1000 and 5000 L/min: HW exact, DW within 1 %', !$bad);
+    is('every type and size at 100, 1000 and 5000 L/min, the type\'s C and roughness: HW exact, DW within 1 %', !$bad);
     $r = HardyCross::Tools::loss(type => 'S40', size => 600, flow => 100);
     is(sprintf('transitional (S40 DN600 at 100 L/min, Re %.0f): the blend, within 1 %%', $r->{dw}{re}),
        $r->{dw}{regime} eq 'TRANSITIONAL' && rel($r->{dw}{f}, colebrook($r->{dw}{re}, 0.045, $r->{bore})) < 0.01);
@@ -166,7 +168,14 @@ sub colebrook {
     my $one = HardyCross::Tools::loss(type => 'ASAM', size => 65, flow => 1000);
     is('over 25 m: 25 times the loss per metre, both formulas',
        rel($l->{hw}{total}, 25 * $one->{hw}{per_m}) < 1e-12 && rel($l->{dw}{total}, 25 * $one->{dw}{per_m}) < 1e-12);
+    my %k = map { $_ => HardyCross::PipeData::pipe_type($_)->{eps} } qw(ASAM ASAH S20 S40 CPVC PE11 PE9 PVCM16);
+    is('each pipe type has its roughness: steel 0.045, CPVC 0.003, PE100 0.007, PVC-M 0.003 mm',
+       join(' ', map { "$_=$k{$_}" } sort keys %k) eq 'ASAH=0.045 ASAM=0.045 CPVC=0.003 PE11=0.007 PE9=0.007 PVCM16=0.003 S20=0.045 S40=0.045',
+       join(' ', map { "$_=" . ($k{$_} // 'undef') } sort keys %k));
+    $r = HardyCross::Tools::loss(type => 'BORE', size => 50, flow => 500);
+    is('BORE takes the program\'s default roughness, 0.045 mm', $r->{eps} == 0.045);
     $r = HardyCross::Tools::loss(type => 'PE11', size => 110, flow => 1000);
+    is('the roughness is the pipe type\'s: 0.007 mm for PE100', $r->{eps} == 0.007);
     is('the C factor is the pipe type\'s: 150 for PE', $r->{c} == 150 && rel($r->{hw}{per_m}, $hw->(1000, 150, HardyCross::PipeData::bore('PE11', 110))) < 1e-12);
     $r = HardyCross::Tools::loss(type => 'ASAM', size => 50, flow => 500, c => 100, eps => '0.0015');
     is('C and roughness as typed', $r->{c} == 100 && $r->{eps} == 0.0015 && rel($r->{hw}{per_m}, $hw->(500, 100, 53.0)) < 1e-12
