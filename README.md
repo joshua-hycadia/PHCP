@@ -7,31 +7,26 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.0.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), a spreadsheet front end, and a monospace ASCII
+for the model (`.phc`), a text editor built around it, and a monospace ASCII
 calculation report.  The whole stack is Perl.
 
 ```
+perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
-perl phcp_gui.pl model.hcx               # the spreadsheet (FILE > WRITE REPORT, Ctrl+R)
+perl phcp_viewer.pl model.phc            # read-only results viewer
 perl tools/test_phc.pl                   # verify the .phc language
+perl tools/test_editor.pl                # verify the editor's logic
+perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
-perl tools/test_gui_document.pl          # verify the spreadsheet's load, save and undo
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
-`phcp.pl` reads either input format; the extension decides which.  The results
-viewer, `phcp_viewer.pl`, reads models through the same call and its OPEN
-dialog now lists `.phc`; the viewer itself has not yet been run with a `.phc`
-file (Tk is not installed where this was built).
-`.phc` is the command language described below.  `.hcx` is the older block
-format, still read so the AutoCAD exporter keeps working; every example is
-supplied in both, the `.hcx` as the baseline the `.phc` is tested against.  The spreadsheet reads and writes `.hcx`
-only.
-
-**Planned.**  A text editor for `.phc` will replace the spreadsheet; see
-`PLAN.md`.  Until that work is merged, the spreadsheet is the graphical front
-end.
+`phcp.pl` and the viewer, `phcp_viewer.pl`, read either input format; the
+extension decides which.  `.phc` is the command language described below.
+`.hcx` is the older block format, still read so the AutoCAD exporter keeps
+working; every example is supplied in both, the `.hcx` as the baseline the
+`.phc` is tested against.  The editor works in `.phc` only.
 
 ## The .phc command language
 
@@ -175,13 +170,11 @@ nodes, and example 04's sprinkler on the supply node has a node of its own -
 so the reports differ in those names, not in the numbers.
 
 **Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
-typed, without Tk, for the text editor planned in `PLAN.md`: whether it is
-complete, the command's field template and which field the cursor is in, the
-pipe types or fitting codes from the database for a pick list, and a proposed
-next line.  A line the language accepts is also parsed as its `.hcx` row, so a
-size the pipe type does not make, or a fitting the database lacks, shows on the
-line as it is typed.  It is tested headless in `tools/test_phc.pl`; no editor
-uses it yet.
+typed, without Tk, for the text editor: whether it is complete, the command's
+field template and which field the cursor is in, the pipe types or fitting
+codes from the database for a pick list, and a proposed next line.  A line the
+language accepts is also parsed as its `.hcx` row, so a size the pipe type does
+not make, or a fitting the database lacks, shows on the line as it is typed.
 
 ## Pipe and fitting database
 
@@ -266,61 +259,84 @@ DN300 Schedule 20 tee (20.748 m, exact modifier 1.13378); and every rule above.
 If an edit to the database makes it fail, either the edit is wrong or the
 expected value must be re-derived by hand - never just changed to match.
 
-## The spreadsheet
+## The text editor
 
-Sheets: PROJECT, NETWORK, OTHER NODES, SUPPLIES, PUMPS, PRESSURE DEVICES, and
-the computed PRESSURES, LOOPS and CONVERGENCE.  Results along the bottom,
-validation on the right, both always visible.
+`perl phcp_editor.pl [model.phc]`
 
-**OTHER NODES** holds every node no pipe touches - the downstream side of an
-orifice, PRV or backflow preventer.  These used to be preserved invisibly on
-save; an outlet in the model but on no sheet is a trap for whoever edits next.
+```
++------------------------------------------------------------------+
+| NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
++------------------------------------------------------------------+
+| NETWORK | PROJECT                                                 |
+|  USE PIPE PC ... | NODE NC WATER ... | PUMP BP BFP ...  (strip)   |
+|  +----+--------------------------------------+ +---------------+ |
+|  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
+|  |  2 | NODE      R1 4.5                     | | WARNINGS      | |
+|  +----+--------------------------------------+ | NODES         | |
+|  status bar: the field template | the line's results             |
++------------------------------------------------------------------+
+| VALIDATION | PIPES | NODES | OUTLETS | REPORT      [ ] HIDE ...   |
++------------------------------------------------------------------+
+```
 
-**PUMPS** holds pump curves as flow/pressure pairs.  Pumps used to be kept on
-save but could not be edited.
+A white, flat window: one-pixel grey rules instead of bevels, blue and
+black used only to highlight, red for what is wrong.  Monospace for the
+model and the results, a plain sans-serif for the window's own labels, and
+everything in capitals.
 
-**Spreadsheet editing.**
+**The editor holds the network only.**  The title, project details, units,
+method and options are set in the PROJECT tab.  The `.phc` file still holds
+them, as lines at its head, so a saved file is complete and `phcp.pl` reads
+it unchanged; the editor takes them out when a file is opened and writes
+them back when it is saved.  A setting typed into the network is marked as
+an error that says so.
 
-| key | action |
+**VALIDATE before CALCULATE.**  CALCULATE (F5) is available only when the
+model is exactly as it was when it last passed VALIDATE (F4); any change, in
+the editor or the PROJECT tab, turns it off again.  VALIDATE checks every
+line, the settings, nodes undefined or unconnected, and the network's
+structure as the solver will, and lists each problem in the VALIDATION tab:
+
+| column | holds |
 |---|---|
-| Ctrl+C / Ctrl+X / Ctrl+V | copy, cut, paste - tab-separated, so blocks go to and from Excel |
-| Delete | clear a selection of several cells (on one cell it edits text as usual) |
-| Ctrl+Delete | always clear the selection |
-| Ctrl+D | fill down the selection; ids step to the next one.  One row selected: copy the row above's cell |
-| Ctrl+Shift+D | copy the whole row above, id incremented |
-| Ctrl++ / Ctrl+- | insert a row above / delete the selected rows |
-| right-click | the same, on a menu |
+| WHERE | the line, or PROJECT TAB |
+| FIELD | the field at fault: SIZE, START, MINFLOW, ... or the PROJECT tab field |
+| WHAT IS WRONG | the problem |
+| WHY | what the program needs and why, in plain words - and for a line that stops short, how the command is written |
 
-Every operation is one undo step.  A paste never writes a calculated or spacer
-cell - it skips them and says how many - and cells are split on tabs only, so a
-fitting string such as `2E,1T` arrives in one cell.
+Each fault is marked on its own field in the editor; a click on a row goes
+there and selects it.
 
-**Cell-level validation.**  As you type, a cell with a problem turns red: a
-missing length, a number column holding text, a pipe type not in the database, a
-DN not made in that pipe, a fitting string that returns DATA_REQUIRED, an outlet
-short of two of K, flow and pressure, a curve with too few points.  The same
-findings are listed in the validation panel, and clicking one opens its sheet
-with the cell selected.  One list drives both, so the sheet and the panel cannot
-disagree.
+| feature | behaviour |
+|---|---|
+| syntax colours | command words blue and bold; a name being defined black and bold; references black; numbers dark blue; pipe types, fittings and units blue; comments grey italic.  A line in error has a pale red band and a red line number |
+| line numbers | a gutter beside the editor, scrolled with it; the cursor's line in black.  A click on a number goes to the line |
+| command strip | the network commands, in their three groups.  A click starts a line with that command |
+| status bar | the field template of the current command, the field the cursor is in highlighted; then the line's error, or after a calculation the element's results |
+| proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it |
+| pick list | Ctrl+Space in a `USE` type or a pipe's fittings lists the codes with descriptions |
+| ERRORS / WARNINGS / NODES | live as you type: lines the reader refuses; the last calculation's warnings; nodes undefined or unconnected.  A click goes to the line, or to the PROJECT tab field |
+| PROJECT tab | PROJECT DETAILS and DESIGN BASIS (the report's cover sheet), UNITS (each a drop-down, the default marked), CALCULATION (METHOD and the options; a blank option takes its default).  Text is kept in capitals |
+| PIPES | 21 columns: NAME, SNODE, ENODE, NOM, I.D., MAT, C (C factor, or absolute roughness under `METHOD DW`), L, F, T, FIT K, Q, PF, PF/M, PE, PS (loss across a device in the pipe), PV, VEL, RE, F (Darcy) and FORMULA.  A right click on the headings opens the column chooser; NAME to PF, PS and VEL are shown at first |
+| NODES, OUTLETS | every node with its type, elevation, pressure, discharge, requirement and margin; every outlet and fixed flow with the required and achieved flow and pressure, the margin and PASS or FAIL |
+| sorting | a click on a heading sorts on it, a second click reverses; the heading shows the direction |
+| HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES |
+| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
+| undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 
-**Undo and redo**, Ctrl+Z and Ctrl+Y, on whole-document snapshots.  A
-carry-down that writes five cells undoes as one step, and derived cells are
-recomputed rather than restored, so an undo cannot bring back a value that no
-longer follows from its inputs.
+The window is thin.  Every decision it shows - a line's status, the three
+lists, the proposal, the pick list, what VALIDATE finds and why, the tables
+and their sorting - is made by
+`HardyCross/Editor.pm`, which has no Tk in it and calls the same `.phc`
+reader the solver uses, so the editor cannot call a line good that the solve
+refuses.  `tools/test_editor.pl` checks those decisions headless;
+`tools/test_editor_window.pl` drives the window itself under a virtual
+display (it runs itself under `xvfb-run` when there is no display, and says
+SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
+Linux with Tk 804.036; the window has not yet been run on Windows.
 
-**`--tab NAME`** opens on a given sheet.
-
-### Two save defects fixed
-
-**Saving renamed outlets.**  The NETWORK sheet has no outlet-id column, so a
-save invented `<node>-OUT` and turned HYD1 into HY-OUT.  Outlet ids from the
-file are now kept.
-
-**Saving degraded the model.**  The serialiser read derived cells as shown -
-a derived K rounded for display to 75.89 was written back as an INPUT in place
-of the exact 75.8946, turning two inputs into three.  Each save moved flows by
-about 0.1 L/min.  Only typed inputs are written now; `test_gui_document.pl`
-checks every parameter survives a load and save exactly.
+The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
+tests, and Tk::TableMatrix is no longer needed.
 
 ## The report: cover sheet
 
@@ -348,8 +364,7 @@ condition), and the OPERATING POINT, with the supply connected.  The schedules
 are at the operating point, and the cover says so.
 
 The fields are entered as `.phc` `TITLE` and `PROJECT` lines -
-`Project HAZARD Ordinary Hazard 1` - on the spreadsheet's PROJECT sheet, or in a
-`.hcx` model's PROJECT block:
+`PROJECT HAZARD Ordinary Hazard 1` - or in a `.hcx` model's PROJECT block:
 
 ```
 PROJECT
@@ -433,7 +448,8 @@ too few in bar/m for PF/M x T to reproduce PF.
 
 ## PDF output
 
-`phcp.pl model.phc report.pdf`, or FILE > WRITE REPORT with a .pdf name.  The
+`phcp.pl model.phc report.pdf`, or FILE > WRITE REPORT in the editor with a
+.pdf name.  The
 PDF is a faithful print of the text report - the same characters in the same
 columns, Courier 9 pt on A4 landscape - with a running header (title, job,
 revision, date) and a footer (program, model, page n of m).  Both come from
@@ -454,15 +470,19 @@ not evidence; this is.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe` and `phcp_gui.exe` on a Windows PC with
-Strawberry Perl installed: it fetches Tk, Tk::TableMatrix and PAR::Packer from
-CPAN, packages both programs with the pipe and fitting database inside, and runs a
-smoke test on a `.hcx` and a `.phc` example.  The packaging recipe was proven on
-Linux, where both packaged programs ran from an empty folder and gave a report
-identical to running from source.  That was before the `.phc` reader
-(`HardyCross/Phc.pm`) was added to the package list; packaging it has not yet
-been run.  The Windows build itself has not yet been
-run.
+`build_windows.bat` builds `phcp.exe` and `phcp_editor.exe` on a Windows PC
+with Strawberry Perl installed: it fetches Tk and PAR::Packer from CPAN,
+packages both programs with the pipe and fitting database inside, and runs a
+smoke test on a `.hcx` and a `.phc` example.
+
+The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
+with the same module lists: from an empty folder the packaged `phcp` solved
+examples and wrote a report identical to running from source, and the
+packaged `phcp_editor` opened its window with a model loaded.  That run found
+and fixed a defect - the packaged editor exited without opening a window.  It
+was run again after the editor's layout changed, with the new Tk modules in
+the list.
+The Windows build itself has not yet been run.
 
 ## AutoCAD
 
@@ -517,8 +537,10 @@ others on the page, and the report says which check to make.
 | pipe and fitting database | 35 / 35 |
 | `.phc` language, line checker and pressure ratio valves | 256 / 256 |
 | supply, pump and loss curves | 14 / 14 |
-| spreadsheet load, save and undo | 12 / 12 |
-| spreadsheet editing and cell validation | 18 / 18 |
+| report hand-checks, 14 models | 659 / 659 |
+| PDF structure, 14 models | 98 / 98 |
+| text editor logic, headless | 114 / 114 |
+| text editor window, under Xvfb | 92 / 92 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing

@@ -1,20 +1,20 @@
-// 06 - orifice plates to AS 2118.1 Appendix B
+// 06 - ORIFICE PLATES TO AS 2118.1 APPENDIX B
 // 
-//   OP1  ORIFICE_P  a required net drop; the solver sizes the bore
-//   OP2  ORIFICE_D  a known bore; the solver computes the net drop
+//   OP1  ORIFICE_P  A REQUIRED NET DROP; THE SOLVER SIZES THE BORE
+//   OP2  ORIFICE_D  A KNOWN BORE; THE SOLVER COMPUTES THE NET DROP
 // 
-// Uncomment ORIF_TABLE to size by the standard's route (equation B3 to get the
-// equivalent pressure Po, then read and interpolate the diameter from the
-// table).  Without it, sizing falls back to the fitted model.  The report
-// states which route produced every number.
+// UNCOMMENT ORIF_TABLE TO SIZE BY THE STANDARD'S ROUTE (EQUATION B3 TO GET THE
+// EQUIVALENT PRESSURE PO, THEN READ AND INTERPOLATE THE DIAMETER FROM THE
+// TABLE).  WITHOUT IT, SIZING FALLS BACK TO THE FITTED MODEL.  THE REPORT
+// STATES WHICH ROUTE PRODUCED EVERY NUMBER.
 // 
-// WARNING: tables/orifice_synthetic.tbl is NOT Appendix B data.  It was
-// generated from the fitted model only to exercise the table code path.
-// Replace it with the real Table B1 and B2 rows before production use.
+// WARNING: TABLES/ORIFICE_SYNTHETIC.TBL IS NOT APPENDIX B DATA.  IT WAS
+// GENERATED FROM THE FITTED MODEL ONLY TO EXERCISE THE TABLE CODE PATH.
+// REPLACE IT WITH THE REAL TABLE B1 AND B2 ROWS BEFORE PRODUCTION USE.
 // 
-// Because that file was generated from the fitted model, the two routes agree
-// here trivially.  That demonstrates the mechanism, NOT agreement with the
-// standard - which can only be shown once the printed tables are loaded.
+// BECAUSE THAT FILE WAS GENERATED FROM THE FITTED MODEL, THE TWO ROUTES AGREE
+// HERE TRIVIALLY.  THAT DEMONSTRATES THE MECHANISM, NOT AGREEMENT WITH THE
+// STANDARD - WHICH CAN ONLY BE SHOWN ONCE THE PRINTED TABLES ARE LOADED.
 
 UNITS     LENGTH M
 UNITS     ELEVATION M
@@ -37,12 +37,12 @@ PIPE      M1 SRC J1 20.0 100.0
 PIPE      P1 J1 A 12.0 50.0
 PIPE      P2 J1 B 12.0 50.0
 
-// OP1 sits in a pipe of no length from A to A2
+// OP1 SITS IN A PIPE OF NO LENGTH FROM A TO A2
 USE       ASAM
 PIPE      OP1 A A2 0 50
 OPP       OP1 150
 
-// OP2 sits in a pipe of no length from B to B2
+// OP2 SITS IN A PIPE OF NO LENGTH FROM B TO B2
 USE       ASAM
 PIPE      OP2 B B2 0 50
 OFD       OP2 26
