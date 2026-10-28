@@ -239,6 +239,17 @@ sub parse_row {
                          : HardyCross::fail("METHOD must be HW or DW, not %s", $v);
         }
         elsif ($k eq 'HW_CONST') { $o->{hwk} = num($v) }
+        # A flow added at the supply for hose streams: the demand is checked
+        # at the system's flow plus it (HardyCross::Demand).
+        elsif ($k eq 'HOSE_ALLOWANCE') {
+            $o->{hose} = num($v) * $net->{f_flow};
+            HardyCross::fail("HOSE_ALLOWANCE cannot be negative") if $o->{hose} < 0;
+        }
+        # A pump's rated duty, flow and pressure, for checking its curve
+        # (HardyCross::PumpCheck): PUMPDUTY <pump id> <flow> <pressure>.
+        elsif ($k eq 'PUMPDUTY') {
+            $o->{pump_duty}{$v} = [ num($tk->[2]) * $net->{f_flow}, num($tk->[3]) * $net->{f_pres} ];
+        }
         elsif ($k eq 'NU') {
             $o->{nu} = num($v);
             HardyCross::fail("NU must be greater than zero") if $o->{nu} <= 0;

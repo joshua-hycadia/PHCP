@@ -59,10 +59,10 @@ use HardyCross::PipeData;
 # command).  The builder silently ignores an unknown option name; in .phc it
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
-                  VEL_LIMIT FITTING_BASIS ORIF_STEP);
+                  VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
-                                    RELAX VEL_LIMIT ORIF_STEP);
+                                    RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
 
 #------------------------------------------------------------------------------
 # Units.  One UNITS line per quantity; anything not set takes the office
@@ -153,6 +153,9 @@ my %CMD = (
                    opt => [ [ 'CD', 'num' ] ] },
     OFD       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'BORE', 'size' ] ],
                    opt => [ [ 'CD', 'num' ] ] },
+    # The rated duty of a pump (PUMP) or a booster in a pipe (BP, named by its
+    # pipe): what its curve is checked against (HardyCross::PumpCheck).
+    PUMPDUTY  => { kind => 'duty', fixed => [ [ 'PUMP', 'pipe' ], [ 'FLOW', 'flow' ], [ 'PRESSURE', 'pressure' ] ] },
     PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
                    opt => [ [ 'MININLET', 'pressure' ], [ 'BAND', 'num' ] ] },
 );
@@ -166,7 +169,7 @@ our @COMMAND_GROUPS = (
     [qw(TITLE PROJECT UNITS METHOD OPTION)],
     [qw(USE PIPE PC CHANGEPIPE EQV)],
     [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
-    [qw(PUMP BP BFP PRV OPP OFD PRA)],
+    [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA)],
 );
 our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
 
@@ -567,7 +570,7 @@ sub translate {
     # Nodes, pipes and elements are collected first and written afterwards,
     # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
     # before or after the thing it refers to.
-    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items);
+    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty);
     my $use = { type => 'BORE' };
     my $define_node = sub {
         my ($name, $n, $def) = @_;
@@ -627,6 +630,9 @@ sub translate {
         } elsif ($k eq 'FIXEDFLOW' || $k eq 'PUMP') {
             $define_name->($p[0], $n);
             push @items, [ $k, $p[0], $n, $a ];
+        } elsif ($k eq 'PUMPDUTY') {
+            $at->($n, 'PUMP %s ALREADY HAS A DUTY, ON LINE %d', $p[0], $duty{ $p[0] }{line}) if $duty{ $p[0] };
+            $duty{ $p[0] } = { line => $n, q => $p[1], p => $p[2] };
         } elsif (command_spec($k)->{kind} eq 'device') {
             $at->($n, 'PIPE %s ALREADY HAS A DEVICE, %s ON LINE %d', $p[0],
                   $device{ $p[0] }{key}, $device{ $p[0] }{line}) if $device{ $p[0] };
@@ -736,6 +742,19 @@ sub translate {
         }
     }
 
+    #---------------------------------------------------- pump duties
+    # A duty names a PUMP, or a pipe with a booster (BP) in it; it goes to the
+    # network builder as an option row, under the element's own id.
+    my @duty_rows;
+    my %pump = map { $_->[1] => 1 } grep { $_->[0] eq 'PUMP' } @items;
+    for my $name (sort { $duty{$a}{line} <=> $duty{$b}{line} } keys %duty) {
+        my $d = $duty{$name};
+        my $id = $pump{$name} ? $name
+               : $device{$name} && $device{$name}{key} eq 'BP' ? "$name.BP"
+               : $at->($d->{line}, 'PUMPDUTY %s: NO PUMP OF THAT NAME, AND NO PIPE WITH A BOOSTER (BP) IN IT', $name);
+        push @duty_rows, [ 'OPTIONS', "PUMPDUTY $id $d->{q} $d->{p}", $d->{line} ];
+    }
+
     #---------------------------------------------------- in order
     # The rows in the order the network is built in: the cover sheet, the
     # units, the options, every node, then the elements as the file gives
@@ -749,6 +768,7 @@ sub translate {
                 [ 'UNITS', 'LENGTH M', undef ], [ 'UNITS', 'DIAMETER MM', undef ],
                 ($method ? [ 'OPTIONS', "METHOD $method->[0]", $method->[1] ] : ()),
                 (map { [ 'OPTIONS', @$_ ] } @options),
+                @duty_rows,
                 (map { [ 'NODES', @$_ ] } @nodes_out),
                 @elems);
     return (\@built, \%units);
@@ -889,6 +909,9 @@ sub read_string {
     # An assumed roughness is flagged wherever the warnings go: the editor's
     # WARNINGS list, the report's warnings and the JSON.
     push @{ $net->{warnings} }, HardyCross::Parse::roughness_warning($net);
+    # So is a pump that does not meet its rated duty (HardyCross::PumpCheck).
+    require HardyCross::PumpCheck;
+    push @{ $net->{warnings} }, HardyCross::PumpCheck::warnings($net);
     return $net;
 }
 
