@@ -59,7 +59,7 @@ use HardyCross::PipeData;
 # command).  The builder silently ignores an unknown option name; in .phc it
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
-                  VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE);
+                  VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
                                     RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
@@ -158,6 +158,9 @@ my %CMD = (
     PUMPDUTY  => { kind => 'duty', fixed => [ [ 'PUMP', 'pipe' ], [ 'FLOW', 'flow' ], [ 'PRESSURE', 'pressure' ] ] },
     PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
                    opt => [ [ 'MININLET', 'pressure' ], [ 'BAND', 'num' ] ] },
+    # A design area: the outlets that flow together (HardyCross::Areas).  More
+    # than one line of the same name adds to the area.
+    AREA      => { kind => 'area', fixed => [ [ 'NAME', 'new' ] ], rest => 'outlets' },
 );
 $CMD{$_}{name} = $_ for keys %CMD;
 
@@ -170,6 +173,7 @@ our @COMMAND_GROUPS = (
     [qw(USE PIPE PC CHANGEPIPE EQV)],
     [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
     [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA)],
+    [qw(AREA)],
 );
 our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
 
@@ -184,7 +188,7 @@ sub command_spec {
 # shows them: "PIPE <NAME> <START> <END> <LENGTH> <SIZE> [FITTINGS ...]".
 #------------------------------------------------------------------------------
 my %REST_LABEL = (fittings => 'FITTINGS ...', pairs => 'FLOW PRESSURE ...',
-                  copies => 'NAME START END ...', names => 'NAME ...');
+                  copies => 'NAME START END ...', names => 'NAME ...', outlets => 'OUTLET ...');
 sub template_fields {
     my $c = shift;
     my @f = map { $_->[0] } @{ $c->{fixed} };
@@ -373,6 +377,12 @@ sub analyse {
             my $err = check_field($i % 3 ? 'node' : 'new', $f[$i], {}, $i % 3 ? 'NODE' : 'NAME');
             return $bad->('%s', $err) if defined $err;
         }
+    } elsif ($rest eq 'outlets') {
+        return $more->('OUTLET') unless @f;
+        for (@f) {
+            my $err = check_field('node', $_, {}, 'OUTLET');
+            return $bad->('%s', $err) if defined $err;
+        }
     } elsif ($rest eq 'names') {
         return $more->('NAME') unless @f;
         for (@f) {
@@ -445,6 +455,8 @@ sub check_field {
     }
     if ($type eq 'value') {
         my $o = $a->{pos}[0];
+        # An area's name keeps its case, as every other name does.
+        return $push->($v) if $o eq 'DESIGN_AREA';
         if ($NUM_OPTION{$o}) {
             return "$o VALUE '$v' IS NOT A NUMBER" unless $is_num;
             return $push->($v);
@@ -475,6 +487,8 @@ sub nodes_used {
     my $c = command_spec($a->{key} // '') or return;
     my @fixed = @{ $c->{fixed} };
     my @n = map { $a->{pos}[$_] } grep { $fixed[$_][1] eq 'node' } 0 .. $#fixed;
+    # An AREA names its outlets.
+    push @n, @{ $a->{rest} } if $a->{key} eq 'AREA';
     # A PC copy names its start and end nodes.
     if ($a->{key} eq 'PC') {
         my @r = @{ $a->{rest} };
@@ -549,7 +563,7 @@ sub translate {
     #---------------------------------------------------- settings, file-wide
     # Each may be given once: a second is an error naming both lines, because
     # "the last one wins" in a file read in any order is a trap.
-    my (%seen, @project, @options, $method);
+    my (%seen, @project, @options, $method, $design);
     my %units = %UNIT_DEFAULT;
     for (grep { $kind->($_->[1]) eq 'setting' } @rows) {
         my ($n, $a) = @$_;
@@ -562,7 +576,8 @@ sub translate {
         push @project, [ "$p[0] $a->{text}", $n ]  if $k eq 'PROJECT';
         $units{ $p[0] } = $p[1]                    if $k eq 'UNITS';
         $method = [ $p[0], $n ]                    if $k eq 'METHOD';
-        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION';
+        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION' && $p[0] ne 'DESIGN_AREA';
+        $design = [ $p[1], $n ]                    if $k eq 'OPTION' && $p[0] eq 'DESIGN_AREA';
     }
     my $dw = $method && $method->[0] eq 'DW';
 
@@ -570,7 +585,7 @@ sub translate {
     # Nodes, pipes and elements are collected first and written afterwards,
     # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
     # before or after the thing it refers to.
-    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty);
+    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty, %area, @area_order);
     my $use = { type => 'BORE' };
     my $define_node = sub {
         my ($name, $n, $def) = @_;
@@ -630,6 +645,12 @@ sub translate {
         } elsif ($k eq 'FIXEDFLOW' || $k eq 'PUMP') {
             $define_name->($p[0], $n);
             push @items, [ $k, $p[0], $n, $a ];
+        } elsif ($k eq 'AREA') {
+            # A second line of the same name adds its outlets to the area.
+            push @area_order, $p[0] unless $area{ $p[0] };
+            my $ar = $area{ $p[0] } //= { name => $p[0], line => $n, outlets => [], lines => [] };
+            push @{ $ar->{lines} }, $n;
+            push @{ $ar->{outlets} }, [ $_, $n ] for @{ $a->{rest} };
         } elsif ($k eq 'PUMPDUTY') {
             $at->($n, 'PUMP %s ALREADY HAS A DUTY, ON LINE %d', $p[0], $duty{ $p[0] }{line}) if $duty{ $p[0] };
             $duty{ $p[0] } = { line => $n, q => $p[1], p => $p[2] };
@@ -700,6 +721,34 @@ sub translate {
               @used ? ' (ALSO ' . join(', ', map { "$_ ON LINE $first_use{$_}" } @used) . ')' : '');
     }
 
+    #---------------------------------------------------- design areas
+    # Each outlet an AREA names must be an outlet (SPRINKLER, HYDRANT, HREEL,
+    # or a copy of one).  With OPTION DESIGN_AREA, only that area's outlets,
+    # and the outlets in no area, flow; the others are shut, as a K of 0
+    # shuts one.  Without it every outlet flows, and HardyCross::Areas solves
+    # the areas one by one.
+    my (%in_area, %open);
+    for my $name (@area_order) {
+        my %once;
+        my $ar = $area{$name};
+        $ar->{outlets} = [ map { $_->[0] } grep {
+            my ($o, $ln) = @$_;
+            my $d = $node{$o} or $at->($ln, 'AREA %s: %s IS NOT DEFINED', $name, $o);
+            $at->($ln, 'AREA %s: %s IS NOT AN OUTLET (SPRINKLER, HYDRANT OR HREEL)', $name, $o)
+                unless $CMD{ $d->{kind} }{otype};
+            !$once{$o}++;
+        } @{ $ar->{outlets} } ];
+        $in_area{$_} = 1 for @{ $ar->{outlets} };
+    }
+    if ($design) {
+        my ($want, $ln) = @$design;
+        $at->($ln, 'DESIGN_AREA %s: NO AREA OF THAT NAME%s', $want,
+              @area_order ? ' (' . join(' ', @area_order) . ')' : ' - THE MODEL HAS NO AREA')
+            unless $area{$want};
+        %open = map { $_ => 1 } @{ $area{$want}{outlets} };
+    }
+    my $shut = sub { $design && $in_area{ $_[0] } && !$open{ $_[0] } };
+
     #---------------------------------------------------- the rows
     my (@nodes_out, @elems);
     my $z = sub { fmt(length_metres($node{ $_[0] }{z}, $units{ELEVATION})) };
@@ -725,6 +774,8 @@ sub translate {
         } elsif (($what eq 'OUTLET' || $what eq 'COPY') && $CMD{ $d->{kind} }{otype}) {
             # A K of zero turns the outlet off: the node stays, discharging nothing.
             next if $d->{k} == 0;
+            # So does a design area that does not include it.
+            next if $shut->($name);
             my $kk = fmt(k_factor_to_model($d->{k}, \%units));
             # MINFLOW is the least flow the outlet must give; below zero it is
             # the least PRESSURE instead.
@@ -771,7 +822,9 @@ sub translate {
                 @duty_rows,
                 (map { [ 'NODES', @$_ ] } @nodes_out),
                 @elems);
-    return (\@built, \%units);
+    my $areas = { list => [ map { { name => $_, line => $area{$_}{line}, outlets => $area{$_}{outlets} } } @area_order ],
+                  design => $design ? $design->[0] : undef };
+    return (\@built, \%units, $areas);
 }
 
 #------------------------------------------------------------------------------
@@ -880,7 +933,7 @@ sub pipe_size {
 #==============================================================================
 sub read_string {
     my $text = shift;
-    my ($rows, $units) = translate($text);
+    my ($rows, $units, $areas) = translate($text);
     my $net = HardyCross::Parse::new_net();
     for my $r (@$rows) {
         my ($section, $row, $n) = @$r;
@@ -906,6 +959,10 @@ sub read_string {
     $net->{source_text} = $text;
     $net->{phc_text}    = $text;
     $net->{phc_units}   = $units;
+    # The design areas (AREA), and the one this network is solved for
+    # (OPTION DESIGN_AREA), if any: HardyCross::Areas.
+    $net->{areas}       = $areas->{list} if @{ $areas->{list} };
+    $net->{design_area} = $areas->{design};
     # An assumed roughness is flagged wherever the warnings go: the editor's
     # WARNINGS list, the report's warnings and the JSON.
     push @{ $net->{warnings} }, HardyCross::Parse::roughness_warning($net);
