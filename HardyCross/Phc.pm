@@ -378,6 +378,26 @@ sub analyse {
     return \%a;
 }
 
+#------------------------------------------------------------------------------
+# setting_keys -- the names of the settings a line sets, for the once-only rule.
+#
+# Title sets TITLE, "Project JOB ..." sets JOB, "Units FLOW=LPS PRESSURE=BAR"
+# sets FLOW= and PRESSURE=, "Method HW" sets Method, "Option TOL_FLOW 0.01"
+# sets "Option TOL_FLOW".  The reader refuses a name set twice; the editor
+# uses the same names to list the duplicates in its problems panel, so the two
+# can never disagree about what counts as "the same setting".
+#------------------------------------------------------------------------------
+sub setting_keys {
+    my $a = shift;
+    my $k = $a->{key} // '';
+    return 'TITLE'                    if $k eq 'TITLE';
+    return $a->{pos}[0]               if $k eq 'PROJECT';
+    return map { "$_=" } @{ $a->{optorder} } if $k eq 'UNITS';
+    return 'Method'                   if $k eq 'METHOD';
+    return "Option $a->{pos}[0]"      if $k eq 'OPTION';
+    return;
+}
+
 # The node ids a line refers to, in field order.
 sub nodes_used {
     my $a = shift;
@@ -492,22 +512,16 @@ sub translate {
         my ($n, $a) = @$_;
         my $k = $a->{key};
         next unless $CMD{$k}{kind} eq 'setting';
+        $once->($n, $_) for setting_keys($a);
         if ($k eq 'TITLE') {
-            $once->($n, 'TITLE');
             push @{ $block{PROJECT} }, [ "TITLE $a->{text}", $n ];
         } elsif ($k eq 'PROJECT') {
-            $once->($n, $a->{pos}[0]);
             push @{ $block{PROJECT} }, [ "$a->{pos}[0] $a->{text}", $n ];
         } elsif ($k eq 'UNITS') {
-            for my $q (@{ $a->{optorder} }) {
-                $once->($n, "$q=");
-                push @{ $block{UNITS} }, [ "$q $a->{opt}{$q}", $n ];
-            }
+            push @{ $block{UNITS} }, [ "$_ $a->{opt}{$_}", $n ] for @{ $a->{optorder} };
         } elsif ($k eq 'METHOD') {
-            $once->($n, 'Method');
             push @{ $block{OPTIONS} }, [ "METHOD $a->{pos}[0]", $n ];
         } elsif ($k eq 'OPTION') {
-            $once->($n, "Option $a->{pos}[0]");
             push @{ $block{OPTIONS} }, [ "$a->{pos}[0] $a->{pos}[1]", $n ];
         }
     }
