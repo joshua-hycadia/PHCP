@@ -18,6 +18,7 @@
 # demand point re-solves it many times and takes minutes.)
 #==============================================================================
 use strict;
+use File::Spec;
 use warnings;
 use FindBin;
 use JSON::PP;
@@ -36,12 +37,13 @@ sub is {
 # run -- phcp.pl with arguments (and optional standard input): (exit, stdout).
 sub run {
     my ($stdin, @args) = @_;
-    my $cmd = join ' ', map { "'$_'" } $^X, $PHCP, @args;
+    # double quotes and the null device, so the same line runs on Windows
+    my $cmd = join ' ', map { qq{"$_"} } $^X, $PHCP, @args;
     if (defined $stdin) {
         open my $in, '>', "$TMP/in.phc" or die; print $in $stdin; close $in;
-        $cmd .= " < '$TMP/in.phc'";
+        $cmd .= qq{ < "$TMP/in.phc"};
     }
-    my $out = `$cmd 2>/dev/null`;
+    my $out = `$cmd 2>@{[ File::Spec->devnull ]}`;
     return ($? >> 8, $out);
 }
 sub slurp { my $p = shift; open my $f, '<', $p or die "$p: $!\n"; local $/; <$f> }
