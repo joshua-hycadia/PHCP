@@ -76,12 +76,10 @@ set DPI=
 perl -MWin32::API -e1 >nul 2>&1 || call cpanm --notest Win32::API
 perl -MWin32::API -e1 >nul 2>&1 && set DPI=-M Win32::API
 
-rem The program icon, data\phcp.ico, is written into each .exe by pp, which
-rem needs Win32::Exe to do it.  Without it the programs build with the
-rem default icon; the editor's window still shows the PHCP icon.
-set ICON=
-perl -MWin32::Exe -e1 >nul 2>&1 || call cpanm --notest Win32::Exe
-perl -MWin32::Exe -e1 >nul 2>&1 && set ICON=--icon data\phcp.ico
+rem The program icon: the editor sets it on its own window and taskbar
+rem button when it runs.  PAR::Packer no longer writes an icon into an .exe
+rem (its --icon option was removed), so the .exe files themselves show the
+rem default icon in Explorer.
 
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
 rem so it is listed here by name rather than left to the dependency scan.
@@ -93,13 +91,13 @@ set DATA=-a "data/pipes.dat;lib/data/pipes.dat" -a "data/fonts;lib/data/fonts"
 
 echo.
 echo [4/6] Building phcp.exe (command line)...
-call pp -I . %ICON% %MODS% %DATA% -o phcp.exe phcp.pl
+call pp -I . %MODS% %DATA% -o phcp.exe phcp.pl
 if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
 
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . !ICON! %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
+    call pp --gui -I . %MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI! %DATA% -o phcp_editor.exe phcp_editor.pl
     if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
