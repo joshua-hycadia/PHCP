@@ -1,7 +1,8 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1 merged.  PR 2 (`.phc` language) and PR 3 (text editor, built on
-PR 2) open for review.  PR 4 and PR 5 not started.
+Status: PR 1 merged.  PR 2 (`.phc` language, reworked to the positional layout
+Joshua chose on 28 October 2026) and PR 3 (text editor, built on PR 2) open for
+review.  PR 4 and PR 5 not started.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -14,10 +15,14 @@ Read `CONTRIBUTING.md` before starting.  Its rules are binding.
 ## Goal
 
 A designer types the model as short command lines - one element per line, in
-any order - into an editor that colours each line as it is typed, flags errors
-on the line they occur, proposes the next line, offers pipe types and fittings
-from the database, and solves on one key.  Existing `.hcx` models convert
-automatically and give identical results.
+any order, fields by position, no `KEY=value` - into an editor that colours
+each line as it is typed, flags errors on the line they occur, proposes the
+next line, offers pipe types and fittings from the database, and solves on one
+key.  The command layout follows the way an established command-entry
+sprinkler program sets out its input; the commands, the checks and everything
+behind them are PHCP's own, and better: dedicated sprinkler, hydrant, hose
+reel and fixed-flow commands, any number of water supplies, units chosen per
+file, and every error named on its line.
 
 ## Ground rules for this work
 
@@ -26,13 +31,17 @@ automatically and give identical results.
   are touched only where this plan says so.  Any change that alters a solved
   number needs Joshua's approval first.
 - **The `.phc` reader translates; it does not re-implement.**  Each `.phc`
-  command is turned into the equivalent `.hcx` row and handed to the existing
-  `HardyCross::Parse::parse_row`.  Every check, default and unit conversion
-  therefore stays in one place, and a `.phc` model cannot quietly mean
-  something different from its `.hcx` equivalent.
-- **Identical results are the acceptance test.**  Every example is converted
-  to `.phc`; the converted file must give a report identical to the `.hcx`
-  original apart from the model file name on the cover.
+  command is turned into the equivalent `.hcx` rows and handed to the existing
+  parser, so every hydraulic check and default stays in one place.  The one
+  thing the reader converts itself is lengths and elevations, which `.phc`
+  lets the user give in a unit of their own per quantity (the parser has one
+  length unit); it uses the engine's own unit table to do it.
+- **Same results are the acceptance test.**  Every example is rewritten in
+  `.phc` and must solve to the same pipe flows and node pressures as its `.hcx`
+  original (`tools/test_phc.pl`).  Names of supplies and outlets follow their
+  node in `.phc`, so reports are compared on the numbers, not byte for byte.
+- **Nothing is taken from another program** but the idea of the layout: no
+  text, data, tables or code.  No other program is named.
 
 ---
 
@@ -45,144 +54,131 @@ Branch: `phc-language`.
 | file | purpose |
 |---|---|
 | `HardyCross/Phc.pm` | reader for `.phc` text, plus the line-level checks the editor uses |
-| `HardyCross/Convert.pm` | `.hcx` to `.phc` writer |
 | `HardyCross/Parse.pm` | `read_model` dispatches on extension: `.phc` to Phc.pm, anything else as now |
-| `phcp.pl` | accepts `.phc` and `.hcx`; new `--convert in.hcx [out.phc]` |
-| `examples/*.phc` | every example converted; the `.hcx` originals stay as the regression baseline |
+| `phcp.pl` | accepts `.phc` and `.hcx` |
+| `examples/*.phc` | every example rewritten in `.phc`; the `.hcx` originals stay as the baseline |
 | `tools/test_phc.pl` | language tests (below) |
+
+There is no `.hcx` to `.phc` converter: no models exist in `.hcx` beyond the
+prototype's examples (Joshua, 28 October 2026), and the examples are rewritten
+once, checked by the test above.
 
 ### Language
 
 General rules:
 
-- One command per line.  The first word is the command; commands and
-  keywords are case-insensitive; ids are case-sensitive as now.
-- Fields are separated by spaces or tabs.  `//` starts a comment to the end of
-  the line.  A blank line is ignored.
-- `KEY=value` options may appear anywhere after the fixed fields.
-- Element lines may appear in **any order**.  `Units`, `Method` and `Option`
-  are file-wide wherever they appear, and may each name a given setting only
-  once.  `Use` is the only positional command: it applies to the `Pipe` lines
-  after it, until the next `Use`.
-- A node used by a pipe or outlet but never given a `Node` line is an error
-  that names the node and the first line using it.  (Today `.hcx` creates such
-  a node at elevation 0 silently; in `.phc` it must be explicit.  The
-  converter writes a `Node` line for every node, so converted files are
-  unaffected.)
-- Every error message carries the `.phc` line number it came from.
+- One command per line; fields by position, separated by spaces or tabs.
+  Written in capitals (lower case is read the same).  Ids are case-sensitive.
+- `//` starts a comment to the end of the line.  `!` and `#` are refused
+  outside a comment.
+- Lines may come in any order.  Settings are file-wide and each is given once.
+  `USE` is positional: it applies to the `PIPE` lines after it.
+- Every node is defined exactly once - by `NODE`, `WATER`, `SPRINKLER`,
+  `HYDRANT`, `HREEL` or a copy (`NC`) - and every node an element names must be
+  defined.  Every pipe name is unique.
+- Every error carries its `.phc` line number.
 
-Commands - every element and setting PHCP has today:
+Settings (PHCP's own):
 
 ```
-Title    <text>                                  // PROJECT TITLE
-Project  <FIELD> <text>                          // any PROJECT field: COMPANY, JOB, ...
-Units    [FLOW=LPM] [PRESSURE=KPA] [LENGTH=M] [DIAMETER=MM]
-Method   HW | DW
-Option   <NAME> <value>                          // PROFILE HW_CONST NU TOL_FLOW TOL_LOOP
-                                                 // MAXITER RELAX VEL_LIMIT FITTING_BASIS
-                                                 // ORIF_STEP
-Use      <PIPETYPE> [C=<c>]                      // pipe type from the database
-Use      BORE [C=<c>]                            // following pipes give a bore, not a DN
-Node     <id> <elevation>
-Pipe     <id> <n1> <n2> <length> <size> [fittings ...] [C=] [EQV=] [EPS=] [K=]
-Supply   <id> <node> STATIC <pressure> [Z=]
-Supply   <id> <node> CURVE <q1> <p1> <q2> <p2> [...] [Z=]
-Pump     <id> <in> <out> <q1> <p1> <q2> <p2> [...]
-Head     <id> <node> [K=] [Q=] [P=] [Z=]          // sprinkler: any two of K, Q, P
-Hydrant  <id> <node> [K=] [Q=] [P=] [Z=]
-HoseReel <id> <node> [K=] [Q=] [P=] [Z=]
-Flow     <id> <node> Q=<q> [MINP=]                // fixed flow
-BFP      <id> <n1> <n2> <q1> <p1> <q2> <p2> [...]
-PRV      <id> <n1> <n2> DP=<drop>
-Orifice  <id> <n1> <n2> DP=<drop>  DN=|PIPEDIA= [CD=]   // sizes the plate
-Orifice  <id> <n1> <n2> BORE=<d>   DN=|PIPEDIA= [CD=]   // known bore
+TITLE     <text>
+PROJECT   <FIELD> <text>                 // COMPANY, JOB, DESIGNER, DENSITY ...
+UNITS     <QUANTITY> <UNIT>              // see Units
+METHOD    HW | DW
+OPTION    <NAME> <value>                 // PROFILE HW_CONST NU TOL_FLOW TOL_LOOP
+                                         // MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP
 ```
 
-- `<size>` is the nominal DN under `Use <PIPETYPE>` and the bore under
-  `Use BORE`.  Before any `Use`, pipes are `Use BORE C=120`, matching `.hcx`.
-- Fittings are written after the size, one token each, with an optional count:
-  `2E T GV` means `FIT=2E,1T,1GV`.  The office forms `2E,1T` and `1E1T` are
-  also accepted in a single token.  Fittings on a `Use BORE` pipe are an error,
-  as today.
-- `Units` takes the same unit codes `.hcx` accepts.
-- An unrecognised `Option` is an error.  (`.hcx` silently ignores unknown
-  OPTIONS - example 01 carries `TRACE FULL`, which does nothing.  The converter
-  drops such lines and lists them in the header comment it writes.)
-
-Example - `examples/01_single_branch` as `.phc`:
+Pipes:
 
 ```
-Title  SINGLE BRANCH CLOSED-FORM CHECK
-Units  FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
-Method HW
-Option TOL_FLOW 0.001
-Option TOL_LOOP 0.0005
-
-Node   N1 0.0
-Node   N2 0.0
-Pipe   P1 N1 N2 100.0 100.0 C=120
-Supply SUP1 N1 STATIC 900
-Head   S1 N2 K=80 P=50
+USE       <PIPETYPE> [<C>]               // C-factor; roughness under METHOD DW
+USE       BORE [<C>]                     // following pipes give a bore, not a DN
+PIPE      <NAME> <START> <END> <LENGTH> <SIZE> [<fittings> ...]
+PC        <SOURCE> <NAME> <START> <END> [<NAME> <START> <END> ...]   // copies of a pipe
+CHANGEPIPE <NAME> <LENGTH> <SIZE> [<fittings> ...]                    // alias CHP
+EQV       <PIPE> <LENGTH>                // an equivalent length added to a pipe
 ```
+
+Nodes and outlets:
+
+```
+NODE      <NAME> <ELEVATION>
+NC        <SOURCE> <NAME> [<NAME> ...]   // copies of any node definition
+WATER     <NAME> <ELEVATION> <STATIC> [<FLOW> <PRESSURE> ...]   // a supply; any number
+SPRINKLER <NAME> <ELEVATION> <MINFLOW> <K>      // MINFLOW < 0: a minimum PRESSURE
+HYDRANT   <NAME> <ELEVATION> <MINFLOW> <K>
+HREEL     <NAME> <ELEVATION> <MINFLOW> <K>
+FIXEDFLOW <NAME> <NODE> <FLOW> [<MINPRESSURE>]   // set flow; minimum pressure checked
+```
+
+Devices - all but PUMP sit in a pipe, named by the pipe:
+
+```
+PUMP      <NAME> <IN> <OUT> <CHURN> <FLOW> <PRESSURE> [<FLOW> <PRESSURE> ...]
+BP        <PIPE> <CHURN> <FLOW> <PRESSURE> [...]        // a pump in a pipe
+BFP       <PIPE> <FLOW> <LOSS> [<FLOW> <LOSS> ...]      // backflow preventer; a loss curve,
+                                                       // one pair at flow 0: a fixed loss
+PRV       <PIPE> <FLOW> <LOSS> [<FLOW> <LOSS> ...]      // pressure reducing valve, as BFP
+OPP       <PIPE> <DROP> [<CD>]                          // orifice plate: drop given, plate sized
+OFD       <PIPE> <BORE> [<CD>]                          // orifice plate: bore given, drop found
+PRA       <PIPE> <RATIO> [<MININLET>]                   // pressure ratio valve: outlet = inlet / ratio
+```
+
+A device in a pipe sits at the pipe's start: the pipe is split at a node named
+`<PIPE>~` at the start node's elevation.  An orifice plate takes its pipe's
+nominal size and bore.  One device per pipe.
+
+Units, one `UNITS` line per quantity; defaults (the office's) in brackets:
+
+| quantity | units |
+|---|---|
+| LENGTH | MM CM M IN FT (MM) - pipe lengths, equivalent lengths |
+| ELEVATION | MM CM M IN FT (M) |
+| SIZE | MM IN (MM) - nominal size, and orifice bores |
+| PRESSURE | KPA BAR MPA PSI M (KPA) |
+| FLOW | LPM LPS M3H GPM (LPM) |
+| KFACTOR | LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI (LPM/KPA) |
+
+Velocity is reported in m/s.  Defaults are the office's (Joshua, 28 October
+2026); the K-factor default is not yet confirmed.
+
+A length or elevation may carry its own unit: `12M`, `300MM`, `14'3"`, `6'`.
+
+Fittings: database codes with an optional count (`2E T GV`), plus the short
+forms `G` (gate valve, `GV`), `C` (check valve, `CV`) and `B` (butterfly
+valve, `BV`).
 
 ### How the reader works
 
-1. Read every line; strip comments; tokenise with the existing
-   `HardyCross::Parse::tokenize` so quoting and number rules match.
-2. First pass: collect `Title`, `Project`, `Units`, `Method`, `Option`.
-   Reject a second setting of the same unit or option.
-3. Second pass: translate each element line into its `.hcx` row, tagged with
-   its `.phc` line number, and file it under the `.hcx` block it belongs to.
-4. Build `.hcx` text in the block order `PROJECT, UNITS, OPTIONS, NODES`,
-   then the elements in FILE order, each run of one kind under its own block
-   header.  This order matters: supply and outlet elevations default to their
-   node's elevation, which must already be read.  (As built in PR 2: the
-   elements are not regrouped into `PIPES, PUMPS, SUPPLIES, DISCHARGES,
-   DEVICES`, because that reordered example 06, whose `.hcx` lists its devices
-   before its supply, and the report's schedule rows moved with it.)
-5. Parse it with the existing code.  Map any error's `.hcx` line number back
-   to the `.phc` line it came from.
+1. Read every line; strip comments; tokenise with the existing tokeniser.
+2. First pass: the settings.  Second pass: nodes, pipes (with `CHANGEPIPE`,
+   `EQV` and in-pipe devices applied), copies, outlets and devices.
+3. Build `.hcx` text: PROJECT, UNITS, OPTIONS, NODES, then the elements in
+   file order.  Lengths and elevations are written in metres.
+4. Parse it with the existing code; map any error back to its `.phc` line.
 
 ### Line checking for the editor
 
-`HardyCross::Phc::check_line($line, $context)` returns, without Tk:
-
-- `status`: `ok`, `incomplete` (still being typed) or `error`, plus a message;
-- `template`: the command's field list, and which field the cursor is in, for
-  the status bar;
-- `choices`: for a pipe-type or fitting field, the codes from the database;
-- `proposal`: the suggested next line (see PR 3).
-
-`$context` carries the defined node ids and the current `Use`.  All of this is
-tested headless in `tools/test_phc.pl`.
-
-### Converter
-
-`phcp.pl --convert model.hcx [model.phc]` writes `.phc` from a parsed `.hcx`:
-a header comment, then settings, `Node` lines, `Use` groups, then the other
-elements.  Comments in the `.hcx` are not carried over; the converter says so
-in the header comment it writes.
+`HardyCross::Phc::check_line($line, $context)` returns, without Tk: status
+(`ok`, `incomplete`, `error`) and message; the command's field template with
+the cursor's field; pick lists of pipe types and fitting codes; a proposed
+next line.  Tested headless in `tools/test_phc.pl`.
 
 ### Tests - `tools/test_phc.pl`
 
-- Every example: convert, solve both, compare reports - identical apart from
-  the model file name.
-- Every command: a valid line, a line missing each required field, a bad
-  number, an unknown option, a duplicate setting.  Each error names its line.
-- Any order: shuffle the element lines of each example; the solved results
-  must be identical (iteration counts may differ).
-- `Use` scoping, fitting tokens in all three forms, units given out of order.
-- `check_line` status, template and choices for each command.
+- Every example: the `.phc` solves to the same pipe flows and node pressures
+  as its `.hcx` baseline.
+- Every command: a valid line, each field missing, a bad number, an unknown
+  setting, duplicates.  Each error names its line.
+- Any order: shuffled lines give the same results.
+- Units: every quantity in other units gives the same network.
+- `check_line` status, template, choices and proposals.
 
-### Known issue to resolve, not hide
+### Fixed flows
 
-`FIXEDFLOW ... MINP=` is accepted by today's parser but the minimum pressure is
-not used: only the flow is applied.  `.phc` must not accept `MINP=` silently.
-Either make it a reported error ("not supported") or raise it with Joshua
-before implementing it.  Record the decision in the README.
-
-Resolved in PR 2, by Joshua's decision: the minimum pressure is checked (see
-the checklist and README, "Fixed flows").
+`FIXEDFLOW`'s minimum pressure is checked (Joshua's decision): passed or failed
+in the report, and counted in the governing outlet and demand point.
 
 ---
 
@@ -194,9 +190,10 @@ Branch: `phc-editor`.
 
 | file | purpose |
 |---|---|
-| `HardyCross/Editor.pm` | editor logic with no Tk: proposals, completion, undefined nodes, results lookup |
+| `HardyCross/Editor.pm` | editor logic with no Tk: line checks, the three lists, proposals, completion, results tables, units |
 | `phcp_editor.pl` | the Tk window, kept thin |
 | `tools/test_editor.pl` | headless tests of `Editor.pm` |
+| `tools/test_editor_window.pl` | the window, driven under Xvfb |
 | `phcp_gui.pl`, `tools/test_gui_document.pl`, `tools/test_gui_editing.pl` | **removed** - the spreadsheet is retired |
 | `phcp_viewer.pl` | kept; reads `.phc` through `read_model` |
 | `build_windows.bat` | builds `phcp.exe` and `phcp_editor.exe`; Tk::TableMatrix no longer needed |
@@ -204,30 +201,37 @@ Branch: `phc-editor`.
 
 ### Window
 
-Two panes side by side - EDITOR on the left, REPORT on the right - with a
-status bar and a problems list below.  Labels and menus in capitals, as the
-rest of PHCP.  Monospace throughout.
+Joshua's layout (28 October 2026): the editor above, with the command strip
+and status bar under it and an ERRORS / WARNINGS / NODES panel to its right;
+the results below, as PIPES, NODES, OUTLETS and REPORT tabs in sortable
+columns, with HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES.  Light blue and
+black.  Everything user-visible in capitals.  Monospace throughout.
 
 ### Editor behaviour
 
 | feature | behaviour |
 |---|---|
-| colouring | command words in blue, comments grey; a line with an error is red, its message in the status bar when the cursor is on it and in the problems list |
+| colouring | command words in blue, comments grey; a line with an error is red, its message in the status bar when the cursor is on it and in ERRORS |
+| command strip | every command in its four groups; a click starts a line with it |
 | status bar | the field template of the current command, current field highlighted |
-| proposals | after Enter, the likely next line is shown greyed: same command, ids stepped (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts; typing anything else discards it.  Holding Enter repeats |
-| pick list | Ctrl+Space in a `Use` type field or a fitting field opens the codes from the database, with descriptions; arrows and Enter insert |
-| undefined nodes | a panel lists nodes used but not defined, with the line that first uses each |
-| solve | F5 solves the buffer and fills the REPORT pane; an error moves the cursor to its line |
+| proposals | after Enter, the likely next line is shown greyed: same command, names stepped (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts; typing anything else discards it.  Holding Enter repeats |
+| pick list | Ctrl+Space in a `USE` type, a fitting, `UNITS`, `METHOD` or `OPTION` opens the choices with descriptions; arrows and Enter insert |
+| ERRORS / WARNINGS / NODES | lines in error; the last solve's warnings (convergence, velocity, outlets short of their requirement); nodes undefined or unconnected.  A click goes to the line |
+| solve | F5 solves the buffer and fills the tables and REPORT; an error moves the cursor to its line |
 | results on the cursor | after a solve, the status bar shows the solved flow, velocity and end pressures for the element on the cursor's line |
-| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`).  Opening a `.hcx` converts it into a new unsaved `.phc` buffer and says so |
-| undo | Ctrl+Z / Ctrl+Y, Tk text undo |
+| tables | PIPES has 21 columns with a right-click chooser (NAME fixed; NAME to PF, PS and VEL on at first); a heading click sorts, a second reverses |
+| units | FILE > PROPERTIES - UNITS rewrites the `UNITS` lines as one undoable edit |
+| files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`).  `.phc` only; anything else is refused with the reason |
+| undo | Ctrl+Z / Ctrl+Y, Tk TextUndo |
 
 ### Tests
 
-- `tools/test_editor.pl`, headless: proposals for each command, pick-list
-  contents, undefined-node detection, results lookup after a solve.
-- Window: run under Xvfb if available.  If the window itself cannot be run in
-  the build environment, the README says "not yet run" for it.
+- `tools/test_editor.pl`, headless: line statuses and the three lists,
+  proposals, pick lists, the status bar, colouring, results on the cursor,
+  the three tables and sorting, units, files.
+- `tools/test_editor_window.pl`, under Xvfb: layout, colours, command strip,
+  lists, proposals and undo, pick list, solve, sorting, the column chooser,
+  the HIDE boxes, the units dialog, files.
 
 ### Windows
 
@@ -289,12 +293,19 @@ DLL.  AutoCAD first, possibly Revit later.
 ## Checklist
 
 - [x] PR 1 - import PHCP, editable pipe database, report states database SHA-256
-- [x] PR 2 - `.phc` reader, converter, examples, `test_phc.pl`
+- [x] PR 2 - `.phc` reader, examples, `test_phc.pl` (first version, `KEY=value` syntax)
+- [x] PR 2 - reworked to the positional layout: SPRINKLER HYDRANT HREEL FIXEDFLOW WATER,
+  PC NC CHANGEPIPE EQV, BP BFP PRV OPP OFD in pipes, UNITS per quantity; converter dropped
+- [x] PR 2 - PRA pressure ratio valve in the solver: outlet = inlet / ratio, set in the
+  outer loop; warnings for low inlet, reverse flow, unsettled drops
+- [x] PR 2 - supply, pump and loss curves interpolated on Q^1.85 through every point
+  (engine change, approved by Joshua 28 October 2026; `tools/test_curves.pl`)
 - [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
   passed or failed in the report and counted in the governing outlet and demand
   point (README, "Fixed flows")
 - [x] PR 3 - `Editor.pm` and `phcp_editor.pl` (light blue and black, by Joshua's choice)
 - [x] PR 3 - spreadsheet removed, build script and licence updated
+- [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, units dialog, all capitals
 - [ ] PR 3 - Windows build run by Joshua
 - [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
 - [ ] PR 5 - `phcp.exe --json`, documented and tested

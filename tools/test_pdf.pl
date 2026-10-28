@@ -27,7 +27,7 @@ use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
 
-my @models = @ARGV ? @ARGV : grep { !/grid1000/ } glob("$FindBin::Bin/../examples/*.hcx");
+my @models = @ARGV ? @ARGV : grep { !/grid1000/ } glob("$FindBin::Bin/../examples/*.{hcx,phc}");
 my ($checks, $fails) = (0, 0);
 sub ok {
     my ($what, $c) = @_;

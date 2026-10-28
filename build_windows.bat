@@ -68,10 +68,9 @@ if errorlevel 1 (
     call :savelog tk_build.log
 )
 
-rem HardyCross::Phc and HardyCross::Convert are loaded with require only when
-rem a .phc file is read or --convert is given, so they are listed here by
-rem name rather than left to the dependency scan to find.
-set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Convert
+rem HardyCross::Phc is loaded with require only when a .phc file is read,
+rem so it is listed here by name rather than left to the dependency scan.
+set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
 set DATA=-a "data/pipes.dat;lib/data/pipes.dat"
@@ -84,7 +83,7 @@ if errorlevel 1 (echo ERROR: pp failed building phcp.exe & exit /b 1)
 echo.
 echo [5/6] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    call pp --gui -I . %MODS% -M HardyCross::Editor -M Tk -M Tk::TextUndo -M Tk::Panedwindow -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar %DATA% -o phcp_editor.exe phcp_editor.pl
+    call pp --gui -I . %MODS% -M HardyCross::Editor -M Tk -M Tk::TextUndo -M Tk::Panedwindow -M Tk::NoteBook -M Tk::HList -M Tk::ItemStyle -M Tk::BrowseEntry -M Tk::Checkbutton -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar %DATA% -o phcp_editor.exe phcp_editor.pl
     if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.

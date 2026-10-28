@@ -6,32 +6,42 @@
 # Phc.pm -- the .phc command language.
 #
 # A .phc file is the model typed as short command lines, one element per line,
-# in any order:
+# fields by position, in any order:
 #
-#     Units  FLOW=LPM PRESSURE=KPA
-#     Node   N1 0.0
-#     Node   N2 0.0
-#     Use    ASAM
-#     Pipe   P1 N1 N2 12.0 100 2E T GV
-#     Supply SUP1 N1 STATIC 900
-#     Head   S1 N2 K=80 P=50
+#     UNITS     ELEVATION M
+#     USE       S20 120
+#     PIPE      4  2  101  7000  300  G T
+#     NODE      101  31.5
+#     WATER     2  31.5  1100  7570 1035
+#     SPRINKLER 4101  47.076  81  8
+#     FIXEDFLOW HOSE  2105  1900  250
 #
 # THIS MODULE TRANSLATES; IT DOES NOT RE-IMPLEMENT.  Every command becomes the
-# .hcx row that means the same thing, the rows are assembled into .hcx text,
-# and that text is read by HardyCross::Parse::read_string -- the same code that
-# reads a .hcx file.  Every hydraulic check, default and unit conversion
-# therefore lives in one place, and a .phc model cannot quietly mean something
-# different from its .hcx equivalent.  What is checked HERE is only what
-# belongs to the language itself: the command words, the field count, which
-# KEY= options a command takes, that a number is a number, that every node has
-# a Node line, and that no setting is given twice.
+# .hcx rows that mean the same thing, the rows are assembled into .hcx text,
+# and that text is read by HardyCross::Parse::read_string -- the code that
+# reads a .hcx file.  Every hydraulic check and default therefore lives in one
+# place.  What is done HERE is what belongs to the language: the command words
+# and their fields, numbers, units, that every node is defined once and every
+# node used is defined, the copy and change commands, and devices placed in
+# pipes.
+#
+# Units are the one thing converted here.  A .phc file chooses a unit for each
+# quantity separately (pipe lengths in mm, elevations in m ...), and the .hcx
+# parser has a single length unit, so lengths and elevations are written to it
+# in metres.  Flow and pressure factors come from the engine's own unit table
+# (HardyCross::set_unit), so there is still one table of those.
 #
 # Every error carries the .phc line number it came from.  The .hcx parser
 # numbers its own errors by .hcx line; read_string below maps those back.
 #
-# check_line() is the same analysis applied to one line, without Tk, for the
-# editor: is the line complete, which field is the cursor in, what may be
-# typed there, and what line is likely to come next.
+# How the file is laid out:
+#   vocabulary          commands, fields, units, fitting short forms
+#   values              lengths with units, sizes, ratios, K-factor units
+#   analyse             the syntax of one line
+#   translate           a whole file to .hcx text, with the line map
+#   pipe_row/device_row the .hcx rows for a pipe and for a device in a pipe
+#   read_string/model   a .phc model read into a network
+#   check_line etc.     the editor's checks of one line, without Tk
 
 package HardyCross::Phc;
 
@@ -41,146 +51,238 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::PipeData;
 
-#------------------------------------------------------------------------------
+#==============================================================================
 # The vocabulary.
-#------------------------------------------------------------------------------
+#==============================================================================
 
-# Every OPTIONS name the .hcx parser acts on, except METHOD, which has a
-# command of its own.  The .hcx parser silently ignores any other name -- which
-# is how example 01 came to carry "TRACE FULL", a setting that does nothing.  In
-# .phc an unknown option is an error, so a setting that does nothing cannot
-# look as if it does something.
+# Solver options, as the .hcx OPTIONS block takes them (METHOD has its own
+# command).  The .hcx parser silently ignores an unknown option name; in .phc
+# it is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
                   VEL_LIMIT FITTING_BASIS ORIF_STEP);
 my %OPTION = map { $_ => 1 } @OPTIONS;
-# The options whose value is a number.  num() reads anything else as 0, so a
-# typing error in a tolerance would otherwise become a tolerance of zero.
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
                                     RELAX VEL_LIMIT ORIF_STEP);
 
-# The four unit quantities.  The .hcx UNITS block also takes the short names
-# PRES, LEN and DIA; in .phc only the full names are keys, so that a duplicate
-# such as "FLOW=LPM ... FLOW=LPS" is always seen as one.
-our @UNIT_KEYS = qw(FLOW PRESSURE LENGTH DIAMETER);
-
-# The command table.  For each command:
-#   name   the spelling used in messages, templates and the converter
-#   kind   setting (file-wide), use (positional), node, or element
-#   block  the .hcx block an element's row is filed under
-#   fixed  the positional fields, each [label, type]; types are
-#            text      the rest of the line, raw (Title, Project)
-#            word      one word (a PROJECT field name, a METHOD)
-#            id        an element or node id -- case-sensitive, as in .hcx
-#            node      a node id referred to
-#            num       a number, as HardyCross::Parse::num reads one
-#            option    an OPTION name
-#            value     an OPTION value
-#            pipetype  a pipe type in the database, or BORE
-#            mode      STATIC or CURVE
-#   rest   what may follow the fixed fields: fittings, curve, supply, or none
-#   keys   the KEY=value options the command takes
-#   need   options that must be present
-my %CMD = (
-    TITLE    => { name => 'Title', kind => 'setting',
-                  fixed => [ [ 'text', 'text' ] ] },
-    PROJECT  => { name => 'Project', kind => 'setting',
-                  fixed => [ [ 'field', 'word' ], [ 'text', 'text' ] ] },
-    UNITS    => { name => 'Units', kind => 'setting', fixed => [],
-                  keys => [@UNIT_KEYS] },
-    METHOD   => { name => 'Method', kind => 'setting',
-                  fixed => [ [ 'HW|DW', 'word' ] ] },
-    OPTION   => { name => 'Option', kind => 'setting',
-                  fixed => [ [ 'name', 'option' ], [ 'value', 'value' ] ] },
-    USE      => { name => 'Use', kind => 'use',
-                  fixed => [ [ 'pipetype|BORE', 'pipetype' ] ], keys => ['C'] },
-    NODE     => { name => 'Node', kind => 'node', block => 'NODES',
-                  fixed => [ [ 'id', 'id' ], [ 'elevation', 'num' ] ] },
-    PIPE     => { name => 'Pipe', kind => 'element', block => 'PIPES',
-                  fixed => [ [ 'id', 'id' ], [ 'n1', 'node' ], [ 'n2', 'node' ],
-                             [ 'length', 'num' ], [ 'size', 'num' ] ],
-                  rest => 'fittings', keys => [qw(C EQV EPS K)] },
-    SUPPLY   => { name => 'Supply', kind => 'element', block => 'SUPPLIES',
-                  fixed => [ [ 'id', 'id' ], [ 'node', 'node' ],
-                             [ 'STATIC|CURVE', 'mode' ] ],
-                  rest => 'supply', keys => ['Z'] },
-    PUMP     => { name => 'Pump', kind => 'element', block => 'PUMPS',
-                  fixed => [ [ 'id', 'id' ], [ 'in', 'node' ], [ 'out', 'node' ] ],
-                  rest => 'curve' },
-    HEAD     => { name => 'Head', kind => 'element', block => 'DISCHARGES',
-                  otype => 'SPRINKLER',
-                  fixed => [ [ 'id', 'id' ], [ 'node', 'node' ] ],
-                  keys => [qw(K Q P Z)] },
-    HYDRANT  => { name => 'Hydrant', kind => 'element', block => 'DISCHARGES',
-                  otype => 'HYDRANT',
-                  fixed => [ [ 'id', 'id' ], [ 'node', 'node' ] ],
-                  keys => [qw(K Q P Z)] },
-    HOSEREEL => { name => 'HoseReel', kind => 'element', block => 'DISCHARGES',
-                  otype => 'HOSEREEL',
-                  fixed => [ [ 'id', 'id' ], [ 'node', 'node' ] ],
-                  keys => [qw(K Q P Z)] },
-    FLOW     => { name => 'Flow', kind => 'element', block => 'DISCHARGES',
-                  otype => 'FIXEDFLOW',
-                  fixed => [ [ 'id', 'id' ], [ 'node', 'node' ] ],
-                  keys => [qw(Q MINP Z)], need => ['Q'] },
-    BFP      => { name => 'BFP', kind => 'element', block => 'DEVICES',
-                  fixed => [ [ 'id', 'id' ], [ 'n1', 'node' ], [ 'n2', 'node' ] ],
-                  rest => 'curve' },
-    PRV      => { name => 'PRV', kind => 'element', block => 'DEVICES',
-                  fixed => [ [ 'id', 'id' ], [ 'n1', 'node' ], [ 'n2', 'node' ] ],
-                  keys => ['DP'], need => ['DP'] },
-    ORIFICE  => { name => 'Orifice', kind => 'element', block => 'DEVICES',
-                  fixed => [ [ 'id', 'id' ], [ 'n1', 'node' ], [ 'n2', 'node' ] ],
-                  keys => [qw(DP BORE DN PIPEDIA CD)] },
+#------------------------------------------------------------------------------
+# Units.  One UNITS line per quantity; anything not set takes the office
+# default.  Each quantity has the units it may be given in.
+#------------------------------------------------------------------------------
+our @UNIT_QUANTITIES = qw(LENGTH ELEVATION SIZE PRESSURE FLOW KFACTOR);
+our %UNIT_CHOICES = (
+    LENGTH    => [qw(MM CM M IN FT)],            # pipe and equivalent lengths
+    ELEVATION => [qw(MM CM M IN FT)],
+    SIZE      => [qw(MM IN)],                    # nominal sizes, bores, roughness
+    PRESSURE  => [qw(KPA BAR MPA PSI M)],        # M: metres head of water
+    FLOW      => [qw(LPM LPS M3H GPM)],
+    KFACTOR   => [qw(LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI)],
 );
-
-# The .hcx blocks written ahead of the elements, in this order.  The order
-# matters: UNITS comes before everything it scales, OPTIONS before the pipes
-# (FITTING_BASIS changes how a fitting string resolves), and NODES before every
-# element, because a supply or outlet with no Z= takes its node's elevation,
-# which must already have been read.
-#
-# The elements then follow in FILE order, each run of one kind under its own
-# block header (.hcx allows a block to appear more than once).  Grouping them
-# by block instead -- every pipe, then every pump, every supply ... -- would
-# reorder the elements of a model whose .hcx listed devices before supplies,
-# and the element order is the order of the report's schedules.  A converted
-# example 06 then printed its supply row in a different place, and the
-# acceptance test (identical reports) failed on that alone.
-my @SETTING_BLOCKS = qw(PROJECT UNITS OPTIONS NODES);
-
-# The command names in the order a template list or a pick list shows them.
-our @COMMANDS = map { $CMD{$_}{name} }
-    qw(TITLE PROJECT UNITS METHOD OPTION USE NODE PIPE SUPPLY PUMP HEAD
-       HYDRANT HOSEREEL FLOW BFP PRV ORIFICE);
-
-sub command_spec { $CMD{ uc($_[0] // '') } }
+# The office defaults (Joshua, 28 October 2026).  The K-factor default is the
+# unit the office's existing data is written in: K 8 for a K80 head.
+our %UNIT_DEFAULT = (LENGTH => 'MM', ELEVATION => 'M', SIZE => 'MM',
+                     PRESSURE => 'KPA', FLOW => 'LPM', KFACTOR => 'LPM/KPA');
+# Other spellings a user may type for a unit.
+my %UNIT_SPELLING = ('L/MIN' => 'LPM', 'L/S' => 'LPS', 'M3/H' => 'M3H',
+                     USGPM => 'GPM', 'L/MIN/KPA' => 'LPM/KPA', 'L/MIN/BAR' => 'LPM/BAR');
+# Lengths to metres.
+my %TO_METRE = (MM => 0.001, CM => 0.01, M => 1, IN => 0.0254, FT => 0.3048);
+# Nominal sizes in inches, to DN.
+my %INCH_DN = ('0.5' => 15, '0.75' => 20, '1' => 25, '1.25' => 32, '1.5' => 40,
+               '2' => 50, '2.5' => 65, '3' => 80, '3.5' => 90, '4' => 100,
+               '5' => 125, '6' => 150, '8' => 200, '10' => 250, '12' => 300,
+               '14' => 350, '16' => 400, '18' => 450, '20' => 500, '24' => 600);
 
 #------------------------------------------------------------------------------
-# template_fields -- a command's field list as the status bar shows it.
+# Fitting short forms: single letters for the three valves typed most often,
+# translated to database codes.  Every other fitting is written with its
+# database code (E, T, EF, EL, E45, GV, CV, BV, AV, GLV ...).
 #------------------------------------------------------------------------------
+our %FIT_SHORT = (G => 'GV', C => 'CV', B => 'BV');
+
+#------------------------------------------------------------------------------
+# The commands.  For each:
+#   kind   setting, use, pipe, node, element or device
+#   fixed  the fields that must be given, each [label, type]
+#   opt    fields that may follow, each [label, type]
+#   rest   what may follow those: fittings, pairs, copies (PC), names (NC)
+#   min    for pairs: how many at least
+#   otype  for an outlet, the .hcx discharge type
+# Field types:
+#   text field         free text; a PROJECT field name
+#   quantity unit      a UNITS quantity and its unit
+#   method option value pipetype ratio
+#   new                a new name (pipe, node, element)
+#   node pipe          a node or pipe named elsewhere
+#   length elev size   a length, an elevation, a nominal size or bore
+#   pressure flow num  numbers; minflow: a flow, or below zero a pressure
+#   kfactor
+#------------------------------------------------------------------------------
+my %CMD = (
+    TITLE     => { kind => 'setting', fixed => [ [ 'TEXT', 'text' ] ] },
+    PROJECT   => { kind => 'setting', fixed => [ [ 'FIELD', 'field' ], [ 'TEXT', 'text' ] ] },
+    UNITS     => { kind => 'setting', fixed => [ [ 'QUANTITY', 'quantity' ], [ 'UNIT', 'unit' ] ] },
+    METHOD    => { kind => 'setting', fixed => [ [ 'HW|DW', 'method' ] ] },
+    OPTION    => { kind => 'setting', fixed => [ [ 'NAME', 'option' ], [ 'VALUE', 'value' ] ] },
+    USE       => { kind => 'use', fixed => [ [ 'PIPETYPE', 'pipetype' ] ],
+                   opt => [ [ 'C', 'num' ] ] },
+    PIPE      => { kind => 'pipe', fixed => [ [ 'NAME', 'new' ], [ 'START', 'node' ], [ 'END', 'node' ],
+                   [ 'LENGTH', 'length' ], [ 'SIZE', 'size' ] ], rest => 'fittings' },
+    PC        => { kind => 'pipe', fixed => [ [ 'SOURCE', 'pipe' ] ], rest => 'copies' },
+    CHANGEPIPE => { kind => 'pipe', fixed => [ [ 'PIPE', 'pipe' ], [ 'LENGTH', 'length' ],
+                   [ 'SIZE', 'size' ] ], rest => 'fittings' },
+    EQV       => { kind => 'pipe', fixed => [ [ 'PIPE', 'pipe' ], [ 'LENGTH', 'length' ] ] },
+    NODE      => { kind => 'node', fixed => [ [ 'NAME', 'new' ], [ 'ELEVATION', 'elev' ] ] },
+    NC        => { kind => 'node', fixed => [ [ 'SOURCE', 'node' ] ], rest => 'names' },
+    WATER     => { kind => 'node', fixed => [ [ 'NAME', 'new' ], [ 'ELEVATION', 'elev' ],
+                   [ 'STATIC', 'pressure' ] ], rest => 'pairs', min => 0 },
+    SPRINKLER => { kind => 'node', otype => 'SPRINKLER', fixed => [ [ 'NAME', 'new' ],
+                   [ 'ELEVATION', 'elev' ], [ 'MINFLOW', 'minflow' ], [ 'K', 'kfactor' ] ] },
+    HYDRANT   => { kind => 'node', otype => 'HYDRANT', fixed => [ [ 'NAME', 'new' ],
+                   [ 'ELEVATION', 'elev' ], [ 'MINFLOW', 'minflow' ], [ 'K', 'kfactor' ] ] },
+    HREEL     => { kind => 'node', otype => 'HOSEREEL', fixed => [ [ 'NAME', 'new' ],
+                   [ 'ELEVATION', 'elev' ], [ 'MINFLOW', 'minflow' ], [ 'K', 'kfactor' ] ] },
+    FIXEDFLOW => { kind => 'element', fixed => [ [ 'NAME', 'new' ], [ 'NODE', 'node' ],
+                   [ 'FLOW', 'flow' ] ], opt => [ [ 'MINPRESSURE', 'pressure' ] ] },
+    PUMP      => { kind => 'element', fixed => [ [ 'NAME', 'new' ], [ 'IN', 'node' ], [ 'OUT', 'node' ],
+                   [ 'CHURN', 'pressure' ] ], rest => 'pairs', min => 1 },
+    BP        => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'CHURN', 'pressure' ] ],
+                   rest => 'pairs', min => 1 },
+    BFP       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ] ], rest => 'pairs', min => 1 },
+    PRV       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ] ], rest => 'pairs', min => 1 },
+    OPP       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'DROP', 'pressure' ] ],
+                   opt => [ [ 'CD', 'num' ] ] },
+    OFD       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'BORE', 'size' ] ],
+                   opt => [ [ 'CD', 'num' ] ] },
+    PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
+                   opt => [ [ 'MININLET', 'pressure' ] ] },
+);
+$CMD{$_}{name} = $_ for keys %CMD;
+
+# Short forms of the commonest commands.
+my %ALIAS = (P => 'PIPE', U => 'USE', N => 'NODE', W => 'WATER', CHP => 'CHANGEPIPE');
+
+# The commands in the order the command strip shows them, grouped.
+our @COMMAND_GROUPS = (
+    [qw(TITLE PROJECT UNITS METHOD OPTION)],
+    [qw(USE PIPE PC CHANGEPIPE EQV)],
+    [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
+    [qw(PUMP BP BFP PRV OPP OFD PRA)],
+);
+our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
+
+# command_spec -- the table entry for a command word or alias, or undef.
+sub command_spec {
+    my $w = uc(shift // '');
+    return $CMD{ $ALIAS{$w} // $w };
+}
+
+#------------------------------------------------------------------------------
+# template_fields / template_text -- a command's fields as the status bar
+# shows them: "PIPE <NAME> <START> <END> <LENGTH> <SIZE> [FITTINGS ...]".
+#------------------------------------------------------------------------------
+my %REST_LABEL = (fittings => 'FITTINGS ...', pairs => 'FLOW PRESSURE ...',
+                  copies => 'NAME START END ...', names => 'NAME ...');
 sub template_fields {
     my $c = shift;
     my @f = map { $_->[0] } @{ $c->{fixed} };
-    my $rest = $c->{rest} // '';
-    push @f, 'fittings ...'                         if $rest eq 'fittings';
-    push @f, 'q1 p1 q2 p2 ...'                      if $rest eq 'curve';
-    push @f, 'pressure | q1 p1 q2 p2 ...'           if $rest eq 'supply';
-    push @f, map { "$_=" } @{ $c->{keys} || [] };
+    push @f, map { $_->[0] } @{ $c->{opt} || [] };
+    push @f, $REST_LABEL{ $c->{rest} } if $c->{rest};
     return @f;
 }
-
-# The template as one line of text: "Pipe <id> <n1> ... [C=] [EQV=]".
 sub template_text {
     my $c = command_spec(shift) or return '';
-    my %key = map { ("$_=" => 1) } @{ $c->{keys} || [] };
-    my %need = map { ("$_=" => 1) } @{ $c->{need} || [] };
-    return join ' ', $c->{name},
-        map { $key{$_} && !$need{$_} ? "[$_]" : "<$_>" } template_fields($c);
+    my $nfix = @{ $c->{fixed} };
+    my @f = template_fields($c);
+    return join ' ', $c->{name}, map { $_ < $nfix ? "<$f[$_]>" : "[$f[$_]]" } 0 .. $#f;
 }
 
-#------------------------------------------------------------------------------
-# strip_comment -- the line without its // comment and line ending.
-#------------------------------------------------------------------------------
+#==============================================================================
+# Values.
+#==============================================================================
+
+# length_metres -- a length or elevation token as metres, or undef if it is
+# not one.  A plain number is in the quantity's unit; a number may carry its
+# own: 12M, 300MM, 2.5CM, 6IN, 10FT, 14'3", 14'3, 6', 3".
+sub length_metres {
+    my ($t, $unit) = @_;
+    return undef unless defined $t;
+    return HardyCross::Parse::num($t) * $TO_METRE{$unit} if HardyCross::Parse::is_num($t);
+    return $1 * $TO_METRE{ uc $2 } if $t =~ /^([-+]?(?:\d+\.?\d*|\.\d+))(MM|CM|M|IN|FT)\z/i;
+    if ($t =~ /^([-+]?)(\d+(?:\.\d+)?)'(?:(\d+(?:\.\d+)?)"?)?\z/) {
+        my $m = $2 * 0.3048 + ($3 // 0) * 0.0254;
+        return $1 eq '-' ? -$m : $m;
+    }
+    return ($1 eq '-' ? -1 : 1) * $2 * 0.0254 if $t =~ /^([-+]?)(\d+(?:\.\d+)?)"\z/;
+    return undef;
+}
+
+# size_dn -- a nominal size as a DN, or undef: millimetres rounded, or inches
+# looked up (1.5 is DN40).
+sub size_dn {
+    my ($t, $unit) = @_;
+    return undef unless HardyCross::Parse::is_num($t);
+    return int($t + 0.5) if $unit eq 'MM';
+    return $INCH_DN{ 0 + $t };
+}
+
+# size_mm -- a bore or roughness in the SIZE unit, as millimetres.
+sub size_mm {
+    my ($t, $unit) = @_;
+    return undef unless HardyCross::Parse::is_num($t);
+    return $unit eq 'MM' ? 0 + $t : $t * 25.4;
+}
+
+# ratio_value -- "3:1", "3:2" or a plain number, as the ratio; undef if none.
+sub ratio_value {
+    my $t = shift // '';
+    return $1 / $2 if $t =~ /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)\z/ && $2 > 0;
+    return 0 + $t if HardyCross::Parse::is_num($t);
+    return undef;
+}
+
+# unit_code -- a unit as typed, in its standard spelling.
+sub unit_code { my $u = uc(shift // ''); return $UNIT_SPELLING{$u} // $u }
+
+# unit_factor -- the engine's factor for a flow or pressure unit: what a value
+# in that unit is multiplied by to give L/min or kPa.
+sub unit_factor {
+    my ($q, $u) = @_;
+    my $net = HardyCross::Parse::new_net();
+    HardyCross::set_unit($net, $q, $u);
+    return $q eq 'FLOW' ? $net->{f_flow} : $net->{f_pres};
+}
+
+# k_factor_to_model -- a K given in the KFACTOR unit, as the K the .hcx parser
+# expects: the model's flow unit per square root of its pressure unit.
+# K = Q / sqrt(P), so K scales as (flow factor) / sqrt(pressure factor).
+sub k_factor_to_model {
+    my ($k, $units) = @_;
+    my ($kq, $kp) = split m{/}, $units->{KFACTOR};
+    my $qf = unit_factor('FLOW', $kq) / unit_factor('FLOW', $units->{FLOW});
+    my $pf = unit_factor('PRESSURE', $kp) / unit_factor('PRESSURE', $units->{PRESSURE});
+    return $k * $qf / sqrt($pf);
+}
+
+# fmt -- a computed number for a .hcx row: ten significant figures, enough
+# that the rounding never shows in a result.
+sub fmt { sprintf '%.10g', shift }
+
+#==============================================================================
+# analyse -- the syntax of one .phc line.
+#
+# Returns a hash:
+#   status    blank, ok, incomplete (fields still to be typed) or error
+#   msg       why, for incomplete and error
+#   key       the command (aliases resolved)
+#   pos       the fixed fields, as typed (keywords upper-cased: units,
+#             methods, option names, pipe types)
+#   opt       the optional fields given
+#   rest      the tokens after them (fittings, pairs, copies, names)
+#   text      for TITLE and PROJECT, the raw text
+#
+# $partial is true while the line is being typed with the cursor at its end:
+# a lone word that begins a command is then "incomplete", not "unknown".
+#==============================================================================
 sub strip_comment {
     my $l = shift // '';
     $l =~ s/\r?\n\z//;
@@ -188,404 +290,468 @@ sub strip_comment {
     return $l;
 }
 
-#------------------------------------------------------------------------------
-# analyse -- the syntax of one .phc line.
-#
-# Returns a hash:
-#   status    blank, ok, incomplete (fields still to be typed) or error
-#   msg       why, for incomplete and error
-#   key       the command's key in %CMD, once it is known
-#   pos       the positional fields after the command word, as typed
-#   opt       { KEY => value } for the KEY=value options, keys upper-cased
-#   optorder  the option keys in the order typed
-#   rest      the tokens after the fixed fields (fittings, curve points)
-#   text      for Title and Project, the raw text
-#
-# $partial is true while the line is being typed and the cursor is at its end:
-# a lone word that begins a command name is then "incomplete", not "unknown".
-#------------------------------------------------------------------------------
 sub analyse {
     my ($raw, $partial) = @_;
     my $code = strip_comment($raw);
-    my %a = (status => 'ok', pos => [], opt => {}, optorder => [], rest => []);
+    my %a = (status => 'ok', pos => [], opt => [], rest => []);
     my $bad  = sub { %a = (%a, status => 'error',      msg => sprintf(shift, @_)); \%a };
     my $more = sub { %a = (%a, status => 'incomplete', msg => sprintf(shift, @_)); \%a };
 
-    # '!' and '#' start a comment in .hcx, and the .hcx tokeniser this reader
-    # shares would cut the line there without a word.  "Title JOB #12" would
-    # lose "#12"; "Pipe P1 A B 3 # 50" would lose its size.  In .phc they are
-    # simply not allowed outside a // comment, so nothing is cut silently.
-    return $bad->("'%s' cannot be used in a .phc line; comments start with //", $1)
+    # '!' and '#' start a comment in the .hcx tokeniser this reader shares, so
+    # a line holding one would be cut short without a word.  They are refused.
+    return $bad->("'%s' CANNOT BE USED IN A .PHC LINE; COMMENTS START WITH //", $1)
         if $code =~ /([!#])/;
-
     my @tk = HardyCross::Parse::tokenize($code);
     return { %a, status => 'blank' } unless @tk;
 
     my $word = uc $tk[0];
-    my $c = $CMD{$word};
+    my $c = command_spec($word);
     unless ($c) {
-        # Still typing the command word: incomplete if some command begins
-        # with what has been typed so far.
         if ($partial && @tk == 1 && $code !~ /\s\z/
-            && grep { index($_, $word) == 0 } keys %CMD) {
-            return $more->('a command: %s', join(' ', @COMMANDS));
+            && grep { index($_, $word) == 0 } @COMMANDS) {
+            return $more->('A COMMAND: %s', join(' ', @COMMANDS));
         }
-        return $bad->("unknown command %s (commands are %s)", $tk[0], join(' ', @COMMANDS));
+        return $bad->('UNKNOWN COMMAND %s', uc $tk[0]);
     }
-    $a{key} = $word;
+    $a{key} = $c->{name};
 
-    #-------------------------------------------------- Title and Project
-    # Their value is the rest of the RAW line, so a title keeps its spacing and
-    # punctuation exactly as the .hcx PROJECT block does.
-    if ($word eq 'TITLE' || $word eq 'PROJECT') {
+    #---------------------------------------------------------- TITLE, PROJECT
+    # The value is the rest of the raw line, so a title keeps its spacing.
+    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT') {
         (my $t = $code) =~ s/^\s*\S+\s*//;
-        if ($word eq 'PROJECT') {
-            return $more->('a PROJECT field name, such as COMPANY or JOB') unless @tk > 1;
+        if ($a{key} eq 'PROJECT') {
+            return $more->('FIELD') unless @tk > 1;
             push @{ $a{pos} }, uc $tk[1];
-            # END is reserved: written into the .hcx PROJECT block it would end
-            # the block, and every later field would be dropped without a word.
-            return $bad->('END cannot be a PROJECT field name') if uc $tk[1] eq 'END';
+            # END would end the .hcx PROJECT block the field is written into.
+            return $bad->('END CANNOT BE A PROJECT FIELD') if uc $tk[1] eq 'END';
             $t =~ s/^\S+\s*//;
         }
         $t =~ s/\s+\z//;
-        return $more->('the text') unless length $t;
+        return $more->('TEXT') unless length $t;
         $a{text} = $t;
         return \%a;
     }
 
-    #-------------------------------------------------- every other command
-    my @fixed = @{ $c->{fixed} };
-    my %allowed = map { $_ => 1 } @{ $c->{keys} || [] };
-    for my $t (@tk[1 .. $#tk]) {
-        if ($t =~ /=/) {
-            my ($k, $v) = split /=/, $t, 2;
-            $k = uc $k;
-            return $bad->("%s= is not an option of %s%s", $k, $c->{name},
-                          %allowed ? ' (it takes ' . join(' ', map { "$_=" } @{ $c->{keys} }) . ')'
-                                   : ' (it takes no KEY= options)')
-                unless $allowed{$k};
-            return $bad->("%s= is given twice", $k) if exists $a{opt}{$k};
-            return $bad->("%s= options come after the fixed fields; %s is still missing",
-                          $k, $fixed[ @{ $a{pos} } ][0])
-                if @{ $a{pos} } < @fixed;
-            return $more->("a value after %s=", $k) unless length($v // '');
-            if ($word eq 'UNITS') {
-                $v = uc $v;
-            } elsif (!HardyCross::Parse::is_num($v)) {
-                return $bad->("%s=%s is not a number", $k, $v);
-            }
-            $a{opt}{$k} = $v;
-            push @{ $a{optorder} }, $k;
-        } elsif (@{ $a{pos} } < @fixed) {
-            push @{ $a{pos} }, $t;
-        } else {
-            push @{ $a{rest} }, $t;
-        }
+    #---------------------------------------------------------- the fields
+    my @f = @tk[1 .. $#tk];
+    for (@f) {
+        return $bad->("'%s': FIELDS GO BY POSITION - THERE ARE NO KEY=VALUE OPTIONS", $_) if /=/;
     }
-
-    # The fixed fields, each checked for its type.
-    for my $i (0 .. $#{ $a{pos} }) {
-        my ($label, $type) = @{ $fixed[$i] };
-        my $v = $a{pos}[$i];
-        if ($type eq 'num') {
-            return $bad->("%s '%s' is not a number", $label, $v)
-                unless HardyCross::Parse::is_num($v);
-        } elsif ($type eq 'id' || $type eq 'node') {
-            # END ends a block in .hcx, so an element or node called END would
-            # end the block it was written into.
-            return $bad->('END cannot be used as an id') if uc $v eq 'END';
-        } elsif ($type eq 'option') {
-            my $o = uc $v;
-            return $bad->('METHOD has a command of its own: Method HW or Method DW')
-                if $o eq 'METHOD';
-            return $bad->("unknown option %s (options are %s)", $v, join(' ', @OPTIONS))
-                unless $OPTION{$o};
-            $a{pos}[$i] = $o;
-        } elsif ($type eq 'value') {
-            my $o = $a{pos}[0];
-            if ($NUM_OPTION{$o}) {
-                return $bad->("%s value '%s' is not a number", $o, $v)
-                    unless HardyCross::Parse::is_num($v);
-            } elsif ($o eq 'PROFILE') {
-                # The .hcx parser acts on PROFILE EPANET and silently ignores
-                # any other value; here any other value is an error.
-                return $bad->('PROFILE takes EPANET') unless uc $v eq 'EPANET';
-                $a{pos}[$i] = uc $v;
-            } else {
-                $a{pos}[$i] = uc $v;
-            }
-        } elsif ($type eq 'pipetype') {
-            my $p = uc $v;
-            unless ($p eq 'BORE') {
-                HardyCross::Parse::ensure_db();
-                return $bad->("unknown pipe type %s (the pipe database lists %s; "
-                            . "BORE for a pipe given by its bore)",
-                              $v, join(' ', HardyCross::PipeData::pipe_types()))
-                    unless HardyCross::PipeData::pipe_type($p);
-            }
-            $a{pos}[$i] = $p;
-        } elsif ($type eq 'mode') {
-            my $m = uc $v;
-            return $bad->("%s must be STATIC or CURVE", $v)
-                unless $m eq 'STATIC' || $m eq 'CURVE';
-            $a{pos}[$i] = $m;
-        }
+    for my $fd (@{ $c->{fixed} }) {
+        return $more->('%s', $fd->[0]) unless @f;
+        my $err = check_field($fd->[1], shift(@f), \%a, $fd->[0]);
+        return $bad->('%s', $err) if defined $err;
     }
-    return $more->('%s', $fixed[ @{ $a{pos} } ][0]) if @{ $a{pos} } < @fixed;
+    for my $fd (@{ $c->{opt} || [] }) {
+        last unless @f;
+        my $err = check_field($fd->[1], shift(@f), \%a, $fd->[0], 1);
+        return $bad->('%s', $err) if defined $err;
+    }
+    $a{rest} = [@f];
 
-    # What follows the fixed fields.
+    #---------------------------------------------------------- what follows
     my $rest = $c->{rest} // '';
-    my @r = @{ $a{rest} };
-    if ($rest eq 'curve' || ($rest eq 'supply' && $a{pos}[2] eq 'CURVE')) {
-        for (@r) {
-            return $bad->("curve value '%s' is not a number", $_)
-                unless HardyCross::Parse::is_num($_);
+    if ($rest eq 'fittings') {
+        for (@f) {
+            return $bad->("'%s' IS NOT A FITTING: A CODE WITH AN OPTIONAL COUNT, SUCH AS 2E", $_)
+                unless /^\d*[A-Z][A-Z0-9]*\z/i;
         }
-        return $more->('flow/pressure pairs: at least two') if @r < 4;
-        return $more->('the pressure to pair with flow %s', $r[-1]) if @r % 2;
-    } elsif ($rest eq 'supply') {
-        return $more->('the static pressure') unless @r;
-        return $bad->("unexpected field '%s' after the static pressure", $r[1]) if @r > 1;
-        return $bad->("pressure '%s' is not a number", $r[0])
-            unless HardyCross::Parse::is_num($r[0]);
-    } elsif ($rest eq 'fittings') {
-        # Checked against the database when the row is parsed: the fitting
-        # codes a pipe can take depend on its type and size.
-    } elsif (@r) {
-        return $bad->("unexpected field '%s'", $r[0]);
-    }
-
-    # Options that must be present, and the combinations that must hold.
-    for my $k (@{ $c->{need} || [] }) {
-        return $more->('%s=', $k) unless exists $a{opt}{$k};
-    }
-    if ($word eq 'UNITS') {
-        return $more->('at least one of %s', join(' ', map { "$_=" } @UNIT_KEYS))
-            unless @{ $a{optorder} };
-    }
-    if ($c->{otype} && $c->{otype} ne 'FIXEDFLOW') {
-        my $n = grep { exists $a{opt}{$_} } qw(K Q P);
-        return $more->('any two of K=, Q=, P=') if $n < 2;
-    }
-    if ($word eq 'ORIFICE') {
-        return $bad->('an Orifice takes DP= (to size the plate) or BORE= (a known bore), not both')
-            if exists $a{opt}{DP} && exists $a{opt}{BORE};
-        return $more->('DP= (to size the plate) or BORE= (a known bore)')
-            unless exists $a{opt}{DP} || exists $a{opt}{BORE};
-        return $more->('DN= or PIPEDIA= for the pipe the plate sits in')
-            unless exists $a{opt}{DN} || exists $a{opt}{PIPEDIA};
+    } elsif ($rest eq 'pairs') {
+        for (@f) {
+            return $bad->("'%s' IS NOT A NUMBER", $_) unless HardyCross::Parse::is_num($_);
+            return $bad->('FLOWS AND PRESSURES CANNOT BE NEGATIVE') if $_ < 0;
+        }
+        return $more->('THE PRESSURE TO PAIR WITH FLOW %s', $f[-1]) if @f % 2;
+        return $more->('FLOW PRESSURE') if @f / 2 < ($c->{min} // 0);
+    } elsif ($rest eq 'copies') {
+        return $more->('NAME START END') unless @f;
+        return $more->('%s', @f % 3 == 1 ? 'START END' : 'END') if @f % 3;
+        for my $i (0 .. $#f) {
+            my $err = check_field($i % 3 ? 'node' : 'new', $f[$i], {}, $i % 3 ? 'NODE' : 'NAME');
+            return $bad->('%s', $err) if defined $err;
+        }
+    } elsif ($rest eq 'names') {
+        return $more->('NAME') unless @f;
+        for (@f) {
+            my $err = check_field('new', $_, {}, 'NAME');
+            return $bad->('%s', $err) if defined $err;
+        }
+    } elsif (@f) {
+        return $bad->("UNEXPECTED FIELD '%s'", $f[0]);
     }
     return \%a;
 }
 
 #------------------------------------------------------------------------------
-# setting_keys -- the names of the settings a line sets, for the once-only rule.
-#
-# Title sets TITLE, "Project JOB ..." sets JOB, "Units FLOW=LPS PRESSURE=BAR"
-# sets FLOW= and PRESSURE=, "Method HW" sets Method, "Option TOL_FLOW 0.01"
-# sets "Option TOL_FLOW".  The reader refuses a name set twice; the editor
-# uses the same names to list the duplicates in its problems panel, so the two
-# can never disagree about what counts as "the same setting".
+# check_field -- one field checked for its type.  The value (normalised where
+# it is a keyword) is pushed onto pos, or opt for an optional field.  Returns
+# an error message, or undef.  The checks are of the language only: a unit is
+# known, a pipe type is in the database, a number is a number.
+#------------------------------------------------------------------------------
+sub check_field {
+    my ($type, $v, $a, $label, $optional) = @_;
+    my $push = sub { push @{ $a->{ $optional ? 'opt' : 'pos' } }, shift; undef };
+    my $is_num = HardyCross::Parse::is_num($v);
+    if ($type eq 'new' || $type eq 'node' || $type eq 'pipe') {
+        return 'END CANNOT BE A NAME' if uc $v eq 'END';
+        return "'~' IS RESERVED FOR NAMES PHCP MAKES ITSELF" if $type eq 'new' && $v =~ /~/;
+        return $push->($v);
+    }
+    if ($type eq 'length' || $type eq 'elev') {
+        my $m = length_metres($v, 'M');
+        return "$label '$v' IS NOT A LENGTH" unless defined $m;
+        return "$label CANNOT BE NEGATIVE" if $type eq 'length' && $m < 0;
+        return $push->($v);
+    }
+    if ($type =~ /^(size|num|pressure|flow|kfactor|minflow)\z/) {
+        return "$label '$v' IS NOT A NUMBER" unless $is_num;
+        return "$label CANNOT BE NEGATIVE" if $v < 0 && $type ne 'minflow';
+        return $push->($v);
+    }
+    if ($type eq 'ratio') {
+        my $r = ratio_value($v);
+        return "RATIO '$v' IS NOT A RATIO: WRITE IT 3:1 OR 1.5" unless defined $r;
+        return 'A PRESSURE RATIO VALVE REDUCES PRESSURE: ITS RATIO MUST BE MORE THAN 1' if $r <= 1;
+        return $push->($v);
+    }
+    return $push->(uc $v) if $type eq 'field';
+    if ($type eq 'quantity') {
+        my $q = uc $v;
+        return "UNKNOWN UNITS QUANTITY $v (" . join(' ', @UNIT_QUANTITIES) . ')' unless $UNIT_CHOICES{$q};
+        return $push->($q);
+    }
+    if ($type eq 'unit') {
+        my $q = $a->{pos}[0];
+        my $u = unit_code($v);
+        return "UNKNOWN UNIT $v FOR $q (" . join(' ', @{ $UNIT_CHOICES{$q} }) . ')'
+            unless grep { $_ eq $u } @{ $UNIT_CHOICES{$q} };
+        return $push->($u);
+    }
+    if ($type eq 'method') {
+        my $m = uc $v;
+        $m = 'HW' if $m eq 'HAZEN';
+        $m = 'DW' if $m eq 'DARCY';
+        return 'METHOD IS HW (HAZEN-WILLIAMS) OR DW (DARCY-WEISBACH)' unless $m eq 'HW' || $m eq 'DW';
+        return $push->($m);
+    }
+    if ($type eq 'option') {
+        my $o = uc $v;
+        return 'METHOD HAS A COMMAND OF ITS OWN: METHOD HW OR METHOD DW' if $o eq 'METHOD';
+        return "UNKNOWN OPTION $v (" . join(' ', @OPTIONS) . ')' unless $OPTION{$o};
+        return $push->($o);
+    }
+    if ($type eq 'value') {
+        my $o = $a->{pos}[0];
+        if ($NUM_OPTION{$o}) {
+            return "$o VALUE '$v' IS NOT A NUMBER" unless $is_num;
+            return $push->($v);
+        }
+        # The .hcx parser acts on PROFILE EPANET and ignores any other value.
+        return 'PROFILE TAKES EPANET' if $o eq 'PROFILE' && uc $v ne 'EPANET';
+        return $push->(uc $v);
+    }
+    if ($type eq 'pipetype') {
+        my $p = uc $v;
+        unless ($p eq 'BORE') {
+            HardyCross::Parse::ensure_db();
+            return "UNKNOWN PIPE TYPE $v (THE PIPE DATABASE LISTS "
+                 . join(' ', HardyCross::PipeData::pipe_types()) . '; BORE FOR A PIPE GIVEN BY ITS BORE)'
+                unless HardyCross::PipeData::pipe_type($p);
+        }
+        return $push->($p);
+    }
+    return $push->($v) if $type eq 'text';
+    die "check_field: unknown type $type\n";     # a programming error
+}
+
+#------------------------------------------------------------------------------
+# What a line names.
+#------------------------------------------------------------------------------
+
+# nodes_used -- the node names a line refers to (not those it defines).
+sub nodes_used {
+    my $a = shift;
+    my $c = command_spec($a->{key} // '') or return;
+    my @fixed = @{ $c->{fixed} };
+    my @n = map { $a->{pos}[$_] } grep { $fixed[$_][1] eq 'node' } 0 .. $#fixed;
+    # A PC copy names its start and end nodes.
+    if ($a->{key} eq 'PC') {
+        my @r = @{ $a->{rest} };
+        push @n, map { @r[ $_ + 1, $_ + 2 ] } grep { $_ % 3 == 0 && $_ + 2 <= $#r } 0 .. $#r;
+    }
+    return grep { defined } @n;
+}
+
+# nodes_defined -- the node names a line defines.
+sub nodes_defined {
+    my $a = shift;
+    my $k = $a->{key} // '';
+    return @{ $a->{rest} } if $k eq 'NC';
+    my $c = command_spec($k) or return;
+    return $c->{kind} eq 'node' ? ($a->{pos}[0]) : ();
+}
+
+# names_defined -- the pipe and element names a line defines.
+sub names_defined {
+    my $a = shift;
+    my $k = $a->{key} // '';
+    return $a->{pos}[0] if $k eq 'PIPE' || $k eq 'FIXEDFLOW' || $k eq 'PUMP';
+    if ($k eq 'PC') {
+        my @r = @{ $a->{rest} };
+        return map { $r[$_] } grep { $_ % 3 == 0 } 0 .. $#r;
+    }
+    return;
+}
+
+#------------------------------------------------------------------------------
+# setting_keys -- the names of the settings a line sets, for the once-only
+# rule.  Shared with the editor so the two cannot disagree.
 #------------------------------------------------------------------------------
 sub setting_keys {
     my $a = shift;
     my $k = $a->{key} // '';
-    return 'TITLE'                    if $k eq 'TITLE';
-    return $a->{pos}[0]               if $k eq 'PROJECT';
-    return map { "$_=" } @{ $a->{optorder} } if $k eq 'UNITS';
-    return 'Method'                   if $k eq 'METHOD';
-    return "Option $a->{pos}[0]"      if $k eq 'OPTION';
+    return 'TITLE'                 if $k eq 'TITLE';
+    return "PROJECT $a->{pos}[0]"  if $k eq 'PROJECT';
+    return "UNITS $a->{pos}[0]"    if $k eq 'UNITS';
+    return 'METHOD'                if $k eq 'METHOD';
+    return "OPTION $a->{pos}[0]"   if $k eq 'OPTION';
     return;
 }
 
-# The node ids a line refers to, in field order.
-sub nodes_used {
-    my $a = shift;
-    my $c = $CMD{ $a->{key} // '' } or return;
-    return if $c->{kind} ne 'element';
-    my @fixed = @{ $c->{fixed} };
-    return map { $a->{pos}[$_] } grep { $fixed[$_][1] eq 'node' } 0 .. $#fixed;
-}
-
-#------------------------------------------------------------------------------
-# hcx_row -- the .hcx row an element line means.
-#
-# Returns (block, row text).  $use is the Use in force: { type => 'ASAM' or
-# 'BORE', c => C= or undef }.  Values are copied as typed, never reformatted,
-# so the .hcx parser sees exactly the digits the designer wrote.
-#------------------------------------------------------------------------------
-sub hcx_row {
-    my ($a, $use) = @_;
-    my $c = $CMD{ $a->{key} };
-    my @p = @{ $a->{pos} };
-    my %o = %{ $a->{opt} };
-    # The options in the order typed, as KEY=value, upper-case keys.
-    my $opts = sub { map { "$_=$o{$_}" } grep { exists $o{$_} } @_ };
-    my $key = $a->{key};
-
-    return ('NODES', "$p[0] $p[1]") if $key eq 'NODE';
-
-    if ($key eq 'PIPE') {
-        $use ||= { type => 'BORE' };
-        my @fit = @{ $a->{rest} };
-        # The pipe's own C= wins over the Use line's.
-        my $cv = $o{C} // $use->{c};
-        if ($use->{type} eq 'BORE') {
-            # With no pipe type there is no fitting table and no basis bore,
-            # so a fitting cannot be resolved -- the .hcx parser refuses a
-            # fitting string without TYPE= for the same reason.
-            HardyCross::fail("pipe %s: fittings need a pipe type - put a Use <pipetype> "
-                           . "line before it, or give the allowance as EQV=", $p[0])
-                if @fit;
-            return ('PIPES', join ' ', @p, (defined $cv ? "C=$cv" : ()),
-                                        $opts->(qw(EQV EPS K)));
-        }
-        # The fittings go to the .hcx FIT= field joined by commas.  Each token
-        # may be a code ("T"), a counted code ("2E"), or a whole office string
-        # ("2E,1T" is split into two tokens by the shared tokeniser; "1E1T"
-        # stays one): the database resolver reads all of them.
-        return ('PIPES', join ' ', @p, "TYPE=$use->{type}",
-                                    (@fit ? 'FIT=' . join(',', @fit) : ()),
-                                    (defined $cv ? "C=$cv" : ()),
-                                    $opts->(qw(EQV EPS K)));
-    }
-    if ($key eq 'SUPPLY') {
-        return ('SUPPLIES', join ' ', @p, @{ $a->{rest} }, $opts->('Z'));
-    }
-    if ($key eq 'PUMP') {
-        return ('PUMPS', join ' ', @p, @{ $a->{rest} });
-    }
-    if ($c->{otype}) {
-        # A Flow's MINP= is the pressure it needs at its fixed flow: checked,
-        # not used to change the flow (see README, "Fixed flows").
-        return ('DISCHARGES', join ' ', @p, $c->{otype}, $opts->(qw(K Q P MINP Z)));
-    }
-    if ($key eq 'BFP') {
-        return ('DEVICES', join ' ', @p, 'BFP', @{ $a->{rest} });
-    }
-    if ($key eq 'PRV') {
-        return ('DEVICES', join ' ', @p, 'PRV', $opts->('DP'));
-    }
-    if ($key eq 'ORIFICE') {
-        my $ty = exists $o{DP} ? 'ORIFICE_P' : 'ORIFICE_D';
-        return ('DEVICES', join ' ', @p, $ty, $opts->(qw(DP BORE DN PIPEDIA CD)));
-    }
-    die "hcx_row: no translation for $key\n";    # a programming error
-}
-
-#------------------------------------------------------------------------------
+#==============================================================================
 # translate -- .phc text to .hcx text.
 #
-# Returns (hcx text, line map), where $map->[n] is the .phc line that .hcx line
-# n (counting from 1) came from.  Fails, naming the .phc line, on anything the
-# language itself does not allow.
-#------------------------------------------------------------------------------
+# Returns (hcx text, line map, units), where $map->[n] is the .phc line that
+# .hcx line n (from 1) came from.  Fails, naming the .phc line, on anything
+# the language itself does not allow.
+#==============================================================================
 sub translate {
     my $text = shift // '';
     my @lines = split /\n/, $text, -1;
     my $at = sub { my $n = shift; HardyCross::fail("line %d: %s", $n, sprintf(shift, @_)) };
 
-    # Read every line once.  An error stops the read at that line, as the .hcx
-    # reader does.
+    #---------------------------------------------------- read every line
     my @rows;
     for my $n (1 .. @lines) {
         my $a = analyse($lines[ $n - 1 ]);
         next if $a->{status} eq 'blank';
-        $at->($n, '%s', $a->{status} eq 'incomplete'
-                         ? "$CMD{ $a->{key} // '' }{name} needs $a->{msg}"
-                         : $a->{msg})
-            if $a->{status} ne 'ok' && $a->{key};
+        $at->($n, '%s NEEDS %s', $a->{key}, $a->{msg}) if $a->{status} eq 'incomplete';
         $at->($n, '%s', $a->{msg}) if $a->{status} ne 'ok';
         push @rows, [ $n, $a ];
     }
+    my $kind = sub { command_spec($_[0]{key})->{kind} };
 
-    # First pass: the file-wide settings, wherever they appear.  Each may be
-    # given once; a second setting is an error naming both lines, because a
-    # silent "last one wins" in a file read in any order is a trap.
-    my (%block, %seen);
-    my $once = sub {
-        my ($n, $what) = @_;
-        $at->($n, '%s is already set on line %d', $what, $seen{$what}) if $seen{$what};
-        $seen{$what} = $n;
-    };
-    for (@rows) {
+    #---------------------------------------------------- settings, file-wide
+    # Each may be given once: a second is an error naming both lines, because
+    # "the last one wins" in a file read in any order is a trap.
+    my (%seen, @project, @options, $method);
+    my %units = %UNIT_DEFAULT;
+    for (grep { $kind->($_->[1]) eq 'setting' } @rows) {
         my ($n, $a) = @$_;
-        my $k = $a->{key};
-        next unless $CMD{$k}{kind} eq 'setting';
-        $once->($n, $_) for setting_keys($a);
-        if ($k eq 'TITLE') {
-            push @{ $block{PROJECT} }, [ "TITLE $a->{text}", $n ];
-        } elsif ($k eq 'PROJECT') {
-            push @{ $block{PROJECT} }, [ "$a->{pos}[0] $a->{text}", $n ];
-        } elsif ($k eq 'UNITS') {
-            push @{ $block{UNITS} }, [ "$_ $a->{opt}{$_}", $n ] for @{ $a->{optorder} };
-        } elsif ($k eq 'METHOD') {
-            push @{ $block{OPTIONS} }, [ "METHOD $a->{pos}[0]", $n ];
-        } elsif ($k eq 'OPTION') {
-            push @{ $block{OPTIONS} }, [ "$a->{pos}[0] $a->{pos}[1]", $n ];
+        for my $k (setting_keys($a)) {
+            $at->($n, '%s IS ALREADY SET ON LINE %d', $k, $seen{$k}) if $seen{$k};
+            $seen{$k} = $n;
         }
+        my ($k, @p) = ($a->{key}, @{ $a->{pos} });
+        push @project, [ "TITLE $a->{text}", $n ]  if $k eq 'TITLE';
+        push @project, [ "$p[0] $a->{text}", $n ]  if $k eq 'PROJECT';
+        $units{ $p[0] } = $p[1]                    if $k eq 'UNITS';
+        $method = [ $p[0], $n ]                    if $k eq 'METHOD';
+        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION';
     }
+    my $dw = $method && $method->[0] eq 'DW';
 
-    # Second pass: nodes and elements, in file order.  Use is the one
-    # positional command: it applies to the Pipe lines after it.  Before any
-    # Use, a pipe is given by its bore with the .hcx default C of 120.
+    #---------------------------------------------------- definitions
+    # Nodes, pipes and elements are collected first and written afterwards,
+    # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
+    # before or after the thing it refers to.
+    my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items);
     my $use = { type => 'BORE' };
-    my (%defined, %first_use, @used, @elems);
-    for (@rows) {
+    my $define_node = sub {
+        my ($name, $n, $def) = @_;
+        $at->($n, 'NODE %s IS ALREADY DEFINED ON LINE %d', $name, $node{$name}{line}) if $node{$name};
+        $node{$name} = { %$def, line => $n };
+        push @node_order, $name;
+    };
+    my $define_name = sub {
+        my ($name, $n) = @_;
+        $at->($n, 'THE NAME %s IS ALREADY USED ON LINE %d', $name, $name_line{$name}) if $name_line{$name};
+        $name_line{$name} = $n;
+    };
+    my $once = sub {
+        my ($tbl, $name, $n, $what) = @_;
+        $at->($n, 'PIPE %s ALREADY HAS %s, ON LINE %d', $name, $what, $tbl->{$name}{line})
+            if $tbl->{$name};
+    };
+    for (grep { $kind->($_->[1]) ne 'setting' } @rows) {
         my ($n, $a) = @$_;
-        my $k = $a->{key};
-        my $kind = $CMD{$k}{kind};
-        next if $kind eq 'setting';
-        if ($kind eq 'use') {
-            $use = { type => $a->{pos}[0], c => $a->{opt}{C} };
-            next;
+        my ($k, @p) = ($a->{key}, @{ $a->{pos} });
+        if ($k eq 'USE') {
+            $use = { type => $p[0], c => $a->{opt}[0], line => $n };
+        } elsif ($k eq 'PIPE') {
+            $define_name->($p[0], $n);
+            $pipe{ $p[0] } = { line => $n, use => $use, start => $p[1], end => $p[2],
+                               len => $p[3], size => $p[4], fits => [ @{ $a->{rest} } ] };
+            push @items, [ 'PIPE', $p[0], $n ];
+        } elsif ($k eq 'PC') {
+            my @r = @{ $a->{rest} };
+            while (my ($name, $s, $e) = splice @r, 0, 3) {
+                $define_name->($name, $n);
+                $pipe{$name} = { line => $n, copy_of => $p[0], start => $s, end => $e };
+                push @items, [ 'PIPE', $name, $n ];
+            }
+        } elsif ($k eq 'CHANGEPIPE') {
+            $once->(\%change, $p[0], $n, 'A CHANGEPIPE');
+            $change{ $p[0] } = { line => $n, len => $p[1], size => $p[2], fits => [ @{ $a->{rest} } ] };
+        } elsif ($k eq 'EQV') {
+            $once->(\%eqv, $p[0], $n, 'AN EQV');
+            $eqv{ $p[0] } = { line => $n, len => $p[1] };
+        } elsif ($k eq 'NODE') {
+            $define_node->($p[0], $n, { kind => 'NODE', z => $p[1] });
+        } elsif ($k eq 'WATER') {
+            $define_node->($p[0], $n, { kind => 'WATER', z => $p[1], static => $p[2],
+                                        pairs => [ @{ $a->{rest} } ] });
+            push @items, [ 'SUPPLY', $p[0], $n ];
+        } elsif (command_spec($k)->{otype}) {
+            $define_node->($p[0], $n, { kind => $k, z => $p[1], minflow => $p[2], k => $p[3] });
+            push @items, [ 'OUTLET', $p[0], $n ];
+        } elsif ($k eq 'NC') {
+            # Copies are resolved below, once every definition is known; the
+            # names are reserved now, so a clash is reported on this line.
+            for my $name (@{ $a->{rest} }) {
+                $define_node->($name, $n, { kind => 'COPY', source => $p[0] });
+                push @items, [ 'COPY', $name, $n ];
+            }
+        } elsif ($k eq 'FIXEDFLOW' || $k eq 'PUMP') {
+            $define_name->($p[0], $n);
+            push @items, [ $k, $p[0], $n, $a ];
+        } elsif (command_spec($k)->{kind} eq 'device') {
+            $at->($n, 'PIPE %s ALREADY HAS A DEVICE, %s ON LINE %d', $p[0],
+                  $device{ $p[0] }{key}, $device{ $p[0] }{line}) if $device{ $p[0] };
+            $device{ $p[0] } = { line => $n, key => $k, a => $a };
+            push @items, [ 'DEVICE', $p[0], $n ];
         }
-        if ($kind eq 'node') {
-            my $id = $a->{pos}[0];
-            $at->($n, 'node %s already has a Node line, on line %d', $id, $defined{$id})
-                if $defined{$id};
-            $defined{$id} = $n;
-        }
-        for my $id (nodes_used($a)) {
-            next if $first_use{$id};
-            $first_use{$id} = $n;
-            push @used, $id;
-        }
-        my ($blk, $row) = eval { hcx_row($a, $use) };
-        unless (defined $blk) {
-            my $e = $@;
-            $at->($n, '%s', $e->{msg}) if HardyCross::is_model_error($e);
-            die $e;
-        }
-        if ($blk eq 'NODES') { push @{ $block{NODES} }, [ $row, $n ] }
-        else                 { push @elems, [ $blk, $row, $n ] }
     }
 
-    # A node used but never defined.  The .hcx reader creates such a node at
-    # elevation 0 without a word; a mistyped node name then becomes a new
-    # node, and a forgotten elevation becomes zero.  In .phc every node needs
-    # its Node line.  The converter writes one for every node, so converted
-    # files are unaffected.
-    my @undef = grep { !$defined{$_} } @used;
-    if (@undef) {
-        my $id = shift @undef;
-        $at->($first_use{$id}, 'node %s has no Node line%s', $id,
-              @undef ? ' (also ' . join(', ', map { "$_ on line $first_use{$_}" } @undef) . ')'
-                     : '');
+    #---------------------------------------------------- resolve copies
+    # A PC copy takes everything but its nodes from its source pipe; an NC
+    # copy takes everything from its source node.  A source may itself be a
+    # copy; a chain that comes back on itself is an error.
+    for my $name (grep { $pipe{$_}{copy_of} } keys %pipe) {
+        my ($p, %trail) = ($pipe{$name});
+        my $src = $p->{copy_of};
+        while (1) {
+            my $s = $pipe{$src} or $at->($p->{line}, 'PIPE %s, COPIED AS %s, IS NOT DEFINED', $src, $name);
+            $at->($p->{line}, 'PIPE %s IS COPIED FROM ITSELF', $name) if $trail{$src}++;
+            unless ($s->{copy_of}) { $p->{$_} = $s->{$_} for qw(use len size fits); last }
+            $src = $s->{copy_of};
+        }
+    }
+    for my $name (grep { $node{$_}{kind} eq 'COPY' } keys %node) {
+        my ($c, %trail) = ($node{$name});
+        my $src = $c->{source};
+        while (1) {
+            my $s = $node{$src} or $at->($c->{line}, 'NODE %s, COPIED AS %s, IS NOT DEFINED', $src, $name);
+            $at->($c->{line}, 'NODE %s IS COPIED FROM ITSELF', $name) if $trail{$src}++;
+            if ($s->{kind} ne 'COPY') { %$c = (%$s, line => $c->{line}); last }
+            $src = $s->{source};
+        }
+    }
+    # CHANGEPIPE applies after copying: a copy keeps its source's original.
+    for my $pname (keys %change) {
+        my $p = $pipe{$pname} or $at->($change{$pname}{line}, 'PIPE %s IS NOT DEFINED', $pname);
+        $p->{$_} = $change{$pname}{$_} for qw(len size fits);
+    }
+    for my $tbl (\%eqv, \%device) {
+        for my $pname (keys %$tbl) {
+            $at->($tbl->{$pname}{line}, 'PIPE %s IS NOT DEFINED', $pname) unless $pipe{$pname};
+        }
     }
 
-    # Assemble the .hcx text: the setting blocks and NODES in the order above,
-    # then the elements in file order, opening a new block whenever the kind
-    # of element changes.  @map records, for each .hcx line, the .phc line it
-    # came from (undef for block headers and END).
+    #---------------------------------------------------- every node defined
+    # A node named by an element but defined nowhere is an error naming the
+    # node and the first line that uses it.  (.hcx would create it at
+    # elevation 0 without a word, so a mistyped name became a new node.)
+    my (%first_use, @used);
+    my $need = sub {
+        my ($name, $n) = @_;
+        return if $node{$name} || $first_use{$name};
+        $first_use{$name} = $n;
+        push @used, $name;
+    };
+    for my $it (@items) {
+        my ($what, $name, $n, $a) = @$it;
+        $need->($pipe{$name}{$_}, $n) for $what eq 'PIPE' ? qw(start end) : ();
+        $need->($a->{pos}[1], $n) if $what eq 'FIXEDFLOW';
+        $need->($a->{pos}[$_], $n) for $what eq 'PUMP' ? (1, 2) : ();
+    }
+    if (@used) {
+        @used = sort { $first_use{$a} <=> $first_use{$b} } @used;
+        my $id = shift @used;
+        $at->($first_use{$id}, 'NODE %s IS NOT DEFINED%s', $id,
+              @used ? ' (ALSO ' . join(', ', map { "$_ ON LINE $first_use{$_}" } @used) . ')' : '');
+    }
+
+    #---------------------------------------------------- the .hcx rows
+    my (@nodes_out, @elems);
+    my $z = sub { fmt(length_metres($node{ $_[0] }{z}, $units{ELEVATION})) };
+    push @nodes_out, [ "$_ " . $z->($_), $node{$_}{line} ] for @node_order;
+    # A device in a pipe splits the pipe at its start: the device runs from the
+    # start node to a node "<pipe>~" at the same elevation, the pipe from there.
+    for my $pname (sort { $device{$a}{line} <=> $device{$b}{line} } keys %device) {
+        push @nodes_out, [ "$pname~ " . $z->($pipe{$pname}{start}), $device{$pname}{line} ];
+    }
+    for my $it (@items) {
+        my ($what, $name, $n, $a) = @$it;
+        my $d = $node{$name};
+        if ($what eq 'PIPE') {
+            push @elems, [ 'PIPES', pipe_row($pipe{$name}, $name, $device{$name} ? "$name~" : undef,
+                                             $eqv{$name}, \%units, $dw, $at), $n ];
+        } elsif (($what eq 'SUPPLY' || $what eq 'COPY') && $d->{kind} eq 'WATER') {
+            # Static only: a supply at that pressure whatever the flow.  With
+            # flow/pressure pairs: a curve starting at the static at no flow.
+            my @pairs = @{ $d->{pairs} };
+            push @elems, [ 'SUPPLIES', @pairs
+                ? join(' ', $name, $name, 'CURVE', 0, $d->{static}, @pairs)
+                : join(' ', $name, $name, 'STATIC', $d->{static}), $n ];
+        } elsif (($what eq 'OUTLET' || $what eq 'COPY') && $CMD{ $d->{kind} }{otype}) {
+            # A K of zero turns the outlet off: the node stays, discharging nothing.
+            next if $d->{k} == 0;
+            my $kk = fmt(k_factor_to_model($d->{k}, \%units));
+            # MINFLOW is the least flow the outlet must give; below zero it is
+            # the least PRESSURE instead.
+            my $req = $d->{minflow} < 0 ? 'P=' . (-$d->{minflow}) : "Q=$d->{minflow}";
+            push @elems, [ 'DISCHARGES', "$name $name $CMD{ $d->{kind} }{otype} K=$kk $req", $n ];
+        } elsif ($what eq 'FIXEDFLOW') {
+            my @p = @{ $a->{pos} };
+            push @elems, [ 'DISCHARGES', join(' ', $p[0], $p[1], 'FIXEDFLOW', "Q=$p[2]",
+                                              (@{ $a->{opt} } ? "MINP=$a->{opt}[0]" : ())), $n ];
+        } elsif ($what eq 'PUMP') {
+            my @p = @{ $a->{pos} };
+            push @elems, [ 'PUMPS', join(' ', @p[0 .. 2], 0, $p[3], @{ $a->{rest} }), $n ];
+        } elsif ($what eq 'DEVICE') {
+            push @elems, [ device_row($device{$name}, $pipe{$name}, $name, \%units, $at) ];
+        }
+    }
+
+    #---------------------------------------------------- assemble
     my (@out, @map);
     my $emit = sub { push @out, $_[0]; $map[ scalar @out ] = $_[1] };
-    for my $b (@SETTING_BLOCKS) {
-        next unless $block{$b};
-        $emit->($b, undef);
-        $emit->("  $_->[0]", $_->[1]) for @{ $block{$b} };
+    my $block = sub {
+        my ($name, $rows) = @_;
+        return unless @$rows;
+        $emit->($name, undef);
+        $emit->("  $_->[0]", $_->[1]) for @$rows;
         $emit->('END', undef);
-    }
+    };
+    $block->('PROJECT', \@project);
+    # Lengths and elevations are written in metres and diameters in mm; flow
+    # and pressure stay in the file's own units, which the parser converts.
+    $block->('UNITS', [ [ "FLOW $units{FLOW}", $seen{'UNITS FLOW'} ],
+                        [ "PRESSURE $units{PRESSURE}", $seen{'UNITS PRESSURE'} ],
+                        [ 'LENGTH M', undef ], [ 'DIAMETER MM', undef ] ]);
+    $block->('OPTIONS', [ ($method ? [ "METHOD $method->[0]", $method->[1] ] : ()), @options ]);
+    $block->('NODES', \@nodes_out);
     my $open = '';
     for my $e (@elems) {
         my ($blk, $row, $n) = @$e;
@@ -597,31 +763,123 @@ sub translate {
         $emit->("  $row", $n);
     }
     $emit->('END', undef) if $open;
-    return (join("\n", @out) . "\n", \@map);
+    return (join("\n", @out) . "\n", \@map, \%units);
 }
 
 #------------------------------------------------------------------------------
-# read_string / read_model -- a .phc model, read into a network.
+# pipe_row -- the .hcx PIPES row for one pipe.
 #
-# The network is exactly what HardyCross::Parse::read_string builds from the
-# translated .hcx text, so the solver, report and demand calculation see no
-# difference between the two formats.  Its source_text is that .hcx text: the
-# demand calculation re-reads it at trial supply pressures.
+#   $p      { line, use, start, end, len, size, fits }
+#   $from   the node the pipe starts at when a device takes its start, or undef
+#   $eqv    { len } from an EQV line, or undef
+#
+# Under a pipe type the size is the nominal size, made a DN; under BORE it is
+# the bore.  The USE line's figure is a Hazen-Williams C, or under METHOD DW
+# an absolute roughness in the SIZE unit.  Fittings go to FIT=, joined by
+# commas, short forms (G C B) made database codes.
 #------------------------------------------------------------------------------
+sub pipe_row {
+    my ($p, $name, $from, $eqv, $units, $dw, $at) = @_;
+    my $n = $p->{line};
+    my $use = $p->{use} || { type => 'BORE' };
+    my @row = ($name, $from // $p->{start}, $p->{end},
+               fmt(length_metres($p->{len}, $units->{LENGTH})));
+    if ($use->{type} eq 'BORE') {
+        $at->($n, 'PIPE %s: FITTINGS NEED A PIPE TYPE - PUT A USE <PIPETYPE> LINE BEFORE IT, '
+                . 'OR GIVE THE ALLOWANCE WITH EQV', $name) if @{ $p->{fits} };
+        push @row, fmt(size_mm($p->{size}, $units->{SIZE}));
+    } else {
+        my $dn = size_dn($p->{size}, $units->{SIZE});
+        $at->($n, 'PIPE %s: %s IS NOT A NOMINAL SIZE IN INCHES', $name, $p->{size}) unless defined $dn;
+        push @row, $dn, "TYPE=$use->{type}";
+        my @fit = map { fitting_code($_) } @{ $p->{fits} };
+        push @row, 'FIT=' . join(',', @fit) if @fit;
+    }
+    push @row, $dw ? 'EPS=' . fmt(size_mm($use->{c}, $units->{SIZE})) : "C=$use->{c}"
+        if defined $use->{c};
+    push @row, 'EQV=' . fmt(length_metres($eqv->{len}, $units->{LENGTH})) if $eqv;
+    return join ' ', @row;
+}
+
+# fitting_code -- one fitting token with its short form made a database code:
+# "2G" is "2GV".  Anything else is left for the resolver to accept or refuse.
+sub fitting_code {
+    my ($count, $code) = uc(shift) =~ /^(\d*)([A-Z][A-Z0-9]*)\z/;
+    return $count . ($FIT_SHORT{$code} // $code);
+}
+
+#------------------------------------------------------------------------------
+# device_row -- (block, row, line) for a device in a pipe.
+#
+# The device runs from the pipe's start node to "<pipe>~".  Its id is the
+# pipe's name and the device's: "51.BP".
+#------------------------------------------------------------------------------
+sub device_row {
+    my ($d, $p, $pname, $units, $at) = @_;
+    my ($k, $a, $n) = ($d->{key}, $d->{a}, $d->{line});
+    my @r = @{ $a->{rest} };
+    my ($s, $x, $id) = ($p->{start}, "$pname~", "$pname.$k");
+    return ('PUMPS', join(' ', $id, $s, $x, 0, $a->{pos}[1], @r), $n) if $k eq 'BP';
+    if ($k eq 'BFP' || $k eq 'PRV') {
+        # A single pair at flow zero is a loss that does not vary with flow.
+        if (@r == 2) {
+            $at->($n, '%s WITH ONE FLOW/LOSS PAIR IS A FIXED LOSS: ITS FLOW MUST BE 0', $k) if $r[0] != 0;
+            $at->($n, '%s: A FIXED LOSS MUST BE MORE THAN 0', $k) if $r[1] <= 0;
+            return ('DEVICES', "$id $s $x PRV DP=$r[1]", $n);
+        }
+        return ('DEVICES', join(' ', $id, $s, $x, 'BFP', @r), $n);
+    }
+    if ($k eq 'OPP' || $k eq 'OFD') {
+        # The plate takes its pipe's nominal size and bore.
+        my ($dn, $bore) = pipe_size($p, $units);
+        my @where = ((defined $dn ? "DN=$dn" : ()), 'PIPEDIA=' . fmt($bore));
+        my @cd = @{ $a->{opt} } ? ("CD=$a->{opt}[0]") : ();
+        return ('DEVICES', join(' ', $id, $s, $x, 'ORIFICE_P', "DP=$a->{pos}[1]", @where, @cd), $n)
+            if $k eq 'OPP';
+        return ('DEVICES', join(' ', $id, $s, $x, 'ORIFICE_D',
+                                'BORE=' . fmt(size_mm($a->{pos}[1], $units->{SIZE})), @where, @cd), $n);
+    }
+    if ($k eq 'PRA') {
+        # Outlet pressure = inlet / ratio; the solver sets the drop from the
+        # solved inlet pressure.
+        return ('DEVICES', join(' ', $id, $s, $x, 'PRA', 'RATIO=' . fmt(ratio_value($a->{pos}[1])),
+                                (@{ $a->{opt} } ? "MININLET=$a->{opt}[0]" : ())), $n);
+    }
+    die "device_row: no translation for $k\n";    # a programming error
+}
+
+# pipe_size -- a pipe's DN (undef for a bore pipe) and its bore in mm.
+sub pipe_size {
+    my ($p, $units) = @_;
+    my $use = $p->{use} || { type => 'BORE' };
+    return (undef, size_mm($p->{size}, $units->{SIZE})) if $use->{type} eq 'BORE';
+    my $dn = size_dn($p->{size}, $units->{SIZE});
+    HardyCross::Parse::ensure_db();
+    return ($dn, HardyCross::PipeData::bore($use->{type}, $dn // 0) // 0);
+}
+
+#==============================================================================
+# read_string / read_model -- a .phc model read into a network.
+#
+# The network is what HardyCross::Parse::read_string builds from the
+# translated .hcx text, so the solver, report and demand calculation see no
+# difference.  Its source_text is that .hcx text: the demand calculation
+# re-reads it at trial supply pressures.
+#==============================================================================
 sub read_string {
     my $text = shift;
-    my ($hcx, $map) = translate($text);
+    my ($hcx, $map, $units) = translate($text);
     my $net = eval { HardyCross::Parse::read_string($hcx) };
     unless ($net) {
         my $e = $@;
         die $e unless HardyCross::is_model_error($e);
-        # The parser numbers its errors by .hcx line; give the .phc line.
         if ($e->{msg} =~ /^line (\d+): (.*)\z/s && defined $map->[$1]) {
-            HardyCross::fail("line %d: %s", $map->[$1], $2);
+            HardyCross::fail("line %d: %s", $map->[$1], uc $2);
         }
         die $e;
     }
-    $net->{phc_text} = $text;
+    $net->{phc_text}  = $text;
+    $net->{phc_units} = $units;
     return $net;
 }
 
@@ -636,51 +894,41 @@ sub read_model {
 }
 
 #==============================================================================
-# The editor's line checker.
+# The editor's checks of one line.
 #==============================================================================
 
-# The fitting codes in the database, read once from the file PipeData loaded.
-# PipeData resolves fittings but does not list them; the pick list needs the
-# codes and their descriptions, so they are read from the same file (and so
-# always match what the resolver will accept).
+# The fitting codes in the database, read once from the file PipeData loaded,
+# with their descriptions, for the pick list.  PipeData resolves fittings but
+# does not list them; reading the same file means the list always matches
+# what the resolver accepts.
 my (%FITCODE, %KPCODE, %DNS);
 sub fitting_tables {
     return if %FITCODE;
     HardyCross::Parse::ensure_db();
-    my $path = HardyCross::PipeData::path();
-    open my $fh, '<:encoding(UTF-8)', $path or return;
+    open my $fh, '<:encoding(UTF-8)', HardyCross::PipeData::path() or return;
     local $/ = "\n";
     while (my $l = <$fh>) {
         chomp $l;
         next if $l =~ /^\s*(#|$)/;
         my @f = split /\|/, $l;
-        if ($f[0] eq 'FIT') {
-            $FITCODE{ $f[1] }{ $f[2] } //= ascii($f[3]);
-        } elsif ($f[0] eq 'KPRIME') {
-            $KPCODE{ $f[1] } //= ascii($f[2]);
-        } elsif ($f[0] eq 'PIPE') {
-            push @{ $DNS{ $f[1] } }, $f[2];
-        }
+        if    ($f[0] eq 'FIT')    { $FITCODE{ $f[1] }{ $f[2] } //= ascii($f[3]) }
+        elsif ($f[0] eq 'KPRIME') { $KPCODE{ $f[1] } //= ascii($f[2]) }
+        elsif ($f[0] eq 'PIPE')   { push @{ $DNS{ $f[1] } }, $f[2] }
     }
     close $fh;
 }
-# The user interface is 7-bit ASCII like the report: "90° elbow" is shown as
-# "90 deg elbow".
-sub ascii { my $s = shift // ''; $s =~ s/\x{B0}/ deg/g; $s =~ s/[^\x20-\x7E]//g; $s }
+# The user interface is 7-bit ASCII in capitals, like the report.
+sub ascii { my $s = shift // ''; $s =~ s/\x{B0}/ DEG/g; $s =~ s/[^\x20-\x7E]//g; uc $s }
 
-#------------------------------------------------------------------------------
-# pipe_type_choices / fitting_choices -- the pick lists, as [code, description].
-#------------------------------------------------------------------------------
 sub pipe_type_choices {
     HardyCross::Parse::ensure_db();
     return ((map { [ $_, ascii(HardyCross::PipeData::pipe_type($_)->{name}) ] }
              HardyCross::PipeData::pipe_types()),
-            [ 'BORE', 'pipes given by their bore, with no pipe type' ]);
+            [ 'BORE', 'PIPES GIVEN BY THEIR BORE, WITH NO PIPE TYPE' ]);
 }
 
-# The fitting codes a pipe of this type can take: from the source that governs
-# the given DN, or from every source the type uses when the DN is not known
-# yet.  Under Use BORE there are none -- fittings need a pipe type.
+# fitting_choices -- the codes a pipe of this type can take at this DN (or at
+# any of its sizes when the DN is not known yet), short forms first.
 sub fitting_choices {
     my ($type, $dn) = @_;
     return () if !defined $type || $type eq 'BORE';
@@ -696,12 +944,12 @@ sub fitting_choices {
             $label{$code} //= $tbl->{$code};
         }
     }
-    return map { [ $_, $label{$_} ] } @order;
+    my @short = map { [ $_, "SHORT FOR $FIT_SHORT{$_}: $label{ $FIT_SHORT{$_} }" ] }
+                grep { exists $label{ $FIT_SHORT{$_} } } sort keys %FIT_SHORT;
+    return (@short, map { [ $_, $label{$_} ] } @order);
 }
 
-#------------------------------------------------------------------------------
-# step_id -- the next id in a series: P7 -> P8, N09 -> N10, A -> A2.
-#------------------------------------------------------------------------------
+# step_id -- the next name in a series: P7 -> P8, N09 -> N10, 4101 -> 4102.
 sub step_id {
     my $id = shift // '';
     return $1 . sprintf('%0*d', length $2, $2 + 1) if $id =~ /^(.*?)(\d+)\z/;
@@ -709,62 +957,45 @@ sub step_id {
 }
 
 #------------------------------------------------------------------------------
-# propose -- the likely next line after a complete element line.
+# propose -- the likely next line after a complete line.
 #
-# The same command with its ids stepped.  A pipe starts where the last one
-# ended, keeps its length, size and options, and drops its fittings (the next
-# pipe rarely has the same ones).  Settings and Use lines propose nothing.
+# The same command with its names stepped.  A pipe starts where the last one
+# ended, keeps its length and size, and drops its fittings.  Settings, USE and
+# the copy and change commands propose nothing.
 #------------------------------------------------------------------------------
 sub propose {
-    my ($raw) = @_;
-    my $a = analyse($raw);
+    my $a = analyse(shift);
     return undef unless $a->{status} eq 'ok';
-    my $c = $CMD{ $a->{key} };
-    return undef unless $c->{kind} eq 'element' || $c->{kind} eq 'node';
-    my ($word) = strip_comment($raw) =~ /^\s*(\S+)/;
+    my $k = $a->{key};
     my @p = @{ $a->{pos} };
-    my @fixed = @{ $c->{fixed} };
-    my @rest = @{ $a->{rest} };
-    if ($a->{key} eq 'PIPE') {
-        @p = (step_id($p[0]), $p[2], step_id($p[2]), @p[3, 4]);
-        @rest = ();
-    } else {
-        for my $i (0 .. $#p) {
-            $p[$i] = step_id($p[$i]) if $fixed[$i][1] =~ /^(id|node)\z/;
-        }
-    }
-    return join ' ', $word, @p, @rest, map { "$_=$a->{opt}{$_}" } @{ $a->{optorder} };
+    my @more = (@{ $a->{opt} }, @{ $a->{rest} });
+    return join ' ', 'PIPE', step_id($p[0]), $p[2], step_id($p[2]), @p[3, 4] if $k eq 'PIPE';
+    return join ' ', $k, step_id($p[0]), @p[1 .. $#p], @more
+        if $k =~ /^(NODE|WATER|SPRINKLER|HYDRANT|HREEL|PUMP)\z/
+        || command_spec($k)->{kind} eq 'device';
+    return join ' ', $k, step_id($p[0]), step_id($p[1]), @p[2 .. $#p], @more if $k eq 'FIXEDFLOW';
+    return undef;
 }
 
 #------------------------------------------------------------------------------
 # check_line -- one line, checked as it is typed.
 #
-#   $line      the text of the line
-#   $context   {
-#                use     => 'ASAM' or 'BORE', or { type => .., c => .. }:
-#                           the Use in force at this line
-#                units   => { FLOW => 'LPS', ... }: the file's Units, so a
-#                           value is checked in the unit it is written in
-#                options => { FITTING_BASIS => 'STANDARD' }, likewise
-#                nodes   => [ ids ] or { id => 1 }: the defined nodes
-#                cursor  => the cursor's column (default: end of line)
-#              }
+#   $context  {
+#     use     => 'ASAM' or 'BORE', or { type, c }: the USE in force
+#     units   => { LENGTH => 'M', ... }: the file's units (defaults otherwise)
+#     method  => 'HW' or 'DW'
+#     options => { FITTING_BASIS => 'STANDARD' }
+#     nodes   => [ names ] or { name => 1 }: the defined nodes
+#     cursor  => the cursor's column (default: end of line)
+#   }
 #
-# Returns a hash:
-#   status    ok, incomplete or error (blank and comment lines are ok)
-#   message   why, for incomplete and error
-#   template  { command, text, fields => [...], current => field index or -1
-#               for the command word } -- undef on a blank line
-#   choices   [ [code, description], ... ] for a pipe-type or fitting field
-#   proposal  the suggested next line, for a complete element line
-#   undefined the node ids this line uses that are not in context nodes --
-#             not an error on the line, since the Node line may come later
+# Returns { status, message, template => { command, text, fields, current },
+# choices => [ [code, description] ], proposal, undefined => [ nodes ] }.
 #
-# A line the language accepts is then parsed, as its .hcx row, into a scratch
-# network by the .hcx parser itself.  So "ok" means the parser accepts it too:
-# a DN the pipe type does not make, a fitting the database lacks, or a head
-# whose K cannot be derived is an error on the line as it is typed, by the
-# same rule and in the same words as when the model is solved.
+# A PIPE, outlet, PUMP or WATER line the language accepts is also parsed as
+# its .hcx row by the .hcx parser itself, so a DN the pipe type does not make
+# or a fitting the database lacks is an error as it is typed -- by the same
+# rule and in the same words as when the model is solved.
 #------------------------------------------------------------------------------
 sub check_line {
     my ($line, $ctx) = @_;
@@ -773,91 +1004,83 @@ sub check_line {
     my $cursor = $ctx->{cursor} // length $line;
     my $use = $ctx->{use} // 'BORE';
     $use = { type => uc $use } unless ref $use;
+    my %units = (%UNIT_DEFAULT, %{ $ctx->{units} || {} });
 
     my $a = analyse($line, $cursor >= length(strip_comment($line)));
     my %r = (status => $a->{status} eq 'blank' ? 'ok' : $a->{status},
-             message => $a->{msg} // '', choices => [], proposal => undef,
-             undefined => []);
+             message => $a->{msg} // '', choices => [], proposal => undef, undefined => []);
     return \%r if $a->{status} eq 'blank';
+    my $c = command_spec($a->{key} // '');
+    $r{message} = "$c->{name} NEEDS $a->{msg}" if $c && $a->{status} eq 'incomplete';
 
-    my $c = $CMD{ $a->{key} // '' };
-    $r{message} = "$c->{name} needs $a->{msg}" if $c && $a->{status} eq 'incomplete';
-
-    #--------------------------------------------- which field is the cursor in
-    # Words before the cursor; if the cursor sits inside or at the end of a
-    # word, that word is the current one, otherwise a new one is starting.
+    #---------------------------------------------- the cursor's field
+    # Words before the cursor; inside or at the end of a word, that word is
+    # the current one, otherwise a new one is starting.
     my $before = substr(strip_comment($line), 0, $cursor);
     my @w = split ' ', $before;
-    my $idx = $before =~ /\S\z/ ? $#w : scalar @w;
+    my $idx = $before =~ /\S\z/ ? $#w : scalar @w;      # word index; 0 is the command
     if ($c) {
         my @fields = template_fields($c);
-        my $nfix = @{ $c->{fixed} };
-        my $cur;
-        if ($idx <= 0) {
-            $cur = -1;
-        } elsif ($a->{key} eq 'TITLE' || ($a->{key} eq 'PROJECT' && $idx > 2)) {
-            $cur = $#{ $c->{fixed} };
-        } elsif ($idx <= $nfix && !(defined $w[$idx] && $w[$idx] =~ /=/)) {
-            $cur = $idx - 1;
-        } elsif (defined $w[$idx] && $w[$idx] =~ /^([^=]+)=/) {
-            my $k = uc($1) . '=';
-            ($cur) = grep { $fields[$_] eq $k } 0 .. $#fields;
-            $cur //= $#fields;
-        } else {
-            # Past the fixed fields: the rest field (fittings, curve points)
-            # if the command has one, else its first option.  Either way it is
-            # the field just after the fixed ones in the template.
-            $cur = $nfix;
-            $cur = $#fields if $cur > $#fields;
-        }
-        $r{template} = { command => $c->{name}, text => template_text($a->{key}),
+        my $cur = $idx <= 0 ? -1 : $idx - 1;
+        $cur = $#fields if $cur > $#fields;             # text, fittings, pairs run on
+        $r{template} = { command => $c->{name}, text => template_text($c->{name}),
                          fields => \@fields, current => $cur };
-
-        #------------------------------------------------------- pick lists
-        my $field = $cur >= 0 ? $fields[$cur] : '';
-        if ($a->{key} eq 'USE' && $cur == 0) {
+        my $label = $cur >= 0 ? $fields[$cur] : '';
+        my $q = uc($w[1] // '');
+        if ($c->{name} eq 'USE' && $cur == 0) {
             $r{choices} = [ pipe_type_choices() ];
-        } elsif ($a->{key} eq 'PIPE' && $field eq 'fittings ...') {
-            my $sz = $a->{pos}[4];
-            my $dn = defined $sz && HardyCross::Parse::is_num($sz) ? int($sz + 0.5) : undef;
-            $r{choices} = [ fitting_choices($use->{type}, $dn) ];
+        } elsif ($c->{name} =~ /^(PIPE|CHANGEPIPE)\z/ && $label eq 'FITTINGS ...') {
+            my $sz = $a->{pos}[ $c->{name} eq 'PIPE' ? 4 : 2 ];
+            $r{choices} = [ fitting_choices($use->{type}, defined $sz ? size_dn($sz, $units{SIZE}) : undef) ];
+        } elsif ($c->{name} eq 'UNITS' && $cur == 0) {
+            $r{choices} = [ map { [ $_, join(' ', @{ $UNIT_CHOICES{$_} }) ] } @UNIT_QUANTITIES ];
+        } elsif ($c->{name} eq 'UNITS' && $cur == 1 && $UNIT_CHOICES{$q}) {
+            $r{choices} = [ map { [ $_, $_ eq $UNIT_DEFAULT{$q} ? 'DEFAULT' : '' ] } @{ $UNIT_CHOICES{$q} } ];
+        } elsif ($c->{name} eq 'METHOD' && $cur == 0) {
+            $r{choices} = [ [ 'HW', 'HAZEN-WILLIAMS' ], [ 'DW', 'DARCY-WEISBACH' ] ];
+        } elsif ($c->{name} eq 'OPTION' && $cur == 0) {
+            $r{choices} = [ map { [ $_, '' ] } @OPTIONS ];
         }
     } else {
         $r{template} = { command => '', text => '', fields => [], current => -1 };
     }
     return \%r unless $r{status} eq 'ok';
 
-    #---------------------------------------------------- the parser's verdict
+    #---------------------------------------------- the parser's verdict
     my $net = HardyCross::Parse::new_net();
     my $ok = eval {
-        my $units = $ctx->{units} || {};
-        HardyCross::set_unit($net, $_, uc $units->{$_}) for grep { $units->{$_} } @UNIT_KEYS;
+        HardyCross::set_unit($net, 'FLOW', $units{FLOW});
+        HardyCross::set_unit($net, 'PRESSURE', $units{PRESSURE});
         my $opts = $ctx->{options} || {};
         HardyCross::Parse::parse_row($net, 'OPTIONS', [ $_, $opts->{$_} ])
             for grep { defined $opts->{$_} } sort keys %$opts;
-        my $k = $a->{key};
-        if ($k eq 'UNITS') {
-            HardyCross::set_unit($net, $_, $a->{opt}{$_}) for @{ $a->{optorder} };
-        } elsif ($k eq 'METHOD') {
-            HardyCross::Parse::parse_row($net, 'OPTIONS', [ 'METHOD', $a->{pos}[0] ]);
-        } elsif ($k eq 'OPTION') {
-            HardyCross::Parse::parse_row($net, 'OPTIONS', [ @{ $a->{pos} } ]);
-        } elsif ($CMD{$k}{kind} eq 'element' || $k eq 'NODE') {
-            my ($blk, $row) = hcx_row($a, $use);
-            HardyCross::Parse::parse_row($net, $blk, [ HardyCross::Parse::tokenize($row) ]);
+        my $at = sub { shift; HardyCross::fail(shift, @_) };
+        my ($k, @p) = ($a->{key}, @{ $a->{pos} });
+        if ($k eq 'PIPE') {
+            my $row = pipe_row({ line => 0, use => $use, start => $p[1], end => $p[2],
+                                 len => $p[3], size => $p[4], fits => $a->{rest} },
+                               $p[0], undef, undef, \%units, ($ctx->{method} // '') eq 'DW', $at);
+            HardyCross::Parse::parse_row($net, 'PIPES', [ HardyCross::Parse::tokenize($row) ]);
+        } elsif ($c->{otype} && $p[3] != 0) {
+            my $req = $p[2] < 0 ? 'P=' . (-$p[2]) : "Q=$p[2]";
+            HardyCross::Parse::parse_row($net, 'DISCHARGES', [ $p[0], $p[0], $c->{otype},
+                'K=' . fmt(k_factor_to_model($p[3], \%units)), $req ]);
+        } elsif ($k eq 'PUMP') {
+            HardyCross::Parse::parse_row($net, 'PUMPS', [ @p[0 .. 2], 0, $p[3], @{ $a->{rest} } ]);
+        } elsif ($k eq 'WATER' && @{ $a->{rest} }) {
+            HardyCross::Parse::parse_row($net, 'SUPPLIES', [ $p[0], $p[0], 'CURVE', 0, $p[2], @{ $a->{rest} } ]);
         }
         1;
     };
     unless ($ok) {
         my $e = $@;
         die $e unless HardyCross::is_model_error($e);
-        @r{qw(status message)} = ('error', $e->{msg});
+        @r{qw(status message)} = ('error', uc $e->{msg});
         return \%r;
     }
 
-    #------------------------------------------------- nodes, and what is next
-    my $known = $ctx->{nodes};
-    if ($known) {
+    #---------------------------------------------- nodes, and what is next
+    if (my $known = $ctx->{nodes}) {
         my %k = ref $known eq 'HASH' ? %$known : map { $_ => 1 } @$known;
         $r{undefined} = [ grep { !$k{$_} } nodes_used($a) ];
     }
