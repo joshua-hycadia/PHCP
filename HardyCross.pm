@@ -845,19 +845,35 @@ sub pump_status {
 # drops 1500 x (1 - 1/3) = 1000 kPa.  The drop depends on a PRESSURE, which the
 # loop balance does not know until it has converged, so it is set here from
 # the converged inlet pressure and the network solved again, until the drops
-# stop changing.  (The valve holds the ratio to +/- 5 % of the inlet pressure
-# in the manufacturer's data; the nominal ratio is used.)
+# stop changing.
+#
+# THE BAND.  The manufacturer's data says the valve "will hold the downstream
+# pressure to within +/- 5% of the inlet pressure": at 1500 kPa in, a 3:1
+# valve gives anywhere from 500 - 75 = 425 to 500 + 75 = 575 kPa.  The design
+# must hold wherever in that band the valve sits, so the calculation uses the
+# BOTTOM of the band (Joshua, 28 October 2026):
+#
+#     outlet = inlet x (1/ratio - band)      drop = inlet - outlet
+#
+# and every outlet downstream is then checked against the least the valve
+# can be relied on to give.  The top of the band matters for pressure ratings
+# downstream: a solve with opts{pra_side} = 'HIGH' sets every valve to
+# inlet x (1/ratio + band), and the report states the highest pressures it
+# gives.  The band is each valve's own (band, a fraction; 5 % unless the model
+# says otherwise); a band of 0 is the nominal ratio exactly.
 #
 # Returns true if any drop moved by more than the loop tolerance.
 #------------------------------------------------------------------------------
 sub ratio_valves {
     my $net = shift;
     my $tol = $net->{opts}{tol_loop} // 0.01;
+    my $side = ($net->{opts}{pra_side} // 'LOW') eq 'HIGH' ? 1 : -1;
     my $changed = 0;
     for my $e (grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
         my $n   = $net->{nodes}[ $e->{n1} ];
         my $pin = $n->{h} - $GAMMA_W * $n->{z};
-        my $dp  = $pin > 0 ? $pin * (1 - 1 / $e->{ratio}) : 0;
+        my $out = $pin * (1 / $e->{ratio} + $side * ($e->{band} // 0.05));
+        my $dp  = $pin > 0 ? $pin - ($out > 0 ? $out : 0) : 0;
         if (abs($dp - $e->{dp}) > $tol) {
             $e->{dp} = $dp;
             $changed = 1;
