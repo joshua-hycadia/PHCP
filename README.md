@@ -71,7 +71,7 @@ line that uses it.  Every pipe name is unique.
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
 | `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP` |
-| `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness); or `BORE` [C] |
+| `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
 | `CHANGEPIPE` (`CHP`) | PIPE LENGTH SIZE [FITTINGS ...] - changes a pipe (a copy keeps the original) |
@@ -240,10 +240,23 @@ file's header:
 | CPVC | 0.003 | none published for the product (its maker gives C 150 only): the AS 2200 value for clean thermoplastics pipe |
 
 These are for new, clean pipe; AS 2200 gives 0.003 to 0.015 mm for
-thermoplastics, the upper end allowing for slime and jointing.  The QUICK
-TOOLS pressure loss calculator takes them by default.  A database from before
-the column still reads: its pipe types show DASH (none published), and the
-program's default, 0.045 mm, applies.
+thermoplastics, the upper end allowing for slime and jointing.  A database
+from before the column still reads: its pipe types show DASH (none
+published).
+
+**Which roughness a pipe takes** under `METHOD DW`: the one given in the
+model (`USE <type> <mm>`, `USE BORE <mm>`); else the database's for its pipe
+type; else 0.045 mm, the program default.  An assumed 0.045 mm is never
+passed off as data - it is flagged:
+
+- the report's BASIS OF CALCULATION says how many pipes took their roughness
+  from the model, from the database, and how many were ASSUMED;
+- the report's warnings, the editor's WARNINGS list and the JSON
+  `warnings` name the pipes that were assumed, and say how to give it;
+- the QUICK TOOLS pressure loss calculator says ROUGHNESS ASSUMED, in red.
+
+Under Hazen-Williams roughness is not used, and nothing is flagged.  No
+example assumes a roughness, and none of their results changed.
 
 **Traceability.**  Because the data can change, every report states the
 database's DATASET name and date, its file name and the SHA-256 of the exact
@@ -786,15 +799,15 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 37 / 37 |
-| `.phc` language, line checker and pressure ratio valves | 266 / 266 |
+| `.phc` language, line checker, pressure ratio valves and roughness | 275 / 275 |
 | AutoCAD exporter, structure | 5 / 5 |
 | JSON interface | 81 / 81 |
 | supply, pump and loss curves, and supplies combined | 18 / 18 |
 | report hand-checks, 8 models | 419 / 419 |
 | PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 142 / 142 |
-| quick tools | 42 / 42 |
+| text editor window, under Xvfb | 145 / 145 |
+| quick tools | 43 / 43 |
 | water supply graph | 43 / 43 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |

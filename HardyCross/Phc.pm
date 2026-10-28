@@ -886,6 +886,9 @@ sub read_string {
     $net->{source_text} = $text;
     $net->{phc_text}    = $text;
     $net->{phc_units}   = $units;
+    # An assumed roughness is flagged wherever the warnings go: the editor's
+    # WARNINGS list, the report's warnings and the JSON.
+    push @{ $net->{warnings} }, HardyCross::Parse::roughness_warning($net);
     return $net;
 }
 
