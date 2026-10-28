@@ -36,9 +36,9 @@ material that belongs to others:
       the Plastics Pipe Institute Handbook of PE Pipe.  Those values remain
       the copyright of their publishers and are used under their terms.
 
-  Tk and Tk::TableMatrix
-      Required to run the spreadsheet, installed separately, and distributed
-      under their own licences.  They are not part of this source.
+  Tk
+      Required to run the text editor and the viewer, installed separately,
+      and distributed under its own licence.  It is not part of this source.
 
 Nothing in this licence is a statement that PHCP's results are fit for any
 particular design.  A calculation remains the responsibility of the engineer
