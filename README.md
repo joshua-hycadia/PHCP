@@ -400,6 +400,10 @@ there and selects it.
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
+The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
+other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
+QUICK TOOLS, DATABASE, and the results tables).
+
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
 and their sorting - is made by
