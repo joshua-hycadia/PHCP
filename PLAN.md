@@ -245,8 +245,8 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 - [x] PR 2 - reworked to the positional layout: SPRINKLER HYDRANT HREEL FIXEDFLOW WATER,
   PC NC CHANGEPIPE EQV, BP BFP PRV OPP OFD in pipes, UNITS per quantity; converter dropped
 - [ ] PR 2 - PRA pressure ratio valve in the solver (engine change, data from Joshua)
-- [ ] PR 2 - supply, pump and loss curves interpolated on Q^1.85 through every point
-  (engine change, approved by Joshua 28 October 2026)
+- [x] PR 2 - supply, pump and loss curves interpolated on Q^1.85 through every point
+  (engine change, approved by Joshua 28 October 2026; `tools/test_curves.pl`)
 - [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
   passed or failed in the report and counted in the governing outlet and demand
   point (README, "Fixed flows")
