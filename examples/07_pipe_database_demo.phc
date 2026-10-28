@@ -1,0 +1,45 @@
+// 07_pipe_database_demo.hcx - converted from .hcx by PHCP 1.0.0.
+// Comments in the .hcx file are not carried over.
+
+Title    Level 2 sprinkler range - demonstration
+Project  PROJECT Hycadia report demonstration
+Project  JOB HYC-DEMO-017
+Project  COMPANY Hycadia Pty Ltd
+Project  ADDRESS 1 Example Road, Sydney NSW 2000
+Project  LICENCE NSW DBP DEP0000000, FPAS F000000X
+Project  DESIGNER A Designer
+Project  CHECKER A Checker
+Project  REVISION A
+Project  DATE 2026-09-21
+Project  LOCATION 12 Example Street, Sydney NSW 2000
+Project  STANDARD AS 2118.1:2017
+Project  HAZARD Ordinary Hazard 1
+Project  DENSITY 5.0
+Project  AREA_PER_SPRINKLER 12.0
+Project  BASE_OF_RISER R1
+Project  AUTHORITY Fire and Rescue NSW
+Project  AUTHORITY_PHONE 02 9265 2999
+Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method   HW
+
+Node     SUP 0
+Node     R1 4.5
+Node     R2 4.5
+Node     H1 4.5
+Node     H2 4.5
+Node     H3 4.5
+
+Use      ASAM
+Pipe     M1 SUP R1 12.0 100 1T 2E 1GV 1CV
+Pipe     M2 R1 R2 6.0 80 1E
+Pipe     B1 R2 H1 3.2 50 1T
+Pipe     B2 H1 H2 3.2 40
+Pipe     B3 H2 H3 3.2 32
+Use      S40
+Pipe     X1 R1 H3 9.0 65 2E
+
+Supply   TOWN SUP STATIC 650
+
+Head     S1 H1 K=80 P=50
+Head     S2 H2 K=80 P=50
+Head     S3 H3 K=80 P=50

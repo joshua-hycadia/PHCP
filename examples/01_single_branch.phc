@@ -1,0 +1,19 @@
+// 01_single_branch.hcx - converted from .hcx by PHCP 1.0.0.
+// Comments in the .hcx file are not carried over.
+// Dropped from the .hcx because they had no effect on the result:
+//   line 15: OPTIONS TRACE FULL - not an option the .hcx reader acts on
+
+Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method   HW
+Option   TOL_FLOW 0.001
+Option   TOL_LOOP 0.0005
+
+Node     N1 0.0
+Node     N2 0.0
+
+Use      BORE
+Pipe     P1 N1 N2 100.0 100.0 C=120
+
+Supply   SUP1 N1 STATIC 900
+
+Head     S1 N2 K=80 P=50
