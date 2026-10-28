@@ -22,11 +22,11 @@ perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
-`phcp.pl` and the viewer, `phcp_viewer.pl`, read either input format; the
-extension decides which.  `.phc` is the command language described below.
-`.hcx` is the older block format, still read so the AutoCAD exporter keeps
-working; every example is supplied in both, the `.hcx` as the baseline the
-`.phc` is tested against.  The editor works in `.phc` only.
+One file type: `.phc`, the command language described below.  `phcp.pl`, the
+editor, the viewer and the AutoCAD exporter all read or write it, and a file of
+any other type is refused with the reason.  (`.hcx`, the block format of the
+prototype, is gone as a user format; its files are kept in `tools/baseline/`
+as the independent description each example is tested against.)
 
 ## The .phc command language
 
@@ -136,9 +136,10 @@ A length or elevation may carry its own unit: `12M`, `300MM`, `2.5CM`,
 `14'3"`.  The K-factor default is the unit the office's existing data uses
 (K 8 for a K80 head); it is not yet confirmed as the default.
 
-**How it is read.**  Each `.phc` command is translated into the `.hcx` rows
-that mean the same thing, and the rows are read by the same parser that reads
-a `.hcx` file (`HardyCross/Phc.pm`).  Every hydraulic check and default
+**How it is read.**  Each `.phc` command is translated into rows of the
+prototype's `.hcx` block syntax that mean the same thing, and the rows are read
+by that syntax's parser (`HardyCross/Phc.pm`, `HardyCross/Parse.pm`) - an
+internal step a user never sees.  Every hydraulic check and default
 therefore exists once.  The `.phc` reader checks the language itself - command
 words, fields, numbers, units, names - and converts lengths and elevations to
 metres, using the engine's own unit factors for everything else.  Every error
@@ -157,14 +158,14 @@ it needs to deliver that flow.  The minimum is CHECKED:
   point is the supply pressure at which it receives exactly its minimum.
 
 The flow itself is not reduced when the pressure is short; the report shows
-the shortfall as a FAIL instead.  (In `.hcx`, `FIXEDFLOW ... MINP=` or `P=`.
-Until this change the minimum was read and thrown away.)  Solved flows and
+the shortfall as a FAIL instead.  (Until this change the minimum was read and
+thrown away.)  Solved flows and
 pressures are unchanged by it; the compliance rows, and the demand point of a
 model whose fixed flow governs, are new.
 
 **Examples.**  Every example is supplied as `.phc`, with its `.hcx` original
-kept as the baseline: `tools/test_phc.pl` solves both and requires the same
-pipe flows and node pressures.  In `.phc` a supply or outlet takes its node's
+kept as the baseline in `tools/baseline/`: `tools/test_phc.pl` solves both and
+requires the same pipe flows and node pressures.  In `.phc` a supply or outlet takes its node's
 name, a device sits in a pipe of no length where the `.hcx` had it between two
 nodes, and example 04's sprinkler on the supply node has a node of its own -
 so the reports differ in those names, not in the numbers.
@@ -173,7 +174,7 @@ so the reports differ in those names, not in the numbers.
 typed, without Tk, for the text editor: whether it is complete, the command's
 field template and which field the cursor is in, the pipe types or fitting
 codes from the database for a pick list, and a proposed next line.  A line the
-language accepts is also parsed as its `.hcx` row, so a size the pipe type does
+language accepts is also parsed as its internal row, so a size the pipe type does
 not make, or a fitting the database lacks, shows on the line as it is typed.
 
 ## Pipe and fitting database
@@ -225,15 +226,13 @@ office update the data without rebuilding the program.
 ### Writing a pipe
 
 ```
-USE   ASAM                                 // .phc
+USE   ASAM
 PIPE  P1  A  B  12000  100  T 2E G CV
-
-P1  A  B  12.0  100  TYPE=ASAM  FIT=1T,2E,1GV,1CV        ! .hcx
 ```
 
 With a pipe type the size is the NOMINAL size; the bore comes from that
 type's PIPE records in the database.  Fittings take the office form `2E,1T`,
-the compact form `1E1T`, or (in `.phc`) separate codes `2E T`.  A pipe with no
+the compact form `1E1T`, or separate codes `2E T`.  A pipe with no
 type works as before, with the bore entered directly - and the report says it
 carries no database provenance.
 
@@ -271,7 +270,7 @@ publishes the screwed elbow only to DN300, so `E` on a DN350+ main returns
 `DATA_REQUIRED` and the message says to use `EF` for a flanged, grooved or
 medium-sweep elbow.
 
-`OPTION FITTING_BASIS STANDARD` (`.hcx`: `OPTIONS FITTING_BASIS STANDARD`)
+`OPTION FITTING_BASIS STANDARD` (FITTING LENGTHS in the editor's PROJECT tab)
 is the "published Standard alone" election:
 AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 `CORRECTED`, the default, applies both corrections.
@@ -395,22 +394,21 @@ condition), and the OPERATING POINT, with the supply connected.  The schedules
 are at the operating point, and the cover says so.
 
 The fields are entered as `.phc` `TITLE` and `PROJECT` lines -
-`PROJECT HAZARD Ordinary Hazard 1` - or in a `.hcx` model's PROJECT block:
+`PROJECT HAZARD ORDINARY HAZARD 1` - which the editor's PROJECT tab writes:
 
 ```
-PROJECT
-  COMPANY            Hycadia Pty Ltd
-  ADDRESS            1 Example Road, Sydney NSW 2000
-  LICENCE            NSW DBP DEP0000000, FPAS F000000X
-  LOCATION           12 Example Street, Sydney NSW 2000
-  HAZARD             Ordinary Hazard 1
-  DENSITY            5.0         ! mm/min
-  AREA_PER_SPRINKLER 12.0        ! m2
-  AREA_OF_OPERATION  72.0        ! m2, optional
-  BASE_OF_RISER      R1          ! a node in the model
-  AUTHORITY          Fire and Rescue NSW
-  AUTHORITY_PHONE    02 9265 2999
-END
+TITLE     LEVEL 2 SPRINKLER RANGE
+PROJECT   COMPANY HYCADIA PTY LTD
+PROJECT   ADDRESS 1 EXAMPLE ROAD, SYDNEY NSW 2000
+PROJECT   LICENCE NSW DBP DEP0000000, FPAS F000000X
+PROJECT   LOCATION 12 EXAMPLE STREET, SYDNEY NSW 2000
+PROJECT   HAZARD ORDINARY HAZARD 1
+PROJECT   DENSITY 5.0                  // MM/MIN
+PROJECT   AREA_PER_SPRINKLER 12.0      // M2
+PROJECT   AREA_OF_OPERATION 72.0       // M2, OPTIONAL
+PROJECT   BASE_OF_RISER R1             // A NODE IN THE MODEL
+PROJECT   AUTHORITY FIRE AND RESCUE NSW
+PROJECT   AUTHORITY_PHONE 02 9265 2999
 ```
 
 Long values wrap on the cover rather than being cut off.
@@ -470,8 +468,8 @@ than inventing one.
 
 **Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
-rounding of the printed figures allowed for: 659 checks across fourteen models
-(every example, in `.hcx` and in `.phc`).  Its
+rounding of the printed figures allowed for: 351 checks across the seven
+examples.  Its
 first run found two faults that had been in the report since it was written:
 outlet K printed with its unit factors inverted - 36 times too large in L/s and
 bar, invisible in L/min and kPa - and loss per metre printed to four places,
@@ -504,7 +502,7 @@ not evidence; this is.
 `build_windows.bat` builds `phcp.exe` and `phcp_editor.exe` on a Windows PC
 with Strawberry Perl installed: it fetches Tk and PAR::Packer from CPAN,
 packages both programs with the pipe and fitting database inside, and runs a
-smoke test on a `.hcx` and a `.phc` example.
+smoke test on the `.phc` examples.
 
 The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
 with the same module lists: from an empty folder the packaged `phcp` solved
@@ -524,11 +522,12 @@ scaled display; the build has not been re-run since that line was added.
 ## AutoCAD
 
 `autocad/phcp_export.lsp` marks up a 2D AutoCAD 2026 drawing - supply, pipe
-sizes, elevations, heads - and exports it as a `.hcx`.  See
-`autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.hcx` is a file in the
-exact format the routine writes, proven to solve in PHCP.  The routine itself
-has not yet been run inside AutoCAD.  Its output is `.hcx`, which `phcp.pl`
-still reads; making it write `.phc` is planned (`PLAN.md`, PR 4).
+sizes, elevations, heads - and exports it as a `.phc`.  See
+`autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.phc` is a file in the
+exact form the routine writes, and solves exactly as the same network did in
+the old format.  The routine has not yet been run inside AutoCAD; what can be
+checked without it is, by `tools/check_lisp.pl` - brackets matched, every
+function it calls defined, every command it announces present.
 
 ## Supply, pump and loss curves
 
@@ -550,7 +549,7 @@ three points), examples 03, 05 and 08 by under 8 L/min and 1 kPa.
 
 ## Settings
 
-`OPTION VEL_LIMIT 6` (`.hcx`: `OPTIONS VEL_LIMIT 6`) sets the velocity flagged
+`OPTION VEL_LIMIT 6` (VELOCITY WARNING LIMIT in the PROJECT tab) sets the velocity flagged
 in validation and the report.
 It is a setting, not a requirement of AS 2118.1, and the report prints the value
 in force and whether it was set in the model or is the program default.
@@ -572,10 +571,11 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
-| `.phc` language, line checker and pressure ratio valves | 256 / 256 |
+| `.phc` language, line checker and pressure ratio valves | 258 / 258 |
+| AutoCAD exporter, structure | 5 / 5 |
 | supply, pump and loss curves | 14 / 14 |
-| report hand-checks, 14 models | 659 / 659 |
-| PDF structure, 14 models | 98 / 98 |
+| report hand-checks, 7 models | 351 / 351 |
+| PDF structure, 7 models | 49 / 49 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 116 / 116 |
 | database editing and location | 37 / 37 |

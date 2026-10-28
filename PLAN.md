@@ -1,8 +1,9 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1 merged.  PR 2 (`.phc` language, reworked to the positional layout
-Joshua chose on 28 October 2026) and PR 3 (text editor, built on PR 2) open for
-review.  PR 4 and PR 5 not started.
+Status: PR 1, PR 2 (`.phc` language, positional layout) and PR 3 (text editor)
+merged.  Open for review: the editor fixes from the Windows run, the drawn
+supply graph and PDF typeface, the DATABASE tab, and PR 4 (one file type).
+PR 5 not started.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -244,18 +245,22 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 
 ## PR 4 - one file type
 
-Branch: `phc-only`.  Decided by Joshua: there are no `.hcx` models in use -
-the format only ever served the prototype - so `.phc` becomes the one file
-type a user sees.
+Decided by Joshua: there are no `.hcx` models in use - the format only ever
+served the prototype - so `.phc` is the one file type a user sees.  (The
+`--convert` command and the editor's conversion planned here were removed in
+PR 2 and PR 3, before any user had a `.hcx` to convert.)
 
 | file | change |
 |---|---|
-| `autocad/phcp_export.lsp`, `autocad/AUTOCAD.md` | the exporter writes `.phc` |
-| `phcp.pl`, `phcp_viewer.pl` | read `.phc` only; a `.hcx` is refused with "convert it first: phcp.pl --convert" |
-| `phcp_editor.pl` | unchanged: OPEN still converts a `.hcx` into a new `.phc` |
-| `examples/*.hcx` | moved to `tools/baseline/`, kept as the converter's regression baseline |
+| `autocad/phcp_export.lsp`, `autocad/AUTOCAD.md` | the exporter writes positional `.phc`: a supply or head names its node, `USE` lines where the type or C changes, drops as `<ID>_D`; PHCPSUPPLY asks for the static pressure first; new checks for two items on one node and IDs used twice |
+| `tools/check_lisp.pl` | structural checks of the exporter, which cannot run without AutoCAD |
+| `HardyCross/Parse.pm` | `read_model` refuses any file but `.phc`, with the reason |
+| `phcp.pl`, `phcp_viewer.pl` | `.phc` only |
+| `examples/*.hcx` | moved to `tools/baseline/`, the independent description each example is checked against |
+| `examples/08_autocad_export_format.phc` | exactly what the new exporter writes; solves exactly as its baseline |
 | `tools/test_report_checks.pl`, `tools/test_pdf.pl` | run on `examples/*.phc` |
-| `README.md` | one format; `.hcx` described only as what `--convert` reads |
+| `build_windows.bat` | smoke test on `.phc` only |
+| `README.md` | one format |
 
 Inside, `.phc` lines are still translated into `.hcx` rows for the existing
 parser (`HardyCross::Parse`); that is how the checks stay in one place, and
@@ -313,6 +318,7 @@ DLL.  AutoCAD first, possibly Revit later.
 - [x] PR 3 - Windows build run by Joshua (28 October 2026, Perl 5.42.3)
 - [x] DATABASE tab: view and edit the pipe and fitting database (read-only until EDIT is ticked); a team folder for it, else the built-in (Joshua, 28 October 2026)
 - [x] Editor fixes from the Windows run: sharp at 150 %, draggable dividers, wheel under the pointer, HIDE counts, option labels
-- [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
+- [x] PR 4 - AutoCAD exporter writes `.phc`; `.phc` the one file type
+- [ ] PR 4 - exporter run inside AutoCAD by Joshua
 - [ ] PR 5 - `phcp.exe --json`, documented and tested
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua
