@@ -116,8 +116,8 @@ my @strip = main::strip_commands();
 is('the command strip lists the 19 network commands, no settings',
    @strip == 19 && $strip[0] eq 'USE' && $strip[-1] eq 'PRA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK, PROJECT and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT DATABASE'
+is('NETWORK, PROJECT, GRAPH and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
@@ -126,8 +126,8 @@ is('the results sit below the editor', $main::table{PIPES}{page}->rooty > $main:
 is('a line-number gutter left of the editor', $main::gutter->rootx < $main::ed->rootx && (main::gutter_numbers())[0] eq '1');
 {
     my @pw = grep { $_->isa('Tk::Panedwindow') } $main::mw->Descendants;
-    is('two dividers, each wide enough to grab and drag (6 px), with the resize pointer',
-       @pw == 2 && !grep({ $_->cget(-sashwidth) < 6 } @pw)
+    is('three dividers (results, side lists, graph), each wide enough to grab (6 px), with the resize pointer',
+       @pw == 3 && !grep({ $_->cget(-sashwidth) < 6 } @pw)
        && (grep { $_->cget(-sashcursor) eq 'sb_v_double_arrow' } @pw) == 1);
 }
 is('sizes scale with the screen: px() multiplies by the scale, at least 1',
@@ -569,6 +569,64 @@ print "11. THE DATABASE TAB\n";
     is('USE BUILT-IN: back to the program\'s own database', $main::dbv{origin}->cget(-text) eq 'BUILT-IN'
        && !defined HardyCross::Settings::get('DATABASE_DIR'));
     is('the real database was never written', slurp('data/pipes.dat') eq $real);
+}
+
+print "12. THE GRAPH TAB\n";
+{
+    my $G = \%main::gv;
+    my $model = main::full_text();
+    main::select_tab($main::toptabs, 'GRAPH');
+    $main::mw->update;
+    is('a GRAPH tab, between PROJECT and DATABASE',
+       "@{ $main::toptabs->{names} }" eq 'NETWORK PROJECT GRAPH DATABASE' && $main::toptabs->{current} eq 'GRAPH');
+    main::graph_refresh();
+    is('empty: the problems listed, PRINT TO PDF off, nothing drawn but a note',
+       $G->{problems}->get(0) =~ /A, THE WATER SUPPLY, NEEDS AT LEAST TWO POINTS/
+       && $G->{btn}{PDF}->cget(-state) eq 'disabled'
+       && grep { $G->{canvas}->type($_) eq 'text' } $G->{canvas}->find('all'));
+    main::graph_open('examples/10_supply_graph.phg');
+    $main::mw->update;
+    is('OPEN GRAPH fills every field from the file',
+       $G->{fields}{JOB}->get eq 'HC-DEMO-010' && $G->{fields}{A3Q}->get eq '3600' && $G->{fields}{D4P}->get eq '290'
+       && $G->{fields}{DUTY2D}->get eq 'HYDRANTS - TWO AT 10 L/S', $G->{fields}{A3Q}->get);
+    is('   no problems, PRINT TO PDF on, the file named without *',
+       $G->{check}{ok} && $G->{btn}{PDF}->cget(-state) eq 'normal' && $G->{file}->cget(-text) eq '10_SUPPLY_GRAPH.PHG',
+       $G->{file}->cget(-text));
+    my @curves = map { $G->{canvas}->gettags($_) } $G->{canvas}->find('withtag', 'curve');
+    is('the preview draws A B C D E', join(' ', sort { $a cmp $b } grep { /^curve[A-E]$/ } keys %{ { map { $_ => 1 } @curves } })
+       eq 'curveA curveB curveC curveD curveE');
+    my @key = map { $G->{canvas}->itemcget($_, -text) } $G->{canvas}->find('withtag', 'key');
+    is('   its key gives each duty against E: 2 has 797 kPa, margin 197',
+       grep({ /^2  2400 L\/MIN AT 600 KPA - E HAS 797 KPA, MARGIN 197 KPA/ } @key), "@key");
+
+    # A mistake: shaded, listed, and a click on it goes to it.
+    $G->{fields}{A2Q}->delete(0, 'end');
+    $G->{fields}{A2Q}->insert(0, '18OO');
+    main::graph_refresh();
+    is('a bad flow: listed with its row, its fields shaded, PRINT off',
+       $G->{problems}->get(0) eq "A ROW 2: FLOW '18OO' IS NOT A NUMBER"
+       && lc $G->{fields}{A2Q}->cget(-background) eq lc $main::C{fault_bg}
+       && $G->{btn}{PDF}->cget(-state) eq 'disabled', $G->{problems}->get(0));
+    is('   the file name gains a *', $G->{file}->cget(-text) eq '10_SUPPLY_GRAPH.PHG *');
+    $G->{problems}->selectionSet(0);
+    main::graph_go_to_problem();
+    $main::mw->update;
+    is('   a click on it puts the cursor in the field', $main::mw->focusCurrent eq $G->{fields}{A2Q});
+    $G->{fields}{A2Q}->delete(0, 'end');
+    $G->{fields}{A2Q}->insert(0, '1800');
+    $G->{fields}{DUTY1D}->insert('end', ' level 3');
+    main::graph_refresh();
+    is('corrected: no problems; text typed is kept in capitals',
+       $G->{check}{ok} && $main::graph->{duty}[0][1] eq 'SPRINKLERS - HIGHEST HAZARD AREA LEVEL 3');
+
+    main::graph_pdf("$TMP/graph.pdf");
+    is('PRINT TO PDF writes the sheet', -s "$TMP/graph.pdf" && slurp("$TMP/graph.pdf") =~ /^%PDF-.*% PHCP-SHEET PLOT/s);
+    main::graph_save("$TMP/g.phg");
+    is('SAVE GRAPH writes the .phg, and the * goes',
+       slurp("$TMP/g.phg") =~ /^DUTY\s+1500 700 1 SPRINKLERS - HIGHEST HAZARD AREA LEVEL 3$/m
+       && $G->{file}->cget(-text) eq 'G.PHG');
+    is('the model is untouched by all of it', main::full_text() eq $model);
+    main::select_tab($main::toptabs, 'NETWORK');
 }
 
 $main::mw->destroy;
