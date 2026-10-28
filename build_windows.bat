@@ -81,7 +81,8 @@ rem so it is listed here by name rather than left to the dependency scan.
 set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M JSON::PP
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
-set DATA=-a "data/pipes.dat;lib/data/pipes.dat"
+rem The PDF report's typeface goes beside it, in lib\data\fonts.
+set DATA=-a "data/pipes.dat;lib/data/pipes.dat" -a "data/fonts;lib/data/fonts"
 
 echo.
 echo [4/6] Building phcp.exe (command line)...
