@@ -311,6 +311,8 @@ DLL.  AutoCAD first, possibly Revit later.
 - [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
 - [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
 - [ ] PR 3 - Windows build run by Joshua
+- [x] Report: the supply graph drawn in the PDF on q^1.85 graph paper, from the numbers the text graph uses (engine change, approved by Joshua 28 October 2026)
+- [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
 - [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
 - [ ] PR 5 - `phcp.exe --json`, documented and tested
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua

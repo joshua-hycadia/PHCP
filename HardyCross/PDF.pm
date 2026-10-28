@@ -7,24 +7,36 @@
 #
 # WHAT THIS IS
 #   A faithful, paginated print of the ASCII report -- the same characters in
-#   the same columns, set in Courier on A4 landscape -- with a running header,
-#   a page footer and page breaks placed where a reader expects them.  It is
-#   not a redesign.  The text report and the PDF are made from the same solved
+#   the same columns, on A4 landscape -- with a running header, a page footer
+#   and page breaks placed where a reader expects them.  Two things are drawn
+#   rather than typed: the rules (a line of '=' or '-' in the text report is a
+#   ruled line on the page) and the supply graph, which the text report draws
+#   in characters and the PDF draws with lines from the same numbers
+#   (draw_graph).  The text report and the PDF are made from the same solved
 #   network in the same run, so the two cannot disagree.
+#
+# THE TYPEFACE
+#   DejaVu Sans Mono, embedded (data/fonts, under its own licence -- see
+#   LICENSE).  Courier, the one monospace face every PDF reader supplies, is
+#   a thin typewriter face that printed faint and looked dated; an embedded
+#   face prints the same on every machine.  The font files are compressed
+#   into the PDF whole -- about 300 kB -- rather than subset, which would need
+#   a TrueType rewriter.  If the files are missing the PDF falls back to
+#   Courier, so a report is never lost for want of a font.
 #
 # WHY WRITE THE PDF BY HAND
 #   PHCP is Perl with no dependencies beyond Tk.  A PDF library would be the
 #   first module a user had to install before the program could print.  The
-#   report is 7-bit ASCII by construction, so it needs only Courier -- one of
-#   the fourteen fonts every PDF reader must supply -- and no font is embedded.
-#   What remains is a few objects and a cross-reference table, set out in
+#   report is 7-bit ASCII by construction, so one simple font encoding covers
+#   it.  What remains is a few objects and a cross-reference table, set out in
 #   ISO 32000-1, and short enough to read in one sitting.
 #
 # THE PAGE
-#   A4 landscape, 842 x 595 pt.  Courier advances 600/1000 em, so 132 columns
-#   at 9 pt are 712.8 pt wide and sit centred with 64.6 pt margins -- the full
-#   page width is used without shrinking the type below what reads comfortably
-#   on paper.  46 lines of 10.8 pt leading fit between header and footer.
+#   A4 landscape, 842 x 595 pt.  DejaVu Sans Mono advances 602/1000 em
+#   (Courier 600), so 132 columns at 9 pt are 715 pt wide and sit centred
+#   with 63 pt margins -- the full page width is used without shrinking the
+#   type below what reads comfortably on paper.  46 lines of 10.8 pt leading
+#   fit between header and footer.
 #
 # WHERE THE PAGES BREAK
 #   A calculation read on paper has three things that must not be split:
@@ -39,16 +51,29 @@ package HardyCross::PDF;
 use strict;
 use warnings;
 use POSIX qw(strftime floor);
+use File::Spec;
+use Compress::Zlib ();
 
 my ($PAGE_W, $PAGE_H) = (842, 595);          # A4 landscape
 my $FONT_SIZE = 9;
 my $LEADING   = 10.8;
 my $COLS      = 132;
-my $CHAR_W    = 0.6 * $FONT_SIZE;             # Courier: 600 units per em
-my $LEFT      = ($PAGE_W - $COLS * $CHAR_W) / 2;
 my $BODY_TOP  = 545;                          # first baseline on a page
 my $BODY_BOT  = 50;                           # no baseline below this
 my $PER_PAGE  = floor(($BODY_TOP - $BODY_BOT) / $LEADING) + 1;
+# The width of one character, in em, and so the left margin, are those of
+# the face in use: set by write_pdf once the fonts are loaded.
+my $ADVANCE   = 0.6;
+my ($CHAR_W, $LEFT);
+sub set_advance {
+    $ADVANCE = shift;
+    $CHAR_W  = $ADVANCE * $FONT_SIZE;
+    $LEFT    = ($PAGE_W - $COLS * $CHAR_W) / 2;
+}
+set_advance(0.6);
+
+# The supply graph's box on the page, in lines of text.
+my $GRAPH_LINES = 30;
 
 sub is_thick { $_[0] =~ /^={20,}\s*$/ }
 sub is_thin  { $_[0] =~ /^-{20,}\s*$/ }
@@ -66,7 +91,8 @@ sub is_sub   { $_[0] =~ /^\s+-{20,}\s*$/ }
 # PDF needs no separate description of its layout.
 #------------------------------------------------------------------------------
 sub paginate {
-    my @L = split /\n/, shift, -1;
+    my ($text, $graph) = @_;
+    my @L = split /\n/, $text, -1;
     pop @L while @L && blank($L[-1]);
 
     my (@pages, @page);
@@ -111,12 +137,22 @@ sub paginate {
         }
 
         # The supply graph moves to a new page whole rather than be cut.
+        # With the graph's numbers to hand, its character drawing is left out
+        # and a box of $GRAPH_LINES lines is kept for the drawn graph: the
+        # heading stays as text, the first line of the box carries the mark
+        # 'graph', and write_pdf draws into it.
         if ($l =~ /^ SUPPLY GRAPH/) {
             my $j = $i;
             $j++ while $j < $#L && $L[$j] !~ /O\s+operating point/;
-            my $h = $j - $i + 1;
+            my $h = $graph ? $GRAPH_LINES + 2 : $j - $i + 1;
             $new_page->() if $room->() < $h && $h <= $PER_PAGE && @page;
-            $put->($L[$_]) for $i .. $j;
+            if ($graph) {
+                $put->($l, 1);
+                push @page, [ '', 0, 'graph' ];
+                push @page, [ '', 0 ] for 2 .. $GRAPH_LINES;
+            } else {
+                $put->($L[$_]) for $i .. $j;
+            }
             $i = $j;
             next;
         }
@@ -216,12 +252,65 @@ sub esc {
 sub fit { my ($t, $w) = @_; length $t > $w ? substr($t, 0, $w - 3) . '...' : $t }
 
 #------------------------------------------------------------------------------
+# The typeface.
+#
+# load_font reads a TrueType file and returns what the PDF needs to embed it:
+# the bytes, and from the font's own tables the units per em, the advance
+# width (one for every character -- it is a monospace face), the bounding
+# box, ascent, descent and cap height.  Returns undef if the file is not
+# there.  The tables are read with unpack as the TrueType specification sets
+# them out; nothing else in the file is touched.
+#------------------------------------------------------------------------------
+sub font_dir {
+    my ($vol, $dir) = File::Spec->splitpath(File::Spec->rel2abs(__FILE__));
+    my @try = (File::Spec->catdir($vol . $dir, File::Spec->updir, File::Spec->updir, 'data', 'fonts'));
+    push @try, File::Spec->catdir($ENV{PAR_TEMP}, 'inc', 'lib', 'data', 'fonts') if $ENV{PAR_TEMP};
+    my ($pv, $pd) = File::Spec->splitpath(File::Spec->rel2abs($0));
+    push @try, File::Spec->catdir($pv . $pd, 'data', 'fonts');
+    for (@try) { return $_ if -d $_ }
+    return $try[0];
+}
+
+sub load_font {
+    my $file = File::Spec->catfile(font_dir(), shift);
+    open my $fh, '<:raw', $file or return undef;
+    my $b = do { local $/; <$fh> };
+    close $fh;
+    my $n = unpack 'n', substr($b, 4, 2);
+    my %t;
+    for my $i (0 .. $n - 1) {
+        my ($tag, undef, $off, $len) = unpack 'a4 N N N', substr($b, 12 + 16 * $i, 16);
+        $t{$tag} = [ $off, $len ];
+    }
+    return undef unless $t{head} && $t{hhea} && $t{hmtx};
+    my $i16 = sub { my $v = unpack 'n', substr($b, $_[0], 2); $v >= 32768 ? $v - 65536 : $v };
+    my $u16 = sub { unpack 'n', substr($b, $_[0], 2) };
+    my $h = $t{head}[0];
+    my $upm = $u16->($h + 18);
+    my $k = 1000 / $upm;
+    my %f = (bytes => $b, upm => $upm,
+             advance => $u16->($t{hmtx}[0]) * $k,
+             bbox => [ map { int($i16->($h + $_) * $k) } 36, 38, 40, 42 ],
+             ascent => int($i16->($t{hhea}[0] + 4) * $k), descent => int($i16->($t{hhea}[0] + 6) * $k));
+    $f{cap} = $t{'OS/2'} && $u16->($t{'OS/2'}[0]) >= 2 ? int($i16->($t{'OS/2'}[0] + 88) * $k) : $f{ascent};
+    return \%f;
+}
+
+#------------------------------------------------------------------------------
 # Write the PDF.
-#   %meta: title, job, revision, date, designer, model, program
+#   %meta: title, job, revision, date, designer, model, program, and graph --
+#   the supply graph's numbers (HardyCross::Report::supply_graph_data), which
+#   draw the graph in place of the report's character drawing.
 #------------------------------------------------------------------------------
 sub write_pdf {
     my ($text, $path, %meta) = @_;
-    my $pages = paginate($text);
+    my $reg  = load_font('DejaVuSansMono.ttf');
+    my $bold = $reg && load_font('DejaVuSansMono-Bold.ttf');
+    $reg = $bold = undef unless $reg && $bold;
+    set_advance($reg ? $reg->{advance} / 1000 : 0.6);
+
+    my $graph = $meta{graph};
+    my $pages = paginate($text, $graph);
     my $n = @$pages;
 
     my $hdr_left  = 'PHCP  HYDRAULIC CALCULATION';
@@ -247,39 +336,82 @@ sub write_pdf {
         $s .= sprintf "BT /F2 %s Tf %.2f %.2f Td (%s) Tj ET\n", $FONT_SIZE, $LEFT, 566, esc($h);
 
         # footer: what was calculated, and where this page sits in it
+        # The footer is set smaller than the body, so the page number is
+        # placed by its width in points against the right margin, not by
+        # counting columns of the body's size.
         my $pg = sprintf 'Page %d of %d', $p + 1, $n;
         my $fl = fit(($meta{program} // 'PHCP') . ($meta{model} ? "   $meta{model}" : ''),
                      $COLS - length($pg) - 2);
-        my $f = $fl . ' ' x ($COLS - length($fl) - length($pg)) . $pg;
-        $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8, $LEFT, 26, esc($f);
+        $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8, $LEFT, 26, esc($fl);
+        $s .= sprintf "BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n", 8,
+            $LEFT + $COLS * $CHAR_W - length($pg) * $ADVANCE * 8, 26, esc($pg);
 
-        # the body, one Tj per line, switching to bold only for section titles
+        # The body, one Tj per line, bold only for section titles.  A rule is
+        # not typed: its line is left empty and the rule drawn after -- heavy
+        # for '=', light for '-', and an indented light rule from its indent.
         $s .= sprintf "BT /F1 %s Tf %s TL %.2f %.2f Td\n", $FONT_SIZE, $LEADING, $LEFT, $BODY_TOP;
-        my $bold = 0;
+        my $fb = 0;
+        my (@rules, $gy);
+        my $y = $BODY_TOP;
         for my $ln (@{ $pages->[$p] }) {
-            my ($t, $b) = @$ln;
-            if ($b != $bold) { $s .= ($b ? '/F2' : '/F1') . " $FONT_SIZE Tf\n"; $bold = $b }
-            $s .= '(' . esc($t) . ") Tj T*\n";
+            my ($t, $b, $mark) = @$ln;
+            $gy = $y if ($mark // '') eq 'graph';
+            if (is_thick($t) || is_thin($t) || is_sub($t)) {
+                my $ind = length(($t =~ /^(\s*)/)[0]);
+                my $len = length(($t =~ /^\s*(\S+)/)[0]);
+                push @rules, [ $y + $FONT_SIZE * 0.3, $ind, $len, is_thick($t) ? 1.0 : 0.4 ];
+                $s .= "T*\n";
+            } else {
+                if ($b != $fb) { $s .= ($b ? '/F2' : '/F1') . " $FONT_SIZE Tf\n"; $fb = $b }
+                $s .= '(' . esc($t) . ") Tj T*\n";
+            }
+            $y -= $LEADING;
         }
         $s .= "ET\n";
+        for my $r (@rules) {
+            my ($ry, $ind, $len, $wt) = @$r;
+            $s .= sprintf "%% PHCP-RULE %.1f\n%.2f w %.2f %.2f m %.2f %.2f l S\n", $wt, $wt,
+                $LEFT + $ind * $CHAR_W, $ry, $LEFT + ($ind + $len) * $CHAR_W, $ry;
+        }
+        $s .= draw_graph($graph, $gy + $LEADING * 0.6, $GRAPH_LINES * $LEADING) if defined $gy;
         push @streams, $s;
     }
 
-    # Object numbers: 1 catalog, 2 page tree, 3 Courier, 4 Courier-Bold,
-    # 5 document info, then for each page a page object and its content.
+    # Objects: 1 catalog, 2 page tree, 3 regular font, 4 bold font, 5
+    # document info; then, for embedded fonts, each font's descriptor and
+    # file; then each page and its content.
     my @obj;
-    my @kids = map { 6 + 2 * $_ } 0 .. $n - 1;
+    my $next = 6;
+    my $font = sub {
+        my ($f, $name) = @_;
+        my $base = "/Type /Font /Subtype /Type1 /BaseFont /$name /Encoding /WinAnsiEncoding";
+        return "<< $base >>" unless $f;
+        my ($desc, $file) = ($next, $next + 1);
+        $next += 2;
+        my $z = Compress::Zlib::compress($f->{bytes});
+        $obj[$desc] = sprintf '<< /Type /FontDescriptor /FontName /%s /Flags 33 /FontBBox [%s] '
+                    . '/ItalicAngle 0 /Ascent %d /Descent %d /CapHeight %d /StemV %d /FontFile2 %d 0 R >>',
+            $name, join(' ', @{ $f->{bbox} }), $f->{ascent}, $f->{descent}, $f->{cap},
+            $name =~ /Bold/ ? 140 : 80, $file;
+        $obj[$file] = sprintf "<< /Length %d /Length1 %d /Filter /FlateDecode >>\nstream\n%sendstream",
+            length $z, length $f->{bytes}, $z . "\n";
+        my $w = sprintf '%d', $f->{advance} + 0.5;
+        return sprintf '<< /Type /Font /Subtype /TrueType /BaseFont /%s /FirstChar 32 /LastChar 126 '
+                     . '/Widths [%s] /Encoding /WinAnsiEncoding /FontDescriptor %d 0 R >>',
+            $name, join(' ', ($w) x 95), $desc;
+    };
+    $obj[3] = $font->($reg,  $reg  ? 'DejaVuSansMono'      : 'Courier');
+    $obj[4] = $font->($bold, $bold ? 'DejaVuSansMono-Bold' : 'Courier-Bold');
+    my @kids = map { $next + 2 * $_ } 0 .. $n - 1;
     $obj[1] = "<< /Type /Catalog /Pages 2 0 R >>";
     $obj[2] = "<< /Type /Pages /Kids [" . join(' ', map { "$_ 0 R" } @kids) . "] /Count $n >>";
-    $obj[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>";
-    $obj[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>";
     my $now = strftime('D:%Y%m%d%H%M%S', localtime);
     $obj[5] = sprintf "<< /Title (%s) /Author (%s) /Subject (Hydraulic calculation) "
                     . "/Creator (%s) /Producer (%s) /CreationDate (%s) >>",
         esc($meta{title} // 'Hydraulic calculation'), esc($meta{designer} // ''),
         esc($meta{program} // 'PHCP'), esc($meta{program} // 'PHCP'), $now;
     for my $p (0 .. $n - 1) {
-        my ($po, $co) = (6 + 2 * $p, 7 + 2 * $p);
+        my ($po, $co) = ($kids[$p], $kids[$p] + 1);
         $obj[$po] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $PAGE_W $PAGE_H] "
                   . "/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents $co 0 R >>";
         $obj[$co] = "<< /Length " . length($streams[$p]) . " >>\nstream\n$streams[$p]endstream";
@@ -304,6 +436,179 @@ sub write_pdf {
     print $fh $out;
     close $fh;
     return $n;
+}
+
+#------------------------------------------------------------------------------
+# draw_graph -- the supply graph drawn on Q^1.85 graph paper, into a box the
+# full width of the text and $hgt points high below $top.
+#
+# Left, the plot: pressure up, flow along on a q^1.85 scale -- gridlines at
+# round flows crowd to the right as on printed hydraulic graph paper, and a
+# Hazen-Williams system curve comes out near straight.  The supply is a solid
+# heavy line (straight between its entered points on this paper; its points
+# are open circles), the system a dashed line through the solved points
+# (dots), the demand point D a square and the operating point O a disc; at
+# the demand flow a dimension line shows the margin.  Right, the key and the
+# four figures Section 9 states above.
+#
+# Black on white in the report's typeface, so it reads and photocopies like
+# the rest of the calculation.  Each element is preceded by a comment
+# (% PHCP-GRAPH ...) giving the coordinates it was drawn at, which a PDF
+# reader ignores and tools/test_pdf.pl checks against figures worked
+# independently.
+#------------------------------------------------------------------------------
+sub draw_graph {
+    my ($g, $top, $hgt) = @_;
+    my $o = '';
+    my $cw = $CHAR_W;
+    # The plot's rectangle: room on the left for the pressure labels, below
+    # for the flow labels and the axis title; the key from column 92.
+    my $pl = $LEFT + 9 * $cw;
+    my $pr = $LEFT + 86 * $cw;
+    my $pt = $top - 14;
+    my $pb = $top - $hgt + 3 * $LEADING;
+    my ($pw, $ph) = ($pr - $pl, $pt - $pb);
+    my ($qmax, $pmax) = @{$g}{qw(qmax pmax)};
+    my $X = sub { $pl + ($_[0] > 0 ? ($_[0] / $qmax) ** 1.85 : 0) * $pw };
+    my $Y = sub { $pb + $_[0] / $pmax * $ph };
+    my $txt = sub {               # text at (x, y): size, bold, alignment l / c / r
+        my ($x, $y, $t, $size, $b, $al) = @_;
+        my $w = length($t) * $ADVANCE * $size;
+        $x -= $al eq 'r' ? $w : $al eq 'c' ? $w / 2 : 0;
+        sprintf "BT /F%d %s Tf %.2f %.2f Td (%s) Tj ET\n", $b ? 2 : 1, $size, $x, $y, esc($t);
+    };
+    my $num = sub { my ($v) = @_; my $t = sprintf '%.6g', $v; $t };
+    # The plot's rectangle and its extents in the units the report prints.
+    $o .= sprintf "%% PHCP-GRAPH PLOT %.3f %.3f %.3f %.3f %.10g %.10g\n", $pl, $pb, $pw, $ph,
+        $qmax / $g->{uf}, $pmax / $g->{up};
+
+    # Grid: pressure lines evenly spaced, flow lines at round flows.
+    $o .= "q 0.82 G 0.3 w\n";
+    for my $p (@{ $g->{yticks} }) {
+        next if $p > $pmax;
+        $o .= sprintf "%.2f %.2f m %.2f %.2f l S\n", $pl, $Y->($p), $pr, $Y->($p);
+    }
+    for my $q (@{ $g->{xticks} }) {
+        next if $q > $qmax;
+        $o .= sprintf "%.2f %.2f m %.2f %.2f l S\n", $X->($q), $pb, $X->($q), $pt;
+    }
+    $o .= "Q\n";
+    # Labels: every pressure line; a flow label only where it clears the last.
+    for my $p (@{ $g->{yticks} }) {
+        next if $p > $pmax;
+        $o .= $txt->($pl - 4, $Y->($p) - 2.4, $num->($p / $g->{up}), 7, 0, 'r');
+    }
+    my $last = -1e9;
+    for my $q (@{ $g->{xticks} }) {
+        next if $q > $qmax;
+        my $t = $num->($q / $g->{uf});
+        my $w = length($t) * $ADVANCE * 7;
+        my $x = $X->($q);
+        next if $x - $w / 2 < $last + 6;
+        $o .= sprintf "%% PHCP-GRAPH XTICK %s %.3f\n", $t, $x;
+        $o .= $txt->($x, $pb - 10, $t, 7, 0, 'c');
+        $last = $x + $w / 2;
+    }
+    $o .= $txt->($pl - 4, $pt + 6, "PRESSURE, $g->{pu}", 7, 1, 'l');
+    $o .= $txt->(($pl + $pr) / 2, $pb - 22, "FLOW, $g->{qu}, ON A FLOW^1.85 SCALE", 7, 1, 'c');
+    # The frame.
+    $o .= sprintf "0 G 0.6 w %.2f %.2f %.2f %.2f re S\n", $pl, $pb, $pw, $ph;
+
+    # Curves and points, clipped to the plot.
+    $o .= sprintf "q %.2f %.2f %.2f %.2f re W n\n", $pl, $pb, $pw, $ph;
+    my @sp = @{ $g->{supply} };
+    $o .= sprintf "%% PHCP-GRAPH SUPPLY %d\n", scalar @sp;
+    $o .= sprintf "0 G 1.4 w 1 J 1 j %.2f %.2f m\n", $X->($sp[0][0]), $Y->($sp[0][1]);
+    $o .= sprintf "%.2f %.2f l\n", $X->($_->[0]), $Y->($_->[1]) for @sp[1 .. $#sp];
+    $o .= "S\n";
+    my @sy = @{ $g->{sys} };
+    if (@sy > 1) {
+        $o .= sprintf "[3 2] 0 d 0.9 w %.2f %.2f m\n", $X->($sy[0][0]), $Y->($sy[0][1]);
+        $o .= sprintf "%.2f %.2f l\n", $X->($_->[0]), $Y->($_->[1]) for @sy[1 .. $#sy];
+        $o .= "S [] 0 d\n";
+    }
+    $o .= circle($X->($_->[0]), $Y->($_->[1]), 1.5, 'f') for @sy;
+    for my $t (@{ $g->{tests} }) {
+        $o .= sprintf "%% PHCP-GRAPH TEST %.3f %.3f\n", $X->($t->[0]), $Y->($t->[1]);
+        $o .= "0.7 w 1 g\n" . circle($X->($t->[0]), $Y->($t->[1]), 2.4, 'B') . "0 g\n";
+    }
+
+    # The margin, dimensioned at the demand flow: from D up (or down) to the
+    # supply, with an arrowhead at each end.
+    my ($qd, $pd) = @{ $g->{demand} };
+    my ($xd, $yd, $ya) = ($X->($qd), $Y->($pd), $Y->($g->{p_avail}));
+    if (abs($ya - $yd) > 8) {
+        my $dir = $ya > $yd ? 1 : -1;
+        $o .= sprintf "0.6 w %.2f %.2f m %.2f %.2f l S\n", $xd, $yd + 4 * $dir, $xd, $ya - 4 * $dir;
+        for my $end ([ $yd + 3 * $dir, $dir ], [ $ya - 3 * $dir, -$dir ]) {
+            my ($ey, $d) = @$end;
+            $o .= sprintf "%.2f %.2f m %.2f %.2f l %.2f %.2f l f\n",
+                $xd, $ey - 3 * $d, $xd - 2, $ey + 1 * $d, $xd + 2, $ey + 1 * $d;
+        }
+    }
+    $o .= "Q\n";
+    my ($mlabel, undef, $mval) = @{ $g->{figures}[2] };
+    $o .= $txt->($xd + 5, ($yd + $ya) / 2 - 2.4, "$mlabel $mval", 7, 0, 'l') if abs($ya - $yd) > 8;
+
+    # D and O, drawn last so nothing covers them.
+    $o .= sprintf "%% PHCP-GRAPH D %.3f %.3f\n", $xd, $yd;
+    $o .= sprintf "0 g %.2f %.2f 5 5 re f\n", $xd - 2.5, $yd - 2.5;
+    $o .= $txt->($xd - 5, $yd - 2.6, 'D', 8, 1, 'r');
+    my ($xo, $yo) = ($X->($g->{oper}[0]), $Y->($g->{oper}[1]));
+    $o .= sprintf "%% PHCP-GRAPH O %.3f %.3f\n", $xo, $yo;
+    $o .= circle($xo, $yo, 3, 'f');
+    $o .= $txt->($xo + 5, $yo + 4, 'O', 8, 1, 'l');
+
+    # The key, and the figures.
+    my $kx = $LEFT + 92 * $cw;
+    my $ky = $pt - 2;
+    my $line = sub { $ky -= 13 };
+    $o .= $txt->($kx, $ky, 'KEY', 8, 1, 'l');
+    $o .= sprintf "0.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky - 4, $LEFT + $COLS * $cw, $ky - 4;
+    $line->();
+    $o .= sprintf "1.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
+    $o .= $txt->($kx + 30, $ky, "SUPPLY AVAILABLE - $g->{id} AT NODE $g->{node}", 7, 0, 'l');
+    $line->();
+    $o .= sprintf "[3 2] 0 d 0.9 w %.2f %.2f m %.2f %.2f l S [] 0 d\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
+    $o .= circle($kx + 11, $ky + 2.5, 1.5, 'f');
+    $o .= $txt->($kx + 30, $ky, 'SYSTEM CURVE - EACH POINT A FULL SOLVE', 7, 0, 'l');
+    if (@{ $g->{tests} }) {
+        $line->();
+        $o .= "0.7 w 1 g\n" . circle($kx + 11, $ky + 2.5, 2.4, 'B') . "0 g\n";
+        $o .= $txt->($kx + 30, $ky, 'SUPPLY CURVE POINTS AS ENTERED', 7, 0, 'l');
+    }
+    $line->();
+    $o .= sprintf "%.2f %.2f 5 5 re f\n", $kx + 8.5, $ky;
+    $o .= $txt->($kx + 30, $ky, 'D  DEMAND POINT', 7, 0, 'l');
+    $line->();
+    $o .= circle($kx + 11, $ky + 2.5, 3, 'f');
+    $o .= $txt->($kx + 30, $ky, 'O  OPERATING POINT', 7, 0, 'l');
+    $line->();
+    $line->();
+    $o .= $txt->($kx, $ky, 'SUPPLY AND DEMAND', 8, 1, 'l');
+    $o .= sprintf "0.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky - 4, $LEFT + $COLS * $cw, $ky - 4;
+    for my $f (@{ $g->{figures} }) {
+        $line->();
+        my ($lab, $q, $p) = @$f;
+        $o .= $txt->($kx, $ky, $lab, 7, 0, 'l');
+        $o .= $txt->($kx + 22 * $ADVANCE * 7 + 50, $ky, $q, 7, 0, 'r') if length $q;
+        $o .= $txt->($LEFT + $COLS * $cw, $ky, ($q ? 'AT ' : '') . $p, 7, 0, 'r');
+    }
+    return $o;
+}
+
+# circle -- a circle of radius r at (x, y), from four Bezier arcs; $op is the
+# paint operator: f fill, S stroke, B both.
+sub circle {
+    my ($x, $y, $r, $op) = @_;
+    my $k = 0.5523 * $r;
+    return sprintf "%.2f %.2f m %.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c "
+                 . "%.2f %.2f %.2f %.2f %.2f %.2f c %.2f %.2f %.2f %.2f %.2f %.2f c %s\n",
+        $x + $r, $y,
+        $x + $r, $y + $k, $x + $k, $y + $r, $x, $y + $r,
+        $x - $k, $y + $r, $x - $r, $y + $k, $x - $r, $y,
+        $x - $r, $y - $k, $x - $k, $y - $r, $x, $y - $r,
+        $x + $k, $y - $r, $x + $r, $y - $k, $x + $r, $y, $op;
 }
 
 1;

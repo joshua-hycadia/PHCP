@@ -68,7 +68,8 @@ A stale README is a defect.
 - Australian practice: L/min, kPa, m, mm, AS 2118.1.
 - Code full of comments: say why, not just what, so a stranger can follow
   and check it.  Match the density of the existing modules.
-- Reports are 7-bit ASCII, monospace.  User interface labels and menus in
+- Reports are 7-bit ASCII, monospace.  The PDF prints the same text in an
+  embedded monospace face (data/fonts), with rules and the supply graph drawn.  User interface labels and menus in
   capitals.
 - No emojis anywhere.  Clear, concise prose.
 

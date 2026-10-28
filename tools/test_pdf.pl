@@ -18,7 +18,12 @@
 #   streams       every content stream's /Length equals its real length
 #   completeness  every line of the text report appears in the PDF, once the
 #                 PDF string escapes are undone -- nothing dropped at a page
-#                 break, nothing altered
+#                 break, nothing altered; every rule is drawn as a line
+#   typeface      DejaVu Sans Mono embedded, regular and bold
+#   the graph     D and O drawn where the report's own figures put them on
+#                 q^1.85 paper, worked here independently; the flow labels
+#                 at their places and clear of each other; the graph above
+#                 the footer
 #
 #   perl tools/test_pdf.pl [model.hcx ...]
 #==============================================================================
@@ -84,9 +89,58 @@ for my $m (@models) {
         (my $s = $1) =~ s/\\(.)/$1/g;
         $have{$s}++;
     }
-    my @missing = grep { /\S/ && !$have{$_} } split /\n/, $T;
+    # Rules are drawn, not typed; the supply graph's character drawing is
+    # replaced by the drawn graph.  Neither is looked for as text.
+    my @tl = split /\n/, $T;
+    my ($gs) = grep { $tl[$_] =~ /^ SUPPLY GRAPH/ } 0 .. $#tl;
+    my %skip;
+    if (defined $gs) {
+        my $ge = $gs;
+        $ge++ while $ge < $#tl && $tl[$ge] !~ /O\s+operating point/;
+        $skip{$_} = 1 for $gs + 1 .. $ge;
+    }
+    my $is_rule = sub { $_[0] =~ /^\s*(=+|-+)\s*$/ && length($1) >= 20 };
+    my @missing = grep { /\S/ && !$is_rule->($_) && !$have{$_} } map { $tl[$_] } grep { !$skip{$_} } 0 .. $#tl;
     ok("$name: every text line present in the PDF (" . scalar(@missing) . ' missing)', !@missing);
     print "      e.g. [$missing[0]]\n" if @missing;
+    my $nrules = grep { $is_rule->($_) } @tl;
+    my $drawn = () = $streams =~ /% PHCP-RULE/g;
+    ok("$name: every rule drawn as a line ($nrules in the text, $drawn drawn)", $drawn >= $nrules && $nrules > 0);
+    ok("$name: the typeface is embedded (DejaVu Sans Mono, regular and bold)",
+       $P =~ m{/BaseFont /DejaVuSansMono /} && $P =~ m{/BaseFont /DejaVuSansMono-Bold } && $P =~ m{/FontFile2 });
+
+    # The drawn graph, checked against the report's own figures by hand.
+    next unless defined $gs;
+    my ($pl, $pb, $pw, $ph, $qmax, $pmax) = $streams =~ /% PHCP-GRAPH PLOT (\S+) (\S+) (\S+) (\S+) (\S+) (\S+)/;
+    ok("$name: the supply graph is drawn", defined $pl);
+    next unless defined $pl;
+    my $X = sub { $pl + ($_[0] / $qmax) ** 1.85 * $pw };
+    my $Y = sub { $pb + $_[0] / $pmax * $ph };
+    my ($qd, $pd) = $T =~ /^\s+DEMAND\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
+    my ($qo, $po) = $T =~ /^\s+OPERATING POINT\s+([\d.]+) \S+\s+at\s+([\d.]+)/m;
+    my ($dx, $dy) = $streams =~ /% PHCP-GRAPH D (\S+) (\S+)/;
+    my ($ox, $oy) = $streams =~ /% PHCP-GRAPH O (\S+) (\S+)/;
+    # The report prints to 0.1, so a figure read from it is good to 0.05 of
+    # its unit; on the page that is whatever 0.05 spans at that point of the
+    # axis (more in bar than in kPa), plus rounding of the coordinates.
+    my $tx = sub { (abs($X->($_[0] + 0.05) - $X->($_[0] > 0.05 ? $_[0] - 0.05 : 0))) / 2 + 0.01 };
+    my $ty = 0.05 / $pmax * $ph + 0.01;
+    ok(sprintf("$name: D drawn at the demand point, x = %.2f + %.2f (%.1f/%.1f)^1.85", $pl, $pw, $qd, $qmax),
+       abs($dx - $X->($qd)) <= $tx->($qd) && abs($dy - $Y->($pd)) <= $ty);
+    ok("$name: O drawn at the operating point",
+       abs($ox - $X->($qo)) <= $tx->($qo) && abs($oy - $Y->($po)) <= $ty);
+    my @xt = $streams =~ /% PHCP-GRAPH XTICK (\S+) (\S+)/g;
+    my ($tbad, $prev) = (0, undef);
+    for (my $k = 0; $k < @xt; $k += 2) {
+        my ($t, $x) = @xt[$k, $k + 1];
+        $tbad++ if abs($x - $X->($t)) > 0.01;
+        $tbad++ if defined $prev && $x - $prev < 6;
+        $prev = $x;
+    }
+    ok("$name: every flow label at (q/qmax)^1.85 along the axis, none overlapping", @xt && !$tbad);
+    my ($nsup) = $streams =~ /% PHCP-GRAPH SUPPLY (\d+)/;
+    ok("$name: the supply drawn as a line of $nsup points", ($nsup // 0) > 100);
+    ok("$name: the graph clears the page footer", $pb - 3 * 10.8 > 38);
 }
 printf "PDF report: %d checks across %d models, %d failed\n", $checks, scalar @models, $fails;
 exit($fails ? 1 : 0);
