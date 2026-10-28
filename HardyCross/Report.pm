@@ -1111,7 +1111,8 @@ sub ratio_band_note {
         . 'The calculation uses the BOTTOM of each band, outlet = inlet x (1/ratio - band), so every outlet '
         . 'is checked against the least pressure the valve can be relied on to give.');
     my $high = eval {
-        my $h = HardyCross::Parse::read_string($net->{source_text});
+        require HardyCross::Phc;
+        my $h = HardyCross::Phc::read_string($net->{source_text});
         $h->{opts}{pra_side} = 'HIGH';
         HardyCross::solve_model($h) ? $h : undef;
     };

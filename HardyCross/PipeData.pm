@@ -60,7 +60,7 @@ sub default_path {
     #   1. beside the program itself, in ./data -- the office's own copy.  The
     #      editor's DATABASE tab saves here, and a copy here wins over the one
     #      built into a packaged .exe, so the office can correct or add data
-    #      without a rebuild (Joshua, 28 October 2026).  Running from the
+    #      without a rebuild (decided 28 October 2026).  Running from the
     #      source folder this is the same file as 2.
     #   2. beside this module, in ../data  -- running from the source folder
     #   3. inside a packaged .exe, which unpacks to PAR_TEMP/inc/lib/data
@@ -217,7 +217,7 @@ sub governing_source {
 #------------------------------------------------------------------------------
 # Parse a fitting string.
 #
-# Both the office form "2E,1T" and the HydraCALC form "1E1T" are accepted, so
+# Both the office form "2E,1T" and the compact form "1E1T" are accepted, so
 # a string copied off an existing calculation sheet works unchanged.  A count
 # with no code, or a code the database does not know, is an error -- it is not
 # skipped, because a skipped fitting is an uncounted fitting.

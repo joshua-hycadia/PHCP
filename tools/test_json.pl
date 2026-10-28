@@ -100,7 +100,10 @@ print "2. FAILURES - the JSON is written whatever happens\n";
     is('   the error has its .phc line (4) and message', $j && $j->{errors}[0]{line} == 4
        && $j->{errors}[0]{message} =~ /UNKNOWN COMMAND PIPX/, $out);
     is('   and a summary line saying so', $j && $j->{summary}[0] =~ /^NOT SOLVED: .*\(LINE 4\)$/);
-    ($code, $out) = run(undef, '--json', "$FindBin::Bin/baseline/01_single_branch.hcx");
+    open my $old, '>', "$TMP/old.hcx" or die "$TMP/old.hcx: $!\n";
+    print $old "NODES\n  N1 0\nEND\n";
+    close $old;
+    ($code, $out) = run(undef, '--json', "$TMP/old.hcx");
     $j = eval { decode_json($out) };
     is('a .hcx file: exit 2, the reason in the JSON', $j && $code == 2
        && $j->{errors}[0]{message} =~ /IS NOT A \.PHC MODEL/);

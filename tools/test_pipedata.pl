@@ -93,7 +93,7 @@ my $pv = $R->(type=>'PVCM16', dn=>150, spec=>'E');
 is('PVC-M fitting is a controlled fallback -> ASSUMPTION_REQUIRED',
    $pv->{records}[0]{status} eq 'ASSUMPTION_REQUIRED');
 my $hc = $R->(type=>'ASAM', dn=>25, spec=>'1E1T');
-near('HydraCALC form 1E1T, ASAM DN25 = 0.6 + 1.5', $hc->{total}, 2.1, 0.001);
+near('compact form 1E1T, ASAM DN25 = 0.6 + 1.5', $hc->{total}, 2.1, 0.001);
 my $bad = $R->(type=>'ASAM', dn=>25, spec=>'2E,1X');
 is('an unknown code is an error, not skipped', !defined $bad->{total});
 my $so = $R->(type=>'ASAH', dn=>20, spec=>'E', standard_only=>1);
