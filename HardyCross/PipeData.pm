@@ -125,6 +125,12 @@ sub load {
     local $/ = "\n";
     while (my $l = <$fh>) {
         chomp $l;
+        # A file saved on Windows ends its lines CR LF.  The CR must go with
+        # the LF: left on, a last field of DASH reads as "DASH\r" -- not
+        # DASH, so not "none published" -- and a missing value would be
+        # taken as a number, zero, instead of stopping the calculation.
+        # (Found by the Windows test run, where git writes the file CR LF.)
+        $l =~ s/\r\z//;
         next if $l =~ /^\s*(#|$)/;
         my @f = split /\|/, $l;
         my $kind = shift @f;
