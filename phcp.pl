@@ -10,25 +10,32 @@
 #   phcp.pl model.phc                  solve; print flows and pressures
 #   phcp.pl model.phc report.txt       ...and write the ASCII report
 #   phcp.pl model.phc report.pdf       ...or the paginated PDF report
+#   phcp.pl --json model.phc           the results as JSON (HardyCross::Json),
+#                                      for another program to read
+#   phcp.pl --json -                   ...the model read from standard input
+#   phcp.pl --json model.phc --report out.pdf
+#                                      ...and the report written as well
 #
 # The model is a .phc command file, the one file type PHCP reads
 # (HardyCross::Parse::read_model).  A .hcx file is refused with the reason,
-# exit status 2.
+# exit status 2.  "-" reads the model text from standard input, as a caller
+# that builds the model in memory sends it.
 #
 # The printed Q and P lines are for scripts and for the validation harnesses:
-# one element or node per line, in the units the model declared.
+# one element or node per line, in the units the model declared.  With
+# --json, one JSON object is printed instead -- in every case, an error
+# included, so a caller always has something to read.
 #
 # Exit status is the contract other programs rely on:
 #   0  solved and converged        the results can be used
 #   1  ran but did not converge    the results must NOT be used
 #   2  input or topology error     nothing was solved; the reason is on stderr
+#                                  (and in the JSON, with --json)
 #==============================================================================
 # Command line driver.  Prints element flows and node pressures in the units
 # the MODEL declared -- not the engine's internal ones, because printing
 # internal L/min for a model written in L/s is a factor of sixty that looks
 # exactly like a solver disagreement.
-#
-# Exit status: 0 converged, 1 ran but did not converge, 2 input error.
 
 use strict;
 use warnings;
@@ -38,34 +45,61 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl model.phc [report.txt | report.pdf]\n";
-@ARGV or die $USAGE;
-my $report_path = $ARGV[1];
+my $USAGE = "usage: phcp.pl [--json] model.phc|- [report.txt|report.pdf] [--report report.pdf]\n";
+my ($json, $model, $report_path) = (0, undef, undef);
+while (@ARGV) {
+    my $a = shift @ARGV;
+    if    ($a eq '--json')   { $json = 1 }
+    elsif ($a eq '--report') { $report_path = shift @ARGV // die $USAGE }
+    elsif (!defined $model)  { $model = $a }
+    elsif (!defined $report_path) { $report_path = $a }
+    else  { die $USAGE }
+}
+defined $model or die $USAGE;
+binmode STDOUT;
 
-my $net = eval { HardyCross::Parse::read_model($ARGV[0]) };
-if (!$net) {
-    my $e = $@;
+# fail -- an input or topology error: the reason, then exit 2.
+sub fail_out {
+    my $e = shift;
+    if ($json) {
+        require HardyCross::Json;
+        print HardyCross::Json::encode(HardyCross::Json::error_result($e, $model));
+    }
     print STDERR "MODEL ERROR: ", (HardyCross::is_model_error($e) ? $e->{msg} : $e), "\n";
     exit 2;
 }
+
+my $net = eval {
+    if ($model eq '-') {
+        my $text = do { local $/; <STDIN> };
+        require HardyCross::Phc;
+        HardyCross::Phc::read_string($text);
+    } else {
+        HardyCross::Parse::read_model($model);
+    }
+};
+fail_out($@) unless $net;
 my $ok = eval { HardyCross::solve_model($net) };
-if (!defined $ok) {
-    my $e = $@;
-    print STDERR "MODEL ERROR: ", (HardyCross::is_model_error($e) ? $e->{msg} : $e), "\n";
-    exit 2;
-}
+fail_out($@) unless defined $ok;
 
-# With a second argument, write the full calculation report there.
+# With a report path, write the full calculation report there.
 if (defined $report_path) {
+    my $name = $model eq '-' ? 'STDIN.PHC' : $model;
     # The extension chooses the format: report.pdf is paginated for print,
     # anything else is the plain ASCII text.
     if ($report_path =~ /\.pdf$/i) {
-        HardyCross::Report::write_pdf_report($net, $ok, $ARGV[0], $report_path);
+        HardyCross::Report::write_pdf_report($net, $ok, $name, $report_path);
     } else {
         open my $rf, '>', $report_path or die "cannot write $report_path: $!\n";
-        print $rf HardyCross::Report::write_report($net, $ok, $ARGV[0]);
+        print $rf HardyCross::Report::write_report($net, $ok, $name);
         close $rf;
     }
+}
+
+if ($json) {
+    require HardyCross::Json;
+    print HardyCross::Json::encode(HardyCross::Json::results($net, $ok, $model));
+    exit($ok ? 0 : 1);
 }
 
 printf "# PHCP - Perl Hydraulic Calculation Program %s\n", $HardyCross::VERSION;
