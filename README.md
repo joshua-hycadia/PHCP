@@ -424,8 +424,11 @@ tests, and Tk::TableMatrix is no longer needed.
 The editor's GRAPH tab draws a water supply graph on Q^1.85 paper from figures
 typed in - before a network is modelled, or from a flow test and a pump's data
 sheet.  It is independent of the model: nothing is read from the network or
-from a calculation, and nothing in it changes them.  Flows in L/min, pressures
-in kPa.
+from a calculation, and nothing in it changes them.  Flow and pressure are in
+the units chosen under SHEET (L/min, L/s, m3/h, gpm; kPa, bar, MPa, psi, m
+head) - the PROJECT tab's when a graph is begun - and saved with it.  No
+conversion is needed: on Q^1.85 paper the curves, the straight lines between
+points and the margins are the same in any unit.
 
 | curve | what it is |
 |---|---|
@@ -466,15 +469,18 @@ and duties are drawn).
 
 ## Quick tools
 
-The editor's QUICK TOOLS tab holds four small calculators, each answering
-as it is typed.  Like the GRAPH tab they are independent of the model.  Flow
-in L/min, pressure in kPa, length in m, bore and roughness in mm.
+The editor's QUICK TOOLS tab holds five small calculators, each answering
+as it is typed.  Like the GRAPH tab they are independent of the model.  They
+work in the units set in the PROJECT tab - flow, pressure, length, size and
+K-factor, with the same choices and factors as a model - named beside every
+field; velocity is in m/s.
 
 | calculator | give | get |
 |---|---|---|
 | VELOCITY | a pipe type and size (or BORE and a bore in mm), and a flow | the bore, the area, the velocity, and whether it is above the PROJECT tab's velocity limit |
-| K-FACTOR | any two of K, Q and P; K per root kPa or per root bar | the third, from Q = K x sqrt(P), and K in both units |
-| K-FACTOR CONVERTER | a K in US units (gpm per root psi), or metric per root bar or per root kPa | the K in all three.  K5.6 (US) is K80.7 metric - the K80 it is sold as |
+| FITTINGS | a pipe type and size, fittings as on a pipe line (2E 1T G), optionally C | each fitting's equivalent length and the total, from the database by the same look-up, source and corrections as a model's pipe; a fitting the database lacks is refused, never counted as zero |
+| K-FACTOR | any two of K, Q and P; K in any K unit (LPM/KPA, LPM/BAR, LPS/KPA, LPS/BAR, GPM/PSI) | the third, from Q = K x sqrt(P), and K per root kPa, per root bar and in US units |
+| K-FACTOR CONVERTER | a K in any K unit | the K in all five.  K5.6 (US) is K80.7 metric - the K80 it is sold as |
 | PRESSURE LOSS | a pipe type and size, a flow, and optionally a length (blank: 1 m), C and roughness | the friction loss by Hazen-Williams and by Darcy-Weisbach side by side, per metre and over the length; the velocity, Reynolds number, regime and friction factor |
 
 The numbers are a calculation's own.  The bore is the pipe and fitting
@@ -483,8 +489,9 @@ the type's (see Roughness, under Pipe and fitting database; BORE takes
 0.045 mm, the program's default).  Both losses are the solver's own routine applied to one pipe,
 with the program's default options - the Hazen-Williams constant 6.05e7 and
 exponents 1.85 and 4.87; water at 20 C - so a pipe here loses exactly what
-the same pipe loses in a model.  The K converter uses the exact US gallon
-(3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5) = 14.4163 x K(US).
+the same pipe loses in a model.  The K converter uses the model's own unit
+factors - the US gallon (3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5)
+= 14.4163 x K(US).
 
 A problem is named under its calculator and the field at fault is outlined
 red.  `HardyCross/Tools.pm` does the work, with no Tk in it;
@@ -828,9 +835,9 @@ others on the page, and the report says which check to make.
 | report hand-checks, 8 models | 419 / 419 |
 | PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 145 / 145 |
-| quick tools | 43 / 43 |
-| water supply graph | 43 / 43 |
+| text editor window, under Xvfb | 151 / 151 |
+| quick tools | 58 / 58 |
+| water supply graph | 49 / 49 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |
 

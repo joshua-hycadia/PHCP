@@ -31,13 +31,19 @@
 #   in flow.  Pressures and flows are added and subtracted at equal flow;
 #   nothing else is assumed.
 #
-#   Units are L/min and kPa.
+#   UNITS.  Flow and pressure in the units the graph names (units => { FLOW,
+#   PRESSURE }: the PROJECT tab's choices; L/min and kPa unless set).  A
+#   Q^1.85 graph needs no conversion: scaling every flow by one factor scales
+#   every Q^1.85 by another, so the curves, the straight lines between
+#   points and the margins are the same in any unit -- only the names on the
+#   page, and the round number the flow axis stops at, change.
 #
 # THE FILE
 #   A graph is saved as a .phg file: plain text, one line per item, in the
 #   same spirit as .phc -- a keyword and its fields:
 #     PROJECT <text>   JOB <text>   DATE <text>   BY <text>
-#     PMAX <kPa>       PSTEP <kPa>  QMAX <L/min>
+#     UNITS FLOW <unit>   UNITS PRESSURE <unit>
+#     PMAX <pressure>  PSTEP <pressure>  QMAX <flow>
 #     A <flow> <pressure>     (one line per point; likewise B and D)
 #     DUTY <flow> <pressure> <label> <description ...>
 #   Lines starting // are comments.
@@ -72,8 +78,21 @@ our %CURVE_NAME = (
 our @PROJECT = qw(PROJECT JOB DATE BY);
 our %PROJECT_LABEL = (PROJECT => 'PROJECT', JOB => 'JOB NO', DATE => 'DATE', BY => 'PREPARED BY');
 our @AXIS = qw(PMAX PSTEP QMAX);
-our %AXIS_LABEL = (PMAX => 'PRESSURE AXIS TO, KPA', PSTEP => 'PRESSURE GRIDLINES EVERY, KPA',
-                   QMAX => 'FLOW AXIS TO, L/MIN');
+our %AXIS_LABEL = (PMAX => 'PRESSURE AXIS TO', PSTEP => 'PRESSURE GRIDLINES EVERY', QMAX => 'FLOW AXIS TO');
+our @FLOW_UNITS     = qw(LPM LPS M3H GPM);
+our @PRESSURE_UNITS = qw(KPA BAR MPA PSI M);
+# The names on the page, and the round number a flow axis stops at.
+our %UNIT_NAME = (LPM => 'L/min', LPS => 'L/s', M3H => 'm3/h', GPM => 'gpm',
+                  KPA => 'kPa', BAR => 'bar', MPA => 'MPa', PSI => 'psi', M => 'm head');
+our %FLOW_ROUND = (LPM => 100, LPS => 2, M3H => 10, GPM => 25);
+
+# units -- a graph's flow and pressure units, L/min and kPa unless set.
+sub units {
+    my $g = shift;
+    my $u = $g->{units} || {};
+    return { FLOW => (grep({ $_ eq ($u->{FLOW} // '') } @FLOW_UNITS) ? $u->{FLOW} : 'LPM'),
+             PRESSURE => (grep({ $_ eq ($u->{PRESSURE} // '') } @PRESSURE_UNITS) ? $u->{PRESSURE} : 'KPA') };
+}
 
 #------------------------------------------------------------------------------
 # new_graph -- an empty graph.  Every field is text, as typed, so the tab can
@@ -86,6 +105,7 @@ our %AXIS_LABEL = (PMAX => 'PRESSURE AXIS TO, KPA', PSTEP => 'PRESSURE GRIDLINES
 sub new_graph {
     return {
         project => { map { $_ => '' } @PROJECT },
+        units   => { FLOW => 'LPM', PRESSURE => 'KPA' },
         axis    => { map { $_ => '' } @AXIS },
         (map { my $c = $_; ($c => [ map { [ '', '' ] } 1 .. $ROWS ]) } @CURVES),
         duty    => [ map { [ '', '', '', '' ] } 1 .. $DUTY_ROWS ],
@@ -136,7 +156,7 @@ sub check {
     }
     $bad->('A1', 'A, THE WATER SUPPLY, NEEDS AT LEAST TWO POINTS') if @{ $pts{A} } < 2;
     $bad->('D2', 'D, THE PUMP, NEEDS AT LEAST TWO POINTS - OR NONE, FOR NO PUMP') if @{ $pts{D} } == 1;
-    $bad->('D1', 'D ROW 1: A PUMP CURVE STARTS AT CHURN - 0 L/MIN')
+    $bad->('D1', 'D ROW 1: A PUMP CURVE STARTS AT CHURN - NO FLOW')
         if @{ $pts{D} } && $pts{D}[0][0] != 0;
 
     # The curves, by the engine's own rule.  A single loss point is a line
@@ -173,7 +193,8 @@ sub check {
         if (!is_num($v) || $v <= 0) { $bad->($k, "$AXIS_LABEL{$k}: '$v' MUST BE A NUMBER ABOVE ZERO, OR BLANK"); next }
         $axis{$k} = $v + 0;
     }
-    return { ok => !@err, errors => \@err, points => \%pts, curve => \%curve, duty => \@duty, axis => \%axis };
+    return { ok => !@err, errors => \@err, points => \%pts, curve => \%curve, duty => \@duty, axis => \%axis,
+             units => units($g) };
 }
 
 # clean -- text for the sheet: printable ASCII, capitals, single spaces.
@@ -216,8 +237,9 @@ sub series {
 
     # The flow axis: as set, or the largest flow entered rounded up to 100.
     my @q = (map({ map { $_->[0] } @$_ } values %{ $chk->{points} }), map { $_->{q} } @{ $chk->{duty} });
-    my ($qbig) = sort { $b <=> $a } @q, 100;
-    my $qmax = $chk->{axis}{QMAX} // 100 * POSIX::ceil($qbig / 100);
+    my $round = $FLOW_ROUND{ ($chk->{units} || { FLOW => 'LPM' })->{FLOW} } // 100;
+    my ($qbig) = sort { $b <=> $a } @q, $round;
+    my $qmax = $chk->{axis}{QMAX} // $round * POSIX::ceil($qbig / $round);
 
     my @names = ('A', ($cv{B} ? 'B' : ()), 'C', ($cv{D} ? ('D', 'E') : ()));
     my %lines;
@@ -244,7 +266,7 @@ sub series {
         +{ %$_, avail => $a, margin => $a - $_->{p} }
     } @{ $chk->{duty} };
 
-    return { qmax => $qmax, pmax => $pmax, design => $design, lines => \%lines,
+    return { qmax => $qmax, pmax => $pmax, design => $design, lines => \%lines, units => $chk->{units},
              points => { map { $_ => $chk->{points}{$_} } grep { @{ $chk->{points}{$_} } } @CURVES },
              xticks => [ HardyCross::Report::nice_ticks($qmax, 10) ], yticks => \@yt, duty => \@duty };
 }
@@ -257,8 +279,10 @@ sub write_file {
     my @l = ('// PHCP Q^1.85 WATER SUPPLY GRAPH', '');
     for my $k (@PROJECT) { push @l, sprintf '%-7s %s', $k, $g->{project}{$k} unless blank($g->{project}{$k}) }
     for my $k (@AXIS)    { push @l, sprintf '%-7s %s', $k, $g->{axis}{$k}    unless blank($g->{axis}{$k}) }
+    my $u = units($g);
+    push @l, "UNITS   FLOW $u->{FLOW}", "UNITS   PRESSURE $u->{PRESSURE}";
     for my $c (@CURVES) {
-        push @l, '', "// $c - $CURVE_NAME{$c}: FLOW L/MIN, PRESSURE KPA";
+        push @l, '', "// $c - $CURVE_NAME{$c}: FLOW $u->{FLOW}, PRESSURE $u->{PRESSURE}";
         for my $r (@{ $g->{$c} }) {
             next if blank($r->[0]) && blank($r->[1]);
             push @l, sprintf '%-7s %s %s', $c, map { blank($_) ? '-' : $_ } @$r;
@@ -294,6 +318,14 @@ sub read_file {
         my $dash = sub { my $v = shift; defined $v && $v ne '-' ? $v : '' };
         if (grep { $_ eq $k } @PROJECT) { $g->{project}{$k} = $rest; next }
         if (grep { $_ eq $k } @AXIS)    { $g->{axis}{$k} = $rest; next }
+        if ($k eq 'UNITS') {
+            my ($q, $unit) = map { uc } split ' ', $rest;
+            my @ok = $q eq 'FLOW' ? @FLOW_UNITS : $q eq 'PRESSURE' ? @PRESSURE_UNITS : ();
+            die "LINE $ln: UNITS TAKES FLOW (@FLOW_UNITS) OR PRESSURE (@PRESSURE_UNITS)\n"
+                unless @ok && grep { $_ eq ($unit // '') } @ok;
+            $g->{units}{$q} = $unit;
+            next;
+        }
         if (grep { $_ eq $k } @CURVES) {
             die "LINE $ln: MORE THAN $ROWS POINTS ON CURVE $k\n" if $n{$k} >= $ROWS;
             my ($q, $p) = split ' ', $rest;
@@ -306,7 +338,7 @@ sub read_file {
             $g->{duty}[ $n{DUTY}++ ] = [ $dash->($label) =~ s/_/ /gr, $desc // '', $dash->($q), $dash->($p) ];
             next;
         }
-        die "LINE $ln: UNKNOWN WORD $k - A .PHG LINE STARTS WITH PROJECT JOB DATE BY PMAX PSTEP QMAX A B D OR DUTY\n";
+        die "LINE $ln: UNKNOWN WORD $k - A .PHG LINE STARTS WITH PROJECT JOB DATE BY UNITS PMAX PSTEP QMAX A B D OR DUTY\n";
     }
     close $fh;
     return $g;
@@ -383,8 +415,9 @@ sub write_pdf {
         $s .= $txt->($x, $pb - 10, $t, 7, 0, 'c');
         $last = $x + $w / 2;
     }
-    $s .= $txt->($pl - 4, $pt + 6, 'PRESSURE, kPa', 7, 1);
-    $s .= $txt->(($pl + $pr) / 2, $pb - 22, 'FLOW, L/min, ON A FLOW^1.85 SCALE', 7, 1, 'c');
+    my ($fu, $pu) = map { $UNIT_NAME{$_} } @{ $sr->{units} }{qw(FLOW PRESSURE)};
+    $s .= $txt->($pl - 4, $pt + 6, "PRESSURE, $pu", 7, 1);
+    $s .= $txt->(($pl + $pr) / 2, $pb - 22, "FLOW, $fu, ON A FLOW^1.85 SCALE", 7, 1, 'c');
     $s .= sprintf "0 G 0.6 w %.2f %.2f %.2f %.2f re S\n", $pl, $pb, $pw, $ph;
 
     # Curves, clipped to the plot.  Line styles: [width, dash, grey].
@@ -467,19 +500,17 @@ sub write_pdf {
         $s .= $txt->($col[3], $ky, 'HAS', 7, 1, 'r');
         $s .= $txt->($col[4], $ky, 'MARGIN', 7, 1, 'r');
         $line->();
-        $s .= $txt->($col[1], $ky + 3, 'L/min', 6, 0, 'r');
-        $s .= $txt->($col[2], $ky + 3, 'kPa', 6, 0, 'r');
-        $s .= $txt->($col[3], $ky + 3, 'kPa', 6, 0, 'r');
-        $s .= $txt->($col[4], $ky + 3, 'kPa', 6, 0, 'r');
+        $s .= $txt->($col[1], $ky + 3, $fu, 6, 0, 'r');
+        $s .= $txt->($col[$_], $ky + 3, $pu, 6, 0, 'r') for 2 .. 4;
         for my $d (@{ $sr->{duty} }) {
             $line->();
             $s .= sprintf "%% PHCP-SHEET ROW %s %.1f %.1f %.1f %.1f\n", $d->{label}, $d->{q}, $d->{p},
                 $d->{avail}, $d->{margin};
             $s .= $txt->($col[0], $ky, HardyCross::PDF::fit($d->{label}, 8), 7);
-            $s .= $txt->($col[1], $ky, sprintf('%.0f', $d->{q}), 7, 0, 'r');
-            $s .= $txt->($col[2], $ky, sprintf('%.0f', $d->{p}), 7, 0, 'r');
-            $s .= $txt->($col[3], $ky, sprintf('%.0f', $d->{avail}), 7, 0, 'r');
-            $s .= $txt->($col[4], $ky, ($d->{margin} < 0 ? 'SHORT ' : '') . sprintf('%.0f', abs $d->{margin}),
+            $s .= $txt->($col[1], $ky, sprintf('%.4g', $d->{q}), 7, 0, 'r');
+            $s .= $txt->($col[2], $ky, sprintf('%.4g', $d->{p}), 7, 0, 'r');
+            $s .= $txt->($col[3], $ky, sprintf('%.4g', $d->{avail}), 7, 0, 'r');
+            $s .= $txt->($col[4], $ky, ($d->{margin} < 0 ? 'SHORT ' : '') . sprintf('%.4g', abs $d->{margin}),
                          7, $d->{margin} < 0, 'r');
             if (length $d->{desc}) {
                 $ky -= 9;
@@ -490,7 +521,7 @@ sub write_pdf {
 
     # The points entered, for the record.
     $line->(); $line->();
-    $head->('POINTS ENTERED, L/min AT kPa');
+    $head->("POINTS ENTERED, $fu AT $pu");
     for my $c (sort keys %{ $sr->{points} }) {
         $line->();
         my $t = "$c  " . join('   ', map { sprintf '%g at %g', @$_ } @{ $sr->{points}{$c} });

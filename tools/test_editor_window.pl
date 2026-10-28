@@ -619,6 +619,14 @@ print "12. THE GRAPH TAB\n";
     is('corrected: no problems; text typed is kept in capitals',
        $G->{check}{ok} && $main::graph->{duty}[0][1] eq 'SPRINKLERS - HIGHEST HAZARD AREA LEVEL 3');
 
+    $main::graph->{units}{FLOW} = 'LPS';
+    main::graph_refresh();
+    is('the graph\'s units: FLOW L/S on the tables and the preview, and the file marked changed',
+       grep({ $_->[0]->cget(-text) eq 'FLOW L/S' } @{ $G->{ulabels} })
+       && grep({ $G->{canvas}->type($_) eq 'text' && $G->{canvas}->itemcget($_, -text) =~ /FLOW, L\/S, ON/ } $G->{canvas}->find('all'))
+       && $G->{file}->cget(-text) =~ /\*$/);
+    $main::graph->{units}{FLOW} = 'LPM';
+    main::graph_refresh();
     main::graph_pdf("$TMP/graph.pdf");
     is('PRINT TO PDF writes the sheet', -s "$TMP/graph.pdf" && slurp("$TMP/graph.pdf") =~ /^%PDF-.*% PHCP-SHEET PLOT/s);
     main::graph_save("$TMP/g.phg");
@@ -668,13 +676,14 @@ print "13. THE QUICK TOOLS TAB\n";
        $W->{K}{problems}->cget(-text) =~ /ONLY TWO/ && lc $W->{K}{field}{K}->cget(-highlightbackground) eq lc $main::C{error});
     $W->{K}{field}{Q}->delete(0, 'end');
     main::tools_update('K');
-    is('   cleared Q: solved for it, 80 L/min', $text->('K') =~ /^FLOW Q =\s+80\.00 L\/MIN/m
+    is('   cleared Q: solved for it, 80 L/min', $text->('K') =~ /^FLOW Q =\s+80 L\/MIN/m
        && $W->{K}{problems}->cget(-text) eq '');
 
     $W->{KCONV}{field}{VALUE}->insert(0, '5.6');
     main::tools_update('KCONV');
     is('K CONVERTER: K5.6 US is 80.731 L/min/bar^0.5 and 8.073 per root kPa',
-       $text->('KCONV') =~ /METRIC, BAR\s+80\.731/ && $text->('KCONV') =~ /METRIC, KPA\s+8\.073/, $text->('KCONV'));
+       $text->('KCONV') =~ /METRIC\s+80\.731 L\/MIN\/BAR\^0\.5/ && $text->('KCONV') =~ /METRIC\s+8\.073 L\/MIN\/KPA\^0\.5/,
+       $text->('KCONV'));
 
     $Q->{LOSS}{size} = 65;
     $W->{LOSS}{field}{FLOW}->insert(0, '1000');
@@ -697,8 +706,42 @@ print "13. THE QUICK TOOLS TAB\n";
     is('   BORE with no roughness: 0.045 mm, flagged as assumed in red',
        $text->('LOSS') =~ /ROUGHNESS ASSUMED: THE PROGRAM DEFAULT/
        && grep { $_ eq 'warn' } $W->{LOSS}{result}->tagNames($W->{LOSS}{result}->search('ROUGHNESS ASSUMED', '1.0')));
-    is('the model is untouched by all of it', main::full_text() eq $model);
+    # FITTINGS: the database's equivalent lengths, as for a model's pipe.
+    $Q->{FIT}{size} = 100;
+    $W->{FIT}{field}{SPEC}->insert(0, '1T 2E G C');
+    main::tools_update('FIT');
+    is('FITTINGS: 1T 2E G C on DN100 medium steel is 6.1 + 2 x 3.0 + 0.6 + 6.7 = 19.40 m, with its source',
+       $text->('FIT') =~ /^\s*2 x E\s+90 DEG STANDARD ELBOW\s+6\.00 M$/m && $text->('FIT') =~ /^TOTAL\s+19\.40 M/m
+       && $text->('FIT') =~ /FROM AS 2118\.1/, $text->('FIT'));
+    $W->{FIT}{field}{SPEC}->insert('end', ' 1ZZ');
+    main::tools_update('FIT');
+    is('   a fitting the database lacks is refused, not counted as zero',
+       $W->{FIT}{problems}->cget(-text) =~ /ZZ/ && $text->('FIT') =~ /NO ANSWER/, $W->{FIT}{problems}->cget(-text));
+
+    # UNITS: the PROJECT tab's, taken when the tab is opened.
+    my %was = %{ $main::settings->{units} };
+    @{ $main::settings->{units} }{qw(FLOW PRESSURE LENGTH)} = qw(LPS BAR M);
     main::select_tab($main::toptabs, 'NETWORK');
+    main::select_tab($main::toptabs, 'QUICK TOOLS');
+    is('units follow the PROJECT tab: the bar and the field notes say L/S and BAR',
+       $W->{units}->cget(-text) =~ /FLOW L\/S, PRESSURE BAR, LENGTH M/
+       && grep({ $_->[0]->cget(-text) eq 'L/S' } @{ $W->{notes} }), $W->{units}->cget(-text));
+    ($Q->{VEL}{type}, $Q->{VEL}{size}) = ('ASAM', 50);
+    main::tools_sizes('VEL');
+    $W->{VEL}{field}{FLOW}->delete(0, 'end');
+    $W->{VEL}{field}{FLOW}->insert(0, '8.3333333');
+    main::tools_update('VEL');
+    is('   8.333 L/s in DN50 is 3.78 m/s, the flow shown in L/s and L/min',
+       $text->('VEL') =~ /VELOCITY\s+3\.78 M\/S/ && $text->('VEL') =~ /FLOW\s+8\.333 L\/S\s+\(500\.0 L\/MIN\)/, $text->('VEL'));
+    $W->{K}{field}{K}->delete(0, 'end');
+    main::tools_update('K');
+    is('   K-FACTOR in bar: 80 L/min at 100 kPa typed as 1.333 L/s and 1 bar gives K 8 per root kPa',
+       do { $W->{K}{field}{Q}->delete(0, 'end'); $W->{K}{field}{Q}->insert(0, '1.3333333');
+            $W->{K}{field}{P}->delete(0, 'end'); $W->{K}{field}{P}->insert(0, '1');
+            main::tools_update('K'); $text->('K') =~ /K, LPM\/KPA\s+8\.000/ }, $text->('K'));
+    %{ $main::settings->{units} } = %was;
+    main::select_tab($main::toptabs, 'NETWORK');
+    is('the model is untouched by all of it', main::full_text() eq $model);
 }
 
 print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";

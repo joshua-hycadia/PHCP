@@ -239,5 +239,42 @@ print "5. THE SHEET - the PDF\n";
     is('a graph with problems is not printed, and says why', !$r && $@ =~ /AT LEAST TWO POINTS/ && !-e "$TMP/x.pdf");
 }
 
+#==============================================================================
+print "6. UNITS - the same supply in L/s and bar\n";
+#==============================================================================
+{
+    # Example 10's figures in L/s and bar: flows / 60, pressures / 100.
+    my $m = HardyCross::Graph::read_file($EX);
+    my $g = HardyCross::Graph::read_file($EX);
+    $g->{units} = { FLOW => 'LPS', PRESSURE => 'BAR' };
+    for my $c (qw(A B D)) {
+        for my $r (@{ $g->{$c} }) { $r->[0] /= 60 if length $r->[0]; $r->[1] /= 100 if length $r->[1] }
+    }
+    for my $r (@{ $g->{duty} }) { $r->[2] /= 60 if length $r->[2]; $r->[3] /= 100 if length $r->[3] }
+    my $sm = HardyCross::Graph::series(HardyCross::Graph::check($m));
+    my $sg = HardyCross::Graph::series(HardyCross::Graph::check($g));
+    my @off = grep { abs($sg->{duty}[$_]{margin} * 100 - $sm->{duty}[$_]{margin}) > 1e-6 } 0 .. 1;
+    is(sprintf('every duty\'s margin is the same: %.2f and %.2f kPa, as %.4f and %.4f bar',
+               $sm->{duty}[0]{margin}, $sm->{duty}[1]{margin}, $sg->{duty}[0]{margin}, $sg->{duty}[1]{margin}),
+       !@off && @{ $sg->{duty} } == 2);
+    is('the flow axis stops at a round number of L/s: 60', $sg->{qmax} == 60, $sg->{qmax});
+    HardyCross::Graph::write_file($g, "$TMP/u.phg");
+    my $back = HardyCross::Graph::read_file("$TMP/u.phg");
+    is('UNITS written to the .phg and read back', $back->{units}{FLOW} eq 'LPS' && $back->{units}{PRESSURE} eq 'BAR'
+       && slurp_lines("$TMP/u.phg") =~ /^UNITS\s+FLOW LPS$/m);
+    HardyCross::Graph::write_pdf($g, "$TMP/u.pdf");
+    open my $fh, '<:raw', "$TMP/u.pdf" or die;
+    my $P = do { local $/; <$fh> };
+    close $fh;
+    is('the sheet names L/s and bar', $P =~ /\(FLOW, L\/s, ON A FLOW\^1\.85 SCALE\)/ && $P =~ /\(PRESSURE, bar\)/);
+    is('a graph with no UNITS is L/min and kPa, as before', HardyCross::Graph::units(HardyCross::Graph::new_graph())->{FLOW} eq 'LPM');
+    open my $o, '>', "$TMP/badu.phg" or die;
+    print $o "UNITS FLOW LPH\n";
+    close $o;
+    my $r = eval { HardyCross::Graph::read_file("$TMP/badu.phg"); 1 };
+    is('an unknown unit is refused with its line', !$r && $@ =~ /^LINE 1: UNITS TAKES FLOW/, $@);
+}
+sub slurp_lines { open my $f, '<', shift or die; local $/; <$f> }
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
