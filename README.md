@@ -15,7 +15,6 @@ perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculat
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
-perl phcp_viewer.pl model.phc            # read-only results viewer
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
@@ -26,7 +25,7 @@ perl tools/stress_invariance.pl 60       # invariance stress on 60 random networ
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
-the editor, the viewer and the AutoCAD exporter all read or write it, and a
+the editor and the AutoCAD exporter all read or write it, and a
 file of any other type is refused with the reason.  (The editor's GRAPH tab,
 which draws a water supply graph from figures typed in rather than from a
 model, keeps those figures in a `.phg` file of its own - see Water supply
@@ -682,12 +681,31 @@ The script also packs Win32::API, which the editor uses to be sharp on a
 scaled display.
 
 **The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
-pipe network and a red sprinkler at the far node.  The editor sets the same
-picture on its window and taskbar button itself, from PNG data held in
-`phcp_editor.pl`, so it shows whether run from source or built.  The `.exe`
-files themselves keep the default icon in Explorer: PAR::Packer removed its
-`--icon` option, and rewriting a packed program's resources afterwards risks
-the archive appended to it.
+pipe network and a red sprinkler at the far node.  The editor sets it on its
+window and taskbar button itself, from PNG data held in `phcp_editor.pl`, so
+it shows whether run from source or built.  For the `.exe` files the build
+uses `tools/pack_with_icon.pl`: PAR::Packer removed its `--icon` option, and
+rewriting a finished program's resources would disturb the archive appended
+to it, so the icon is set where pp used to set it - on a copy of the
+packager's loader (`parl.exe`, `parlw.exe`), before the program is added
+(the program packed as a `.par` archive, then written out by that loader).
+It needs Win32::Exe, which the script installs.  If any step fails the
+program is built the plain way, without the icon.
+
+## Continuous integration and releases
+
+`.github/workflows/ci.yml` runs on every pull request and every push to
+`main`:
+
+| job | what it does |
+|---|---|
+| test-linux | every test suite, the editor window under a virtual display, and the invariance stress on 60 networks |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
+| release | on a version tag (`v1.1.0`) or a release published on GitHub: both programs attached to the release, with the notes in `release_notes/<tag>.md` |
+
+To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
+then publish a release on GitHub with the new tag `vX.Y.Z` on `main`.  The
+workflow builds the programs and attaches them; nothing is uploaded by hand.
 
 ## Calling PHCP from another program
 
