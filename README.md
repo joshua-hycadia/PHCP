@@ -86,6 +86,7 @@ line that uses it.  Every pipe name is unique.
 | `BP` | PIPE CHURN FLOW PRESSURE [...] - a pump in a pipe |
 | `PUMPDUTY` | PUMP FLOW PRESSURE - the rated duty of a `PUMP` (its name) or a `BP` (its pipe), checked against its curve |
 | `AREA` | NAME OUTLET [OUTLET ...] - a design area: outlets that flow together; a second line of the same name adds to it |
+| `SUPPLYGRAPH` | FILE - a water supply graph made in the GRAPH tab (`.phg`), added to the report; the rest of the line is the file, from the model's folder |
 | `BFP` | PIPE FLOW LOSS [FLOW LOSS ...] - a backflow preventer in a pipe |
 | `PRV` | PIPE FLOW LOSS [FLOW LOSS ...] - a pressure reducing valve in a pipe |
 | `OPP` | PIPE DROP [CD] - an orifice plate sized for that drop |
@@ -468,6 +469,19 @@ go, what the sheet shows - with no Tk in it; `tools/test_graph.pl` checks
 the curves against figures worked by a formula written out in the test,
 every refusal, the file, and the sheet's PDF (where the plot, curves, points
 and duties are drawn).
+
+### A graph in a model's report
+
+`SUPPLYGRAPH town.phg` in a model adds that graph to the model's report: an
+appendix to the text (its project, the points entered, and each duty point
+against the curve designed against, with its margin), and in the PDF the
+sheet itself, on a page after the text, numbered with the report.  The file is
+found from the model's folder (the current folder for a model read from
+standard input or not yet saved); a full path may be given, and a name with
+spaces is fine.  More than one may be given: appendices A, B ... in order.  A
+graph that cannot be read, or that its own tab would refuse, is listed under
+warnings and the report is written without it.  The sheet is as entered: it
+is not a calculation of the network in the report, and says so.
 
 ## Quick tools
 
@@ -891,7 +905,7 @@ others on the page, and the report says which check to make.
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 151 / 151 |
 | quick tools | 58 / 58 |
-| water supply graph | 49 / 49 |
+| water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |
 

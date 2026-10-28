@@ -376,6 +376,18 @@ AREA lines solves and reports exactly as before.
 | `phcp.pl`, `HardyCross/Editor.pm` | the governing area solved and shown; DESIGN AREA in the PROJECT tab, AREA in the command strip |
 | `examples/11_design_areas.phc` | two branch lines and a hose reel, three areas; FAR governs |
 
+## v1.1 - a supply graph in a model's report
+
+Engine files changed (Phc, Report, PDF): asked for as item 11; a model without
+SUPPLYGRAPH reports exactly as before.
+
+| file | change |
+|---|---|
+| `HardyCross/Phc.pm` | `SUPPLYGRAPH <file>`: the graph read from the model's folder when the model is read with its folder; a warning if it cannot be |
+| `HardyCross/Graph.pm` | `sheet`: the sheet as a page of a longer document; `text_sheet`: the sheet as ASCII for the text report |
+| `HardyCross/Report.pm`, `HardyCross/PDF.pm` | an appendix per graph; in the PDF, the sheet drawn on a page after the text, numbered with the report |
+| `phcp.pl`, `HardyCross/Editor.pm`, `HardyCross/Areas.pm` | the model's folder passed to the reader |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -421,3 +433,4 @@ AREA lines solves and reports exactly as before.
 - [x] v1.1 - QUICK TOOLS: fittings; units in QUICK TOOLS and GRAPH
 - [x] v1.1 - pump checks against the duty (AS 2941 shut-off, 150 % flow for information); hose stream allowance (engine files Phc, Parse, Demand, Report)
 - [x] v1.1 - design areas: AREA lines, each solved, the governing one reported (engine files Phc, Report, Json)
+- [x] v1.1 - SUPPLYGRAPH: a GRAPH tab sheet added to a model's report, text and PDF (engine files Phc, Report, PDF)
