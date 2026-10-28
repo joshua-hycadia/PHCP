@@ -1,0 +1,33 @@
+// 08_autocad_export_format.hcx - converted from .hcx by PHCP 1.0.0.
+// Comments in the .hcx file are not carried over.
+
+Title    Level 2 range - AutoCAD export test
+Project  JOB HYC-2026-000
+Project  COMPANY Hycadia Pty Ltd
+Project  DESIGNER A Designer
+Project  HAZARD Ordinary Hazard 1
+Project  DENSITY 5.0
+Project  AREA_PER_SPRINKLER 12.0
+Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method   HW
+
+Node     N1 0.000
+Node     N2 4.500
+Node     N3 4.500
+Node     N4 4.500
+Node     N5 4.500
+Node     S1_H 4.200
+Node     S2_H 4.200
+
+Use      ASAM
+Pipe     P1 N1 N2 12.845 100 1T 2E 1GV 1CV
+Pipe     P2 N2 N3 6.000 65 1E C=110
+Pipe     P3 N3 N4 3.200 40
+Pipe     P4 N3 N5 3.200 40 1E1T
+Pipe     S1_D N4 S1_H 0.300 25 1T
+Pipe     S2_D N5 S2_H 0.300 25 1T
+
+Supply   SUP1 N1 CURVE 0.000 900.000 1500.000 700.000 3000.000 400.000
+
+Head     S1 S1_H K=80.000 P=50.000
+Head     S2 S2_H K=80.000 P=50.000

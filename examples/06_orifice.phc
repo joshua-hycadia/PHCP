@@ -1,0 +1,28 @@
+// 06_orifice.hcx - converted from .hcx by PHCP 1.0.0.
+// Comments in the .hcx file are not carried over.
+// Dropped from the .hcx because they had no effect on the result:
+//   line 29: OPTIONS TRACE NONE - not an option the .hcx reader acts on
+
+Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method   HW
+Option   ORIF_STEP 0.5
+
+Node     SRC 0.0
+Node     J1 0.0
+Node     A 0.0
+Node     A2 0.0
+Node     B 0.0
+Node     B2 0.0
+
+Use      BORE
+Pipe     M1 SRC J1 20.0 100.0 C=120
+Pipe     P1 J1 A 12.0 50.0 C=120
+Pipe     P2 J1 B 12.0 50.0 C=120
+
+Orifice  OP1 A A2 DP=150 DN=50
+Orifice  OP2 B B2 BORE=26 DN=50
+
+Supply   SUP1 SRC STATIC 1000
+
+Hydrant  H1 A2 Q=400 P=200
+Hydrant  H2 B2 Q=400 P=200

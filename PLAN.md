@@ -1,6 +1,6 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1 (import) open for review.  PR 2 and PR 3 not started.
+Status: PR 1 merged.  PR 2 (`.phc` language) open for review.  PR 3 not started.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -132,10 +132,13 @@ Head   S1 N2 K=80 P=50
    Reject a second setting of the same unit or option.
 3. Second pass: translate each element line into its `.hcx` row, tagged with
    its `.phc` line number, and file it under the `.hcx` block it belongs to.
-4. Build `.hcx` text in the block order `PROJECT, UNITS, OPTIONS, NODES,
-   PIPES, PUMPS, SUPPLIES, DISCHARGES, DEVICES`, keeping file order within a
-   block.  This order matters: supply and outlet elevations default to their
-   node's elevation, which must already be read.
+4. Build `.hcx` text in the block order `PROJECT, UNITS, OPTIONS, NODES`,
+   then the elements in FILE order, each run of one kind under its own block
+   header.  This order matters: supply and outlet elevations default to their
+   node's elevation, which must already be read.  (As built in PR 2: the
+   elements are not regrouped into `PIPES, PUMPS, SUPPLIES, DISCHARGES,
+   DEVICES`, because that reordered example 06, whose `.hcx` lists its devices
+   before its supply, and the report's schedule rows moved with it.)
 5. Parse it with the existing code.  Map any error's `.hcx` line number back
    to the `.phc` line it came from.
 
@@ -238,8 +241,9 @@ Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
 ## Checklist
 
 - [x] PR 1 - import PHCP, editable pipe database, report states database SHA-256
-- [ ] PR 2 - `.phc` reader, converter, examples, `test_phc.pl`
-- [ ] PR 2 - `FIXEDFLOW MINP=` decision recorded
+- [x] PR 2 - `.phc` reader, converter, examples, `test_phc.pl`
+- [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: refused as "not supported" (README,
+  "Fixed flows"); whether to implement it awaits Joshua
 - [ ] PR 3 - `Editor.pm` and `phcp_editor.pl`
 - [ ] PR 3 - spreadsheet removed, build script and licence updated
 - [ ] PR 3 - Windows build run by Joshua

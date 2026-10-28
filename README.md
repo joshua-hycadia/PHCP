@@ -6,21 +6,134 @@ out what the licence does NOT cover: the third-party values reproduced in
 
 Version 1.0.0
 
-A Hardy Cross loop-balancing hydraulic solver, a spreadsheet front end, and a
-monospace ASCII calculation report.  The whole stack is Perl.
+A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
+for the model (`.phc`), a spreadsheet front end, and a monospace ASCII
+calculation report.  The whole stack is Perl.
 
 ```
-./phcp.pl model.hcx report.pdf           # solve and write the report as PDF
-./phcp.pl model.hcx report.txt           # ...or as plain ASCII text
+./phcp.pl model.phc report.pdf           # solve and write the report as PDF
+./phcp.pl model.phc report.txt           # ...or as plain ASCII text
+./phcp.pl --convert model.hcx            # write model.phc from a .hcx model
 perl phcp_gui.pl model.hcx               # the spreadsheet (FILE > WRITE REPORT, Ctrl+R)
+perl tools/test_phc.pl                   # verify the .phc language and converter
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_gui_document.pl          # verify the spreadsheet's load, save and undo
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
-**Planned.**  A plain-text command input format (`.phc`) and a text editor will
-replace the spreadsheet; see `PLAN.md`.  Until that work is merged, this README
-describes the program as it is: `.hcx` input and the spreadsheet front end.
+`phcp.pl` reads either input format; the extension decides which.  The results
+viewer, `phcp_viewer.pl`, reads models through the same call and its OPEN
+dialog now lists `.phc`; the viewer itself has not yet been run with a `.phc`
+file (Tk is not installed where this was built).
+`.phc` is the command language described below.  `.hcx` is the older block
+format, still read so existing models and the AutoCAD exporter keep working;
+every example is supplied in both.  The spreadsheet reads and writes `.hcx`
+only.
+
+**Planned.**  A text editor for `.phc` will replace the spreadsheet; see
+`PLAN.md`.  Until that work is merged, the spreadsheet is the graphical front
+end.
+
+## The .phc command language
+
+The model is typed as short command lines, one element per line, in any order:
+
+```
+Title  SINGLE BRANCH CLOSED-FORM CHECK
+Units  FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method HW
+Option TOL_FLOW 0.001
+
+Node   N1 0.0
+Node   N2 0.0
+Pipe   P1 N1 N2 100.0 100.0 C=120
+Supply SUP1 N1 STATIC 900
+Head   S1 N2 K=80 P=50
+```
+
+**Rules.**  The first word is the command.  Commands and keywords are
+case-insensitive; ids are case-sensitive.  Fields are separated by spaces or
+tabs, and `KEY=value` options follow the fixed fields in any order.  `//`
+starts a comment to the end of the line.  `!` and `#` are not allowed outside a
+comment (they are comment characters in `.hcx`, and the line would otherwise be
+cut short without a word).
+
+**Any order.**  Element lines may come in any order.  `Units`, `Method`,
+`Option`, `Title` and `Project` are file-wide wherever they appear, and each
+setting may be given only once - a second one is an error naming both lines.
+`Use` is the one positional command: it applies to the `Pipe` lines after it,
+until the next `Use`.
+
+**Every node needs a `Node` line.**  A node used by an element but never
+defined is an error naming the node and the first line that uses it.  (`.hcx`
+creates such a node at elevation 0 silently, so a mistyped node name becomes a
+new node.)
+
+| command | fields |
+|---|---|
+| `Title` | text - the PROJECT TITLE |
+| `Project` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
+| `Units` | `[FLOW=] [PRESSURE=] [LENGTH=] [DIAMETER=]`, the `.hcx` unit codes |
+| `Method` | `HW` or `DW` |
+| `Option` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP` |
+| `Use` | PIPETYPE `[C=]` - a pipe type from the database; or `BORE [C=]` |
+| `Node` | id elevation |
+| `Pipe` | id n1 n2 length size `[fittings ...] [C=] [EQV=] [EPS=] [K=]` |
+| `Supply` | id node `STATIC` pressure `[Z=]`, or id node `CURVE` q1 p1 q2 p2 ... `[Z=]` |
+| `Pump` | id in out q1 p1 q2 p2 ... |
+| `Head` | id node - any two of `K= Q= P=`, and `[Z=]` (a sprinkler) |
+| `Hydrant` | id node - any two of `K= Q= P=`, and `[Z=]` |
+| `HoseReel` | id node - any two of `K= Q= P=`, and `[Z=]` |
+| `Flow` | id node `Q=` - a fixed flow |
+| `BFP` | id n1 n2 q1 p1 q2 p2 ... - a backflow preventer's loss curve |
+| `PRV` | id n1 n2 `DP=` |
+| `Orifice` | id n1 n2 `DP=` (sizes the plate) or `BORE=` (known bore), `DN=` or `PIPEDIA=`, `[CD=]` |
+
+**Pipe sizes and fittings.**  Under `Use <PIPETYPE>` the size is the nominal DN
+and the bore comes from the database; under `Use BORE` the size is the bore.
+Before any `Use`, pipes are `Use BORE C=120`, as in `.hcx`.  A pipe's own `C=`
+wins over the `Use` line's.  Fittings follow the size, one token each with an
+optional count - `2E T GV` - or as one office string, `2E,1T,1GV` or `1E1T`;
+all three mean the same.  Fittings need a pipe type, so on a `Use BORE` pipe
+they are an error: give the allowance as `EQV=` instead.
+
+**An unknown `Option` is an error.**  `.hcx` silently ignores an OPTIONS name
+it does not know - example 01 carried `TRACE FULL`, which did nothing.
+
+**How it is read.**  Each `.phc` command is translated into the `.hcx` row that
+means the same thing, and the rows are read by the same parser that reads a
+`.hcx` file (`HardyCross/Phc.pm`).  Every hydraulic check, default and unit
+conversion therefore exists once, and a `.phc` model cannot quietly mean
+something different from its `.hcx` equivalent.  The `.phc` reader checks only
+the language itself: command words, field counts, options, numbers, nodes and
+duplicate settings.  Every error carries the `.phc` line number, including the
+parser's own errors, which are mapped back from the translated row.
+
+**Converting.**  `phcp.pl --convert model.hcx [model.phc]` writes a header
+comment, the settings, a `Node` line for every node, then the elements in their
+`.hcx` order with `Use` lines where the pipe type changes.  Values are copied
+exactly as typed.  Anything the `.hcx` reader ignored - an unknown option, a
+stray field, `MINP=` on a fixed flow - had no effect on the result, so it is
+dropped and listed in the header comment.  Comments in the `.hcx` are not
+carried over; the header says so.  An existing output file is never
+overwritten.  Every example converts to a `.phc` whose report is identical to
+the `.hcx` original's apart from the model file name.
+
+**Fixed flows.**  `.hcx` accepts `FIXEDFLOW ... MINP=`, but the minimum
+pressure is never used: the solver applies the flow as a nodal demand and checks
+no pressure at that node.  `.phc` therefore refuses `MINP=` on a `Flow` line
+with "not supported", rather than accept a setting that does nothing.  Checking
+a minimum pressure at a fixed flow would change solved results and has not
+been implemented.
+
+**Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
+typed, without Tk, for the text editor planned in `PLAN.md`: whether it is
+complete, the command's field template and which field the cursor is in, the
+pipe types or fitting codes from the database for a pick list, and a proposed
+next line.  A line the language accepts is also parsed as its `.hcx` row, so a
+size the pipe type does not make, or a fitting the database lacks, shows on the
+line as it is typed.  It is tested headless in `tools/test_phc.pl`; no editor
+uses it yet.
 
 ## Pipe and fitting database
 
@@ -45,13 +158,17 @@ office update the data without rebuilding the program.
 ### Writing a pipe
 
 ```
-P1  A  B  12.0  100  TYPE=ASAM  FIT=1T,2E,1GV,1CV
+Use   ASAM                                 // .phc
+Pipe  P1  A  B  12.0  100  T 2E GV CV
+
+P1  A  B  12.0  100  TYPE=ASAM  FIT=1T,2E,1GV,1CV        ! .hcx
 ```
 
-With `TYPE=` the diameter field is the NOMINAL size; the bore comes from that
-type's PIPE records in the database.  `FIT=` takes the office form `2E,1T` or
-the compact form `1E1T`.  A pipe without `TYPE=` works as before, with the
-bore entered directly - and the report says it carries no database provenance.
+With a pipe type the size is the NOMINAL size; the bore comes from that
+type's PIPE records in the database.  Fittings take the office form `2E,1T`,
+the compact form `1E1T`, or (in `.phc`) separate tokens `2E T`.  A pipe with no
+type works as before, with the bore entered directly - and the report says it
+carries no database provenance.
 
 ### Which fitting source applies
 
@@ -87,7 +204,8 @@ publishes the screwed elbow only to DN300, so `E` on a DN350+ main returns
 `DATA_REQUIRED` and the message says to use `EF` for a flanged, grooved or
 medium-sweep elbow.
 
-`OPTIONS FITTING_BASIS STANDARD` is the "published Standard alone" election:
+`Option FITTING_BASIS STANDARD` (`.hcx`: `OPTIONS FITTING_BASIS STANDARD`)
+is the "published Standard alone" election:
 AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 `CORRECTED`, the default, applies both corrections.
 
@@ -181,8 +299,9 @@ POINT, where the governing outlet receives exactly its minimum (the design
 condition), and the OPERATING POINT, with the supply connected.  The schedules
 are at the operating point, and the cover says so.
 
-The fields are entered on the spreadsheet's PROJECT sheet, or in the model's
-PROJECT block:
+The fields are entered as `.phc` `Title` and `Project` lines -
+`Project HAZARD Ordinary Hazard 1` - on the spreadsheet's PROJECT sheet, or in a
+`.hcx` model's PROJECT block:
 
 ```
 PROJECT
@@ -265,7 +384,7 @@ too few in bar/m for PF/M x T to reproduce PF.
 
 ## PDF output
 
-`phcp.pl model.hcx report.pdf`, or FILE > WRITE REPORT with a .pdf name.  The
+`phcp.pl model.phc report.pdf`, or FILE > WRITE REPORT with a .pdf name.  The
 PDF is a faithful print of the text report - the same characters in the same
 columns, Courier 9 pt on A4 landscape - with a running header (title, job,
 revision, date) and a footer (program, model, page n of m).  Both come from
@@ -289,9 +408,12 @@ not evidence; this is.
 `build_windows.bat` builds `phcp.exe` and `phcp_gui.exe` on a Windows PC with
 Strawberry Perl installed: it fetches Tk, Tk::TableMatrix and PAR::Packer from
 CPAN, packages both programs with the pipe and fitting database inside, and runs a
-smoke test.  The packaging recipe was proven on Linux, where both packaged
-programs ran from an empty folder and gave a report identical to running from
-source.  The Windows build itself has not yet been run.
+smoke test on a `.hcx` and a `.phc` example.  The packaging recipe was proven on
+Linux, where both packaged programs ran from an empty folder and gave a report
+identical to running from source.  That was before the `.phc` modules
+(`HardyCross/Phc.pm`, `HardyCross/Convert.pm`) were added to the package list;
+packaging them has not yet been run.  The Windows build itself has not yet been
+run.
 
 ## AutoCAD
 
@@ -299,11 +421,13 @@ source.  The Windows build itself has not yet been run.
 sizes, elevations, heads - and exports it as a `.hcx`.  See
 `autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.hcx` is a file in the
 exact format the routine writes, proven to solve in PHCP.  The routine itself
-has not yet been run inside AutoCAD.
+has not yet been run inside AutoCAD.  Its output is `.hcx`; `phcp.pl --convert`
+turns it into `.phc`.
 
 ## Settings
 
-`OPTIONS VEL_LIMIT 6` sets the velocity flagged in validation and the report.
+`Option VEL_LIMIT 6` (`.hcx`: `OPTIONS VEL_LIMIT 6`) sets the velocity flagged
+in validation and the report.
 It is a setting, not a requirement of AS 2118.1, and the report prints the value
 in force and whether it was set in the model or is the program default.
 
@@ -324,8 +448,9 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases | 0 problems |
 | direct comparison with the C++ engine | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 35 / 35 |
+| `.phc` language, converter and line checker | 267 / 267 |
 | spreadsheet load, save and undo | 12 / 12 |
-| spreadsheet editing and cell validation | 17 / 17 |
+| spreadsheet editing and cell validation | 18 / 18 |
 | invariance stress | 9 574 / 9 574 |
 
 ## Stress testing
