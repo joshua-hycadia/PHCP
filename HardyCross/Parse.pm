@@ -34,6 +34,32 @@ my %PIPE_ID = (15 => 16.1, 20 => 21.7, 25 => 27.3, 32 => 36.0, 40 => 41.9,
                50 => 53.1, 65 => 68.9, 80 => 80.9, 100 => 105.3,
                150 => 155.1, 200 => 207.3);
 
+# The roughness a pipe takes, in mm, when the model gives none and the
+# database publishes none for its type: commercial steel, new.
+our $EPS_DEFAULT = 0.045;
+
+#------------------------------------------------------------------------------
+# roughness_defaulted -- the pipes whose roughness is the program default,
+# 0.045 mm, because the model gave none and the database publishes none for
+# their type.  Only under Darcy-Weisbach, the one method that uses it.
+#------------------------------------------------------------------------------
+sub roughness_defaulted {
+    my $net = shift;
+    return () unless ($net->{opts}{method} // 'HW') eq 'DW';
+    return map { $_->{id} } grep { $_->{kind} eq 'PIPE' && ($_->{eps_src} // '') eq 'DEFAULT' }
+                            @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+}
+
+# roughness_warning -- the warning for those pipes, or nothing.
+sub roughness_warning {
+    my @ids = roughness_defaulted(shift);
+    return () unless @ids;
+    my @shown = @ids > 12 ? (@ids[0 .. 11], sprintf('and %d more', @ids - 12)) : @ids;
+    return sprintf('roughness ASSUMED: %d pipe(s) take 0.045 mm, the program default, because no roughness '
+        . 'is given for them in the model or in the database: %s.  Give it on the USE line (USE BORE <mm>, '
+        . 'USE <type> <mm>), or for the pipe type in the database.', scalar @ids, join(', ', @shown));
+}
+
 sub tokenize {
     my $line = shift;
     # Strip the line ending FIRST.  The separator class does not include \n,
@@ -310,12 +336,19 @@ sub parse_row {
                     if @{ $res->{errors} };
                 $eqv += $res->{total};
             }
+            # The roughness (Darcy-Weisbach): as given in the model; else the
+            # database's for the pipe type; else the program default, 0.045
+            # mm -- recorded, so that an assumed value is flagged, never
+            # passed off as data (roughness_defaulted below).
+            my $eps = kv($tk, 'EPS');
+            my $eps_src = defined $eps ? 'GIVEN' : defined $info->{eps} ? 'DATABASE' : 'DEFAULT';
+            $eps = defined $eps ? $eps * $net->{f_dia} : $info->{eps} // $EPS_DEFAULT;
             my $e = {
                 id => $tk->[0], kind => 'PIPE',
                 n1 => node_index($net, $tk->[1]), n2 => node_index($net, $tk->[2]),
                 len => num($tk->[3]) * $net->{f_len},
                 dia => $bore, c => $c, eqv => $eqv,
-                eps => (kv($tk, 'EPS') // 0.045) * $net->{f_dia},
+                eps => $eps, eps_src => $eps_src,
                 kfit => (kv($tk, 'K') // 0),
                 q => 0, in_tree => 0,
                 # provenance, for the report
@@ -338,7 +371,9 @@ sub parse_row {
             dia => num($tk->[4]) * $net->{f_dia},
             c   => $c,
             eqv => (kv($tk, 'EQV') // 0) * $net->{f_len},
-            eps => (kv($tk, 'EPS') // 0.045) * $net->{f_dia},
+            # As given, else the program default -- flagged (roughness_defaulted).
+            eps => defined kv($tk, 'EPS') ? kv($tk, 'EPS') * $net->{f_dia} : $EPS_DEFAULT,
+            eps_src => defined kv($tk, 'EPS') ? 'GIVEN' : 'DEFAULT',
             # Minor loss coefficient.  Dimensionless, so no unit factor.
             kfit => (kv($tk, 'K') // 0),
             q => 0, in_tree => 0,

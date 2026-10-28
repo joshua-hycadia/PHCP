@@ -1160,6 +1160,7 @@ sub build_tools {
         $qtw{$tool}{result}->tagConfigure('head', -font => $MONO_B);
         $qtw{$tool}{result}->tagConfigure('big', -font => $MONO_B, -foreground => $C{accent});
         $qtw{$tool}{result}->tagConfigure('muted', -foreground => $C{muted});
+        $qtw{$tool}{result}->tagConfigure('warn', -foreground => $C{error}, -font => $MONO_B);
         return $g;
     };
     my $r = 0;
@@ -1249,7 +1250,7 @@ sub build_tools {
 
     # PRESSURE LOSS.
     $g = $card->('LOSS', 'PRESSURE LOSS', 'THE FRICTION LOSS IN A PIPE AT A FLOW, BY HAZEN-WILLIAMS AND BY DARCY-WEISBACH, '
-        . 'WITH THE SOLVER\'S OWN FORMULAS.  BLANK: 1 M OF PIPE, AND THE TYPE\'S C AND ROUGHNESS FROM THE DATABASE.', 3, 10);
+        . 'WITH THE SOLVER\'S OWN FORMULAS.  BLANK: 1 M OF PIPE, AND THE TYPE\'S C AND ROUGHNESS FROM THE DATABASE.', 3, 11);
     $r = 0;
     $pipe->($g, 'LOSS');
     $label->($g, 'FLOW');
@@ -1388,6 +1389,8 @@ sub tools_update {
         $line->('DW AGAINST HW', sprintf('%+.1f %%', $res->{diff_pct}));
         $line->('BORE, VELOCITY', sprintf('%.1f MM, %.2f M/S', $res->{bore}, $res->{velocity}));
         $line->('C, ROUGHNESS', sprintf('%g (HW), %g MM (DW)', $res->{c}, $res->{eps}));
+        # An assumed roughness is said so, in red: none given, none published.
+        $line->('', 'ROUGHNESS ASSUMED: THE PROGRAM DEFAULT', 'warn') if $res->{eps_src} eq 'DEFAULT';
         $line->('REYNOLDS NUMBER', sprintf('%.0f, %s', $res->{dw}{re}, $res->{dw}{regime}));
         $line->('FRICTION FACTOR', sprintf('%.5f (DARCY)', $res->{dw}{f}));
     }

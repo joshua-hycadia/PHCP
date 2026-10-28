@@ -143,6 +143,16 @@ sub write_report {
     $out .= sprintf " %-26s P = %.4g x Q^%.3f / (C^%.3f x d^%.3f)   kPa/m, Q L/min, d mm\n",
         'Friction equation', $o->{hwk}, $o->{hwq}, $o->{hwq}, $o->{hwd}
         unless $dw;
+    if ($dw) {
+        # Where each pipe's roughness came from; an assumed one is never
+        # passed off as data.
+        my %src;
+        $src{ $_->{eps_src} // 'GIVEN' }++ for grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+        my @parts = ((map { "$src{$_} " . { GIVEN => 'as given in the model', DATABASE => 'from the database for the pipe type' }->{$_} }
+                      grep { $src{$_} } qw(GIVEN DATABASE)),
+                     ($src{DEFAULT} ? "$src{DEFAULT} ASSUMED 0.045 mm, the program default - see Warnings" : ()));
+        $out .= wrap(sprintf(' %-26s ', 'Pipe roughness'), 'Pipes: ' . join('; ', @parts) . '.');
+    }
     $out .= sprintf " %-26s flow %s, pressure %s, length %s, diameter %s\n", 'Units',
         map { sym($_) } @{$net}{qw(u_flow u_pres u_len u_dia)};
     $out .= sprintf " %-26s flow %.2g %s, loop %.2g %s, %d iterations maximum\n",

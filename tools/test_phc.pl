@@ -505,5 +505,38 @@ print "ONE FILE TYPE - a .hcx file is refused, saying why\n";
     is('   and reads the same model as .phc', ($? >> 8) == 0 && $out =~ /converged yes/);
 }
 
+#==============================================================================
+print "9. ROUGHNESS - as given, else the database's, else 0.045 mm and flagged\n";
+#==============================================================================
+{
+    my $dw = join "\n", 'UNITS LENGTH M', 'METHOD DW', 'WATER W1 0 500', 'NODE A 0', 'NODE B 0',
+        'USE PE11', 'PIPE P1 W1 A 50 110', 'USE BORE 0.01', 'PIPE P2 A B 20 100',
+        'USE BORE', 'PIPE P3 B S1 10 50', 'SPRINKLER S1 0 -50 8', '';
+    my ($n, $err) = read_phc($dw);
+    my %e = elems_by_id($n);
+    is('a PE pipe with none given: the database\'s 0.007 mm', $n && $e{P1}{eps} == 0.007 && $e{P1}{eps_src} eq 'DATABASE', $err);
+    is('USE BORE 0.01: as given', $e{P2}{eps} == 0.01 && $e{P2}{eps_src} eq 'GIVEN');
+    is('USE BORE with none: 0.045 mm, the program default', $e{P3}{eps} == 0.045 && $e{P3}{eps_src} eq 'DEFAULT');
+    my ($w) = grep { /roughness ASSUMED/ } @{ $n->{warnings} || [] };
+    is('   and flagged: a warning naming the pipe', $w && $w =~ /^roughness ASSUMED: 1 pipe\(s\) take 0\.045 mm.*: P3\./, $w);
+    my %in = elems_by_id((read_phc(join "\n", 'UNITS LENGTH M', 'UNITS SIZE IN', 'METHOD DW', 'WATER W1 0 500',
+                                   'USE BORE 0.001', 'PIPE P1 W1 S1 10 2', 'SPRINKLER S1 0 -50 8', ''))[0]);
+    is('   given in the units declared: USE BORE 0.001 with SIZE IN is 0.0254 mm',
+       abs($in{P1}{eps} - 0.0254) < 1e-12 && $in{P1}{eps_src} eq 'GIVEN');
+    (my $hw = $dw) =~ s/METHOD DW/METHOD HW/;
+    my ($h) = read_phc($hw);
+    is('under Hazen-Williams roughness is not used, so nothing is flagged', !grep { /roughness/ } @{ $h->{warnings} || [] });
+    HardyCross::solve_model($n);
+    my $rep = HardyCross::Report::write_report($n, 1, 'dw.phc');
+    (my $flat = $rep) =~ s/\s+/ /g;
+    is('the report: BASIS says where each pipe\'s roughness came from',
+       $flat =~ /Pipe roughness Pipes: 1 as given in the model; 1 from the database for the pipe type; 1 ASSUMED 0\.045 mm, the program default - see Warnings\./);
+    is('   and the warnings list it', $flat =~ /roughness ASSUMED: 1 pipe\(s\) take 0\.045 mm/);
+    # Every example as it was: none of them leaves a roughness to the default.
+    my @flag = grep { my ($m) = read_phc(slurp($_)); $m && grep { /roughness/ } @{ $m->{warnings} || [] } }
+               grep { !/grid1000/ } glob("$EX/*.phc");
+    is('no example assumes a roughness', !@flag, "@flag");
+}
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
