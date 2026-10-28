@@ -142,7 +142,7 @@ Units, one `UNITS` line per quantity; defaults (the office's) in brackets:
 | KFACTOR | LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI (LPM/KPA) |
 
 Velocity is reported in m/s.  Defaults are the office's (Joshua, 28 October
-2026); the K-factor default is not yet confirmed.
+2026); the K-factor default, LPM/KPA, confirmed the same day.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `14'3"`, `6'`.
 
@@ -319,4 +319,5 @@ possibly Revit later.
 - [x] PR 4 - AutoCAD exporter writes `.phc`; `.phc` the one file type
 - [ ] PR 4 - exporter run inside AutoCAD by Joshua
 - [x] PR 5 - `phcp.exe --json`, documented and tested
+- [x] Pressure ratio valve band: designed to the bottom of +/-5% of inlet, top of band reported (engine change, Joshua 28 October 2026)
 - [ ] PR 5 - AutoCAD SOLVE command run by Joshua
