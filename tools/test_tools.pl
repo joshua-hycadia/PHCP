@@ -173,9 +173,12 @@ sub colebrook {
        join(' ', map { "$_=$k{$_}" } sort keys %k) eq 'ASAH=0.045 ASAM=0.045 CPVC=0.003 PE11=0.007 PE9=0.007 PVCM16=0.003 S20=0.045 S40=0.045',
        join(' ', map { "$_=" . ($k{$_} // 'undef') } sort keys %k));
     $r = HardyCross::Tools::loss(type => 'BORE', size => 50, flow => 500);
-    is('BORE takes the program\'s default roughness, 0.045 mm', $r->{eps} == 0.045);
+    is('BORE takes the program\'s default roughness, 0.045 mm, and says it is assumed',
+       $r->{eps} == 0.045 && $r->{eps_src} eq 'DEFAULT');
+    $r = HardyCross::Tools::loss(type => 'BORE', size => 50, flow => 500, eps => '0.0015');
+    is('   a roughness typed in is as given', $r->{eps_src} eq 'GIVEN');
     $r = HardyCross::Tools::loss(type => 'PE11', size => 110, flow => 1000);
-    is('the roughness is the pipe type\'s: 0.007 mm for PE100', $r->{eps} == 0.007);
+    is('the roughness is the pipe type\'s: 0.007 mm for PE100, from the database', $r->{eps} == 0.007 && $r->{eps_src} eq 'DATABASE');
     is('the C factor is the pipe type\'s: 150 for PE', $r->{c} == 150 && rel($r->{hw}{per_m}, $hw->(1000, 150, HardyCross::PipeData::bore('PE11', 110))) < 1e-12);
     $r = HardyCross::Tools::loss(type => 'ASAM', size => 50, flow => 500, c => 100, eps => '0.0015');
     is('C and roughness as typed', $r->{c} == 100 && $r->{eps} == 0.0015 && rel($r->{hw}{per_m}, $hw->(500, 100, 53.0)) < 1e-12

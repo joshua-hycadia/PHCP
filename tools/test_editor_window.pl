@@ -689,8 +689,30 @@ print "13. THE QUICK TOOLS TAB\n";
        $W->{LOSS}{problems}->cget(-text) =~ /C FACTOR 'C1OO' IS NOT A NUMBER/
        && lc $W->{LOSS}{field}{C}->cget(-highlightbackground) eq lc $main::C{error}
        && $text->('LOSS') =~ /NO ANSWER/);
+    $W->{LOSS}{field}{C}->delete(0, 'end');
+    ($Q->{LOSS}{type}, $Q->{LOSS}{size}) = ('BORE', '');
+    main::tools_sizes('LOSS');
+    $W->{LOSS}{size_entry}->insert(0, '100');
+    main::tools_update('LOSS');
+    is('   BORE with no roughness: 0.045 mm, flagged as assumed in red',
+       $text->('LOSS') =~ /ROUGHNESS ASSUMED: THE PROGRAM DEFAULT/
+       && grep { $_ eq 'warn' } $W->{LOSS}{result}->tagNames($W->{LOSS}{result}->search('ROUGHNESS ASSUMED', '1.0')));
     is('the model is untouched by all of it', main::full_text() eq $model);
     main::select_tab($main::toptabs, 'NETWORK');
+}
+
+print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
+{
+    $main::settings->{method} = 'DW';
+    main::set_buffer(join "\n", 'WATER W1 0 500', 'USE PE11', 'PIPE P1 W1 A 50 110', 'NODE A 0',
+                                 'USE BORE', 'PIPE P3 A S1 10 50', 'SPRINKLER S1 0 -50 8', '');
+    main::settings_changed();
+    main::validate();
+    main::calculate();
+    my @w = $main::list{WARNINGS}->get(0, 'end');
+    is('a Darcy-Weisbach model with a BORE pipe and no roughness: WARNINGS says it is assumed, naming P3',
+       grep({ /ROUGHNESS ASSUMED: 1 PIPE\(S\) TAKE 0\.045 MM.*P3/ } @w), "@w");
+    is('   the PE pipe takes the database\'s 0.007 mm, and is not flagged', !grep { /P1/ } @w);
 }
 
 $main::mw->destroy;
