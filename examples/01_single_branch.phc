@@ -1,19 +1,19 @@
-// 01_single_branch.hcx - converted from .hcx by PHCP 1.0.0.
-// Comments in the .hcx file are not carried over.
-// Dropped from the .hcx because they had no effect on the result:
-//   line 15: OPTIONS TRACE FULL - not an option the .hcx reader acts on
+// 01 - single branch validation case
+// Static 900 kPa supply -> 100 m of DN100 (C=120) -> one K80 sprinkler.
+// Closed-form answer: Q = 80*sqrt(900 - 1.5689e-4*Q^1.85)  ->  Q ~ 2090 L/min
 
-Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
-Method   HW
-Option   TOL_FLOW 0.001
-Option   TOL_LOOP 0.0005
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE KPA
+UNITS     FLOW LPM
+UNITS     KFACTOR LPM/KPA
+METHOD    HW
+OPTION    TOL_FLOW 0.001
+OPTION    TOL_LOOP 0.0005
 
-Node     N1 0.0
-Node     N2 0.0
+WATER     N1 0.0 900
+SPRINKLER N2 0.0 -50 80
 
-Use      BORE
-Pipe     P1 N1 N2 100.0 100.0 C=120
-
-Supply   SUP1 N1 STATIC 900
-
-Head     S1 N2 K=80 P=50
+USE       BORE 120
+PIPE      P1 N1 N2 100.0 100.0
