@@ -1,0 +1,35 @@
+// 05_crosscheck.hcx - converted from .hcx by PHCP 1.0.0.
+// Comments in the .hcx file are not carried over.
+// Dropped from the .hcx because they had no effect on the result:
+//   line 15: OPTIONS TRACE NONE - not an option the .hcx reader acts on
+//   line 45: DISCHARGES F1 B FIXEDFLOW Q=400 MINP=200 - not used for a fixed flow: MINP=200
+
+Units    FLOW=LPM PRESSURE=KPA LENGTH=M DIAMETER=MM
+Method   HW
+Option   TOL_FLOW 0.0005
+Option   TOL_LOOP 0.0002
+Option   MAXITER 20000
+
+Node     A 0.0
+Node     B 2.0
+Node     C 2.0
+Node     D 4.0
+Node     E 4.0
+Node     F 6.0
+
+Use      BORE
+Pipe     P1 A B 25.0 150.0 C=120
+Pipe     P2 B C 30.0 100.0 C=120
+Pipe     P3 C D 22.0 100.0 C=120
+Pipe     P4 D B 35.0 80.0 C=120
+Pipe     P5 C E 18.0 80.0 C=120
+Pipe     P6 E D 20.0 65.0 C=120
+Pipe     P7 E F 15.0 50.0 C=120
+
+Supply   SUP1 A STATIC 950
+Supply   SUP2 D CURVE 0 900 2000 780 5000 400
+
+Head     S1 C K=80 P=50
+Head     S2 E K=115 P=50
+Head     S3 F K=80 P=50
+Flow     F1 B Q=400

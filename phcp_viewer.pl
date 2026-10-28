@@ -252,7 +252,7 @@ my $menu = $mw->Menu(-type => 'menubar', -font => $UI_B);
 $mw->configure(-menu => $menu);
 my $file = $menu->cascade(-label => 'FILE', -tearoff => 0);
 $file->command(-label => 'OPEN...', -accelerator => 'Ctrl+O', -command => sub {
-    my $f = $mw->getOpenFile(-filetypes => [['Hardy Cross model', '*.hcx'], ['All', '*']]);
+    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc', '.hcx']], ['All', '*']]);
     solve_path($f) if $f;
 });
 $file->separator;
@@ -264,7 +264,7 @@ $model->command(-label => 'RE-SOLVE', -accelerator => 'F5',
 my $bar = $mw->Frame(-background => $SURFACE2)
              ->pack(-side => 'top', -fill => 'x', -padx => $UNIT, -pady => $UNIT);
 $bar->Button(-text => 'OPEN...', -font => $UI_B, -command => sub {
-    my $f = $mw->getOpenFile(-filetypes => [['Hardy Cross model', '*.hcx'], ['All', '*']]);
+    my $f = $mw->getOpenFile(-filetypes => [['PHCP model', ['.phc', '.hcx']], ['All', '*']]);
     solve_path($f) if $f;
 })->pack(-side => 'left');
 $bar->Button(-text => 'RE-SOLVE (F5)', -font => $UI_B,
