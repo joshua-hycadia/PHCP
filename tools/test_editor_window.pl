@@ -52,6 +52,11 @@ unless (eval { require Tk; 1 }) {
 # Load the editor without starting its event loop: the flag tells it not to
 # run main().
 chdir "$FindBin::Bin/..";
+# Settings of our own, so the tests never read or write a user's real ones;
+# and no database folder from the environment.
+my $SETTINGS_DIR = tempdir(CLEANUP => 1);
+$ENV{PHCP_SETTINGS} = "$SETTINGS_DIR/settings.ini";
+delete $ENV{PHCP_DATABASE_DIR};
 $main::PHCP_EDITOR_LOAD_ONLY = 1;
 require "./phcp_editor.pl";
 
@@ -107,8 +112,8 @@ my @strip = main::strip_commands();
 is('the command strip lists the 19 network commands, no settings',
    @strip == 19 && $strip[0] eq 'USE' && $strip[-1] eq 'PRA' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK and PROJECT tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT'
+is('NETWORK, PROJECT and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
@@ -496,6 +501,71 @@ is('WRITE REPORT .txt writes the text report', slurp("$TMP/report.txt") =~ /OUTL
 main::set_buffer(main::buffer() . "PIPX\n");
 is('WRITE REPORT on a model with problems stops at VALIDATION', !main::file_report("$TMP/no.txt") && !-e "$TMP/no.txt"
    && $main::restabs->{current} eq 'VALIDATION');
+
+#==============================================================================
+print "11. THE DATABASE TAB\n";
+#==============================================================================
+{
+    my $real = slurp('data/pipes.dat');
+    main::select_tab($main::toptabs, 'DATABASE');
+    $main::mw->update;
+    is('a DATABASE tab: the built-in database, its path and fingerprint',
+       $main::dbv{origin}->cget(-text) eq 'BUILT-IN' && $main::dbv{path}->cget(-text) =~ m{data/pipes\.dat$}
+       && $main::dbv{sha}->cget(-text) =~ /^FINGERPRINT [0-9A-F]{12}$/);
+    is('four tables: pipe types, pipe sizes, fittings, K\' factors',
+       join('|', @{ $main::dbv{tabs}{names} }) eq "PIPE TYPES|PIPE SIZES|FITTINGS|K' FACTORS");
+    main::select_tab($main::dbv{tabs}, 'FITTINGS');
+    is('the fittings table lists every fitting', @{ $main::dbv{shown_rows} } == 219);
+    is('read-only at first: the row buttons off, the fields read-only, SAVE off',
+       !$main::dbv{editing} && $main::dbv{btn}{UPDATE}->cget(-state) eq 'disabled'
+       && $main::dbv{entries}[0]->cget(-state) eq 'readonly' && $main::dbv{btn}{SAVE}->cget(-state) eq 'disabled');
+    $main::dbv{filter} = 'long radius 50 0.9';
+    main::db_fill();
+    is('the filter narrows the table: LONG RADIUS 50 0.9 is one row', @{ $main::dbv{shown_rows} } == 1,
+       scalar @{ $main::dbv{shown_rows} });
+    # Use a team folder of our own before any edit, so the real file is safe.
+    my $team = tempdir(CLEANUP => 1);
+    main::db_choose_folder($team, 'yes');
+    is('CHOOSE FOLDER: an empty folder takes a copy and becomes the TEAM FOLDER',
+       -e "$team/pipes.dat" && $main::dbv{origin}->cget(-text) eq 'TEAM FOLDER'
+       && HardyCross::Settings::get('DATABASE_DIR') eq $team);
+    main::select_tab($main::dbv{tabs}, 'FITTINGS');
+    main::db_fill();
+    my $row = $main::dbv{shown_rows}[0];
+    $main::dbv{hlist}->selectionSet($row);
+    $main::dbv{hlist}->cget(-browsecmd)->Call($row);
+    is('a click on a row fills the fields', $main::dbv{vals}[1] eq 'EL' && $main::dbv{vals}[3] eq '50');
+    main::db_update();
+    is('read-only: UPDATE does nothing', !$main::dbv{db}{modified});
+    $main::dbv{editing} = 1;
+    main::db_editing_changed();
+    is('ticking EDIT turns the row buttons and fields on',
+       $main::dbv{btn}{UPDATE}->cget(-state) eq 'normal' && $main::dbv{entries}[0]->cget(-state) eq 'normal');
+    $main::dbv{vals}[4] = 'ABC';
+    main::db_update();
+    is('a length that is not a number: refused, and the reason shown in red',
+       $main::dbv{msg}->cget(-text) =~ /MUST BE A NUMBER/ && lc $main::dbv{msg}->cget(-foreground) eq lc $main::C{error});
+    $main::dbv{vals}[4] = '1.7';
+    main::db_update();
+    is('a good change: made, and SAVE CHANGES comes on',
+       $main::dbv{db}{modified} && $main::dbv{btn}{SAVE}->cget(-state) eq 'normal');
+    main::open_path('examples/07_pipe_database_demo.phc');
+    main::validate();
+    my $before = $main::dbv{sha}->cget(-text);
+    main::db_save();
+    is('SAVE: written to the team folder, a new fingerprint, nothing pending',
+       slurp("$team/pipes.dat") =~ /^FIT\|AS\|EL\|.*\|50\|1\.7$/m && $main::dbv{sha}->cget(-text) ne $before
+       && !$main::dbv{db}{modified}, $main::dbv{msg}->cget(-text));
+    is('   and the model must be validated again: CALCULATE is off', !main::calculate_enabled());
+    main::validate();
+    main::calculate();
+    (my $flat = main::report_text()) =~ s/\s+/ /g;
+    is('the report then names the team folder\'s file in full', $flat =~ /\Q$team\E.?pipes\.dat \(team folder\)/, substr($flat, index($flat, 'database:'), 200));
+    main::db_use_builtin();
+    is('USE BUILT-IN: back to the program\'s own database', $main::dbv{origin}->cget(-text) eq 'BUILT-IN'
+       && !defined HardyCross::Settings::get('DATABASE_DIR'));
+    is('the real database was never written', slurp('data/pipes.dat') eq $real);
+}
 
 $main::mw->destroy;
 print "\n$pass passed, $fail failed\n";

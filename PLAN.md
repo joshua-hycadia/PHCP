@@ -311,6 +311,7 @@ DLL.  AutoCAD first, possibly Revit later.
 - [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
 - [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
 - [x] PR 3 - Windows build run by Joshua (28 October 2026, Perl 5.42.3)
+- [x] DATABASE tab: view and edit the pipe and fitting database (read-only until EDIT is ticked); a team folder for it, else the built-in (Joshua, 28 October 2026)
 - [x] Editor fixes from the Windows run: sharp at 150 %, draggable dividers, wheel under the pointer, HIDE counts, option labels
 - [ ] PR 4 - AutoCAD exporter writes `.phc`; `.hcx` only through `--convert`
 - [ ] PR 5 - `phcp.exe --json`, documented and tested
