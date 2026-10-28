@@ -141,7 +141,7 @@ print "4. WHERE THE DATABASE IS - a team folder, else the built-in one\n";
        !$err && -e "$team/pipes.dat" && slurp("$team/pipes.dat") eq $ORIG
        && HardyCross::PipeData::origin() eq 'TEAM FOLDER', $err);
     is('   the choice is kept in the settings file',
-       HardyCross::Settings::get('DATABASE_DIR') eq $team && slurp($ENV{PHCP_SETTINGS}) =~ /^DATABASE_DIR=\Q$team\E$/m);
+       HardyCross::Settings::get('DATABASE_DIR') eq $team && slurp($ENV{PHCP_SETTINGS}) =~ /^DATABASE_DIR=\Q$team\E\r?$/m);   # CR LF on Windows
     is('   and the next load, anywhere in the program, uses it',
        HardyCross::PipeData::default_path() eq File::Spec->catfile($team, 'pipes.dat'));
     my $ed = HardyCross::DbEdit::open_db();
