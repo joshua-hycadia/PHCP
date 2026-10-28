@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 J. K. VON B.
+Copyright (c) 2026 Hycadia Pty Ltd
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,27 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+WHAT THIS LICENCE DOES NOT COVER
+-------------------------------------------------------------------------------
+
+The MIT licence above applies to the PHCP source code, tools, tests and
+documentation written for this project.  It does not, and cannot, license
+material that belongs to others:
+
+  data/pipes.dat
+      The pipe and fitting database.  Its pipe dimensions and fitting
+      equivalent lengths reproduce values published in
+      AS 1074, AS 2118.1:2017 (Standards Australia), FM Global Property Loss
+      Prevention Data Sheet 3-0, TYCO/BlazeMaster IH-1900, ASME B36.10M and
+      the Plastics Pipe Institute Handbook of PE Pipe.  Those values remain
+      the copyright of their publishers and are used under their terms.
+
+  Tk and Tk::TableMatrix
+      Required to run the spreadsheet, installed separately, and distributed
+      under their own licences.  They are not part of this source.
+
+Nothing in this licence is a statement that PHCP's results are fit for any
+particular design.  A calculation remains the responsibility of the engineer
+who signs it.
