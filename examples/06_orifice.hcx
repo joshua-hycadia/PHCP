@@ -1,0 +1,64 @@
+! ---------------------------------------------------------------------------
+! 06 - orifice plates to AS 2118.1 Appendix B
+!
+!   OP1  ORIFICE_P  a required net drop; the solver sizes the bore
+!   OP2  ORIFICE_D  a known bore; the solver computes the net drop
+!
+! Uncomment ORIF_TABLE to size by the standard's route (equation B3 to get the
+! equivalent pressure Po, then read and interpolate the diameter from the
+! table).  Without it, sizing falls back to the fitted model.  The report
+! states which route produced every number.
+!
+! WARNING: tables/orifice_synthetic.tbl is NOT Appendix B data.  It was
+! generated from the fitted model only to exercise the table code path.
+! Replace it with the real Table B1 and B2 rows before production use.
+!
+! Because that file was generated from the fitted model, the two routes agree
+! here trivially.  That demonstrates the mechanism, NOT agreement with the
+! standard - which can only be shown once the printed tables are loaded.
+! ---------------------------------------------------------------------------
+UNITS
+  FLOW      LPM
+  PRESSURE  KPA
+  LENGTH    M
+  DIAMETER  MM
+END
+
+OPTIONS
+  METHOD     HW
+  TRACE      NONE
+  ORIF_STEP  0.5
+! ORIF_TABLE tables/orifice_synthetic.tbl
+! ID_TABLE   tables/pipe_id_as1074.tbl
+END
+
+NODES
+  SRC  0.0
+  J1   0.0
+  A    0.0   ! upstream of the sized plate
+  A2   0.0
+  B    0.0   ! upstream of the fixed-bore plate
+  B2   0.0
+END
+
+PIPES
+  M1  SRC J1  20.0  100.0  120
+  P1  J1  A   12.0   50.0  120
+  P2  J1  B   12.0   50.0  120
+END
+
+DEVICES
+! required net drop of 150 kPa; bore sized at the converged flow, rounded
+  OP1  A  A2  ORIFICE_P  DP=150  DN=50
+! known 26 mm bore; net drop computed from the fitted model
+  OP2  B  B2  ORIFICE_D  BORE=26  DN=50
+END
+
+SUPPLIES
+  SUP1 SRC STATIC 1000
+END
+
+DISCHARGES
+  H1  A2  HYDRANT   Q=400  P=200
+  H2  B2  HYDRANT   Q=400  P=200
+END
