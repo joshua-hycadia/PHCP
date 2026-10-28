@@ -281,6 +281,12 @@ sub write_report {
             . 'AS 2118.1 fitting allowances are equivalent lengths; K belongs with '
             . 'Darcy-Weisbach. The K terms have been applied as entered.';
     }
+    # How a curve is drawn between the points entered changes the answer, so
+    # it is stated whenever the model has one.
+    my @curved = grep { $_->{curve} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    push @notes, 'Supply, pump and loss-device curves (' . join(', ', map { $_->{id} } @curved[0 .. ($#curved < 7 ? $#curved : 7)])
+        . (@curved > 8 ? ' ...' : '') . ') pass through every point entered, with pressure '
+        . 'linear in Q^1.85 between points and continued linearly beyond the last.' if @curved;
     push @notes, 'No project-specific manufacturer data are relied upon.';
     for my $i (0 .. $#notes) { $out .= wrap(sprintf(' %2d  ', $i + 1), $notes[$i]) }
 
