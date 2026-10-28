@@ -363,6 +363,19 @@ no solved number changes unless a model uses the new commands.
 | `HardyCross/Report.pm` | PUMP CURVES section; system flow, allowance and demand shown; a note whether an allowance is included |
 | `HardyCross/Editor.pm` | HOSE STREAM ALLOWANCE in the PROJECT tab; PUMPDUTY in the command strip |
 
+## v1.1 - design areas
+
+Engine files changed (Phc, Report, Json): asked for as item 8; a model without
+AREA lines solves and reports exactly as before.
+
+| file | change |
+|---|---|
+| `HardyCross/Areas.pm` | new: each AREA solved with only its outlets (and those in no area) flowing; the governing one returned, every area summarised |
+| `HardyCross/Phc.pm` | `AREA <name> <outlet> ...`; `OPTION DESIGN_AREA <name>` shuts the outlets of the other areas |
+| `HardyCross/Report.pm`, `HardyCross/Json.pm` | DESIGN AREAS in Section 1; `design_area` and `areas` in the JSON |
+| `phcp.pl`, `HardyCross/Editor.pm` | the governing area solved and shown; DESIGN AREA in the PROJECT tab, AREA in the command strip |
+| `examples/11_design_areas.phc` | two branch lines and a hose reel, three areas; FAR governs |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -407,3 +420,4 @@ no solved number changes unless a model uses the new commands.
 - [x] v1.1 - editor split, one file to a tab
 - [x] v1.1 - QUICK TOOLS: fittings; units in QUICK TOOLS and GRAPH
 - [x] v1.1 - pump checks against the duty (AS 2941 shut-off, 150 % flow for information); hose stream allowance (engine files Phc, Parse, Demand, Report)
+- [x] v1.1 - design areas: AREA lines, each solved, the governing one reported (engine files Phc, Report, Json)
