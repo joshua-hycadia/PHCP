@@ -108,7 +108,9 @@ print "1. EXAMPLES - the same flows and pressures as the .hcx baseline\n";
 # The baseline is given the database bore, so the comparison is exact.
 for my $phcpath (sort glob("$EX/*.phc")) {
     (my $base = $phcpath) =~ s{.*/}{};
-    (my $hcxpath = $phcpath) =~ s/\.phc\z/.hcx/;
+    # The .hcx baselines are kept in tools/baseline: no longer a user format,
+    # still the independent description each example is checked against.
+    (my $hcxpath = "$FindBin::Bin/baseline/$base") =~ s/\.phc\z/.hcx/;
     my ($p, $err) = read_phc(slurp($phcpath));
     is("$base reads", $p, $err);
     next unless $p && -e $hcxpath;
@@ -460,6 +462,18 @@ print "8. FIXED FLOWS - the minimum pressure is checked and can govern\n";
     my ($bad) = read_phc($m . "FIXEDFLOW F C 100 900\n");
     my $rb = HardyCross::Report::write_report($bad, HardyCross::solve_model($bad), 'm.phc');
     is('a minimum above the pressure available FAILS', $rb =~ /^ F\s+C\s+fixed.*\*\*\* FAIL$/m);
+}
+
+#==============================================================================
+print "ONE FILE TYPE - a .hcx file is refused, saying why\n";
+#==============================================================================
+{
+    my $out = `"$^X" "$FindBin::Bin/../phcp.pl" "$FindBin::Bin/baseline/01_single_branch.hcx" 2>&1`;
+    my $code = $? >> 8;
+    is('phcp.pl refuses a .hcx file: exit status 2, and the reason',
+       $code == 2 && $out =~ /IS NOT A \.PHC MODEL\. PHCP READS \.PHC FILES ONLY/, "exit $code: $out");
+    $out = `"$^X" "$FindBin::Bin/../phcp.pl" "$EX/01_single_branch.phc" 2>&1`;
+    is('   and reads the same model as .phc', ($? >> 8) == 0 && $out =~ /converged yes/);
 }
 
 print "\n$pass passed, $fail failed\n";

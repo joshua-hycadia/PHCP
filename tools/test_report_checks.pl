@@ -18,14 +18,14 @@
 # was ample in kPa/m and lost two significant figures in bar/m, so PF/M x T
 # missed PF by 2 % in any model written in bar.
 #
-#   perl tools/test_report_checks.pl [model.hcx ...]
+#   perl tools/test_report_checks.pl [model.phc ...]
 #==============================================================================
 use strict;
 use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
 
-my @models = @ARGV ? @ARGV : glob("$FindBin::Bin/../examples/*.{hcx,phc}");
+my @models = @ARGV ? @ARGV : glob("$FindBin::Bin/../examples/*.phc");
 @models = grep { !/grid1000/ } @models;          # large; adds nothing here
 my ($checks, $fails) = (0, 0);
 my @bad;

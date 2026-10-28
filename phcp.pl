@@ -11,9 +11,9 @@
 #   phcp.pl model.phc report.txt       ...and write the ASCII report
 #   phcp.pl model.phc report.pdf       ...or the paginated PDF report
 #
-# The model may be a .phc command file or a .hcx block file; the extension
-# decides how it is read (HardyCross::Parse::read_model).  Both give the same
-# network, so everything after the read is the same for either.
+# The model is a .phc command file, the one file type PHCP reads
+# (HardyCross::Parse::read_model).  A .hcx file is refused with the reason,
+# exit status 2.
 #
 # The printed Q and P lines are for scripts and for the validation harnesses:
 # one element or node per line, in the units the model declared.
@@ -38,7 +38,7 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl <model.phc | model.hcx> [report.txt | report.pdf]\n";
+my $USAGE = "usage: phcp.pl model.phc [report.txt | report.pdf]\n";
 @ARGV or die $USAGE;
 my $report_path = $ARGV[1];
 
