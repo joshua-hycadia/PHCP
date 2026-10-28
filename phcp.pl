@@ -7,9 +7,13 @@
 #==============================================================================
 # phcp.pl -- PHCP from the command line.
 #
-#   phcp.pl model.hcx                  solve; print flows and pressures
-#   phcp.pl model.hcx report.txt       ...and write the ASCII report
-#   phcp.pl model.hcx report.pdf       ...or the paginated PDF report
+#   phcp.pl model.phc                  solve; print flows and pressures
+#   phcp.pl model.phc report.txt       ...and write the ASCII report
+#   phcp.pl model.phc report.pdf       ...or the paginated PDF report
+#
+# The model may be a .phc command file or a .hcx block file; the extension
+# decides how it is read (HardyCross::Parse::read_model).  Both give the same
+# network, so everything after the read is the same for either.
 #
 # The printed Q and P lines are for scripts and for the validation harnesses:
 # one element or node per line, in the units the model declared.
@@ -34,7 +38,8 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-@ARGV or die "usage: phcp.pl <model.hcx> [report.txt | report.pdf]\n";
+my $USAGE = "usage: phcp.pl <model.phc | model.hcx> [report.txt | report.pdf]\n";
+@ARGV or die $USAGE;
 my $report_path = $ARGV[1];
 
 my $net = eval { HardyCross::Parse::read_model($ARGV[0]) };
@@ -79,3 +84,4 @@ for my $i (1 .. $#{ $net->{nodes} }) {
         ($n->{h} - $HardyCross::GAMMA_W * $n->{z}) / $net->{f_pres};
 }
 exit($ok ? 0 : 1);
+

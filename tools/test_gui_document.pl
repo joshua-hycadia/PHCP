@@ -56,7 +56,11 @@ ok('pump curve written back', $out =~ /^\s*PMP1 T1 J1 0 850 2500 800 4000 600\s*
 
 print "EDITING THE NEW SHEETS\n";
 my ($pr) = grep { ($_->[0]//'') eq 'PMP1' } @{ $d->{PUMPS} };
-$pr->[5] = 900;                                  # raise the shut-off head
+# Raise the pressure at the curve's third point, 4000 L/min.  The pump runs
+# at about 3100 L/min, on the segment between its 2500 and 4000 L/min points,
+# and a curve passes through its points (Q^1.85 between them), so this point
+# moves the operating flow; the shut-off head, on the first segment, would not.
+$pr->[9] = 650;
 my $q1 = flows(solve_text(serialise()))->{PMP1};
 ok(sprintf('editing the pump curve changes the solve (PMP1 %.1f -> %.1f L/min)',
            $a->{PMP1}, $q1), abs($q1 - $a->{PMP1}) > 1);

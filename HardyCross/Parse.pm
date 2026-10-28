@@ -70,10 +70,23 @@ sub tokenize {
 #------------------------------------------------------------------------------
 sub num {
     my $t = shift // 0;
+    return is_num($t) ? $t + 0 : 0;
+}
+
+#------------------------------------------------------------------------------
+# is_num -- true when num() would read the token as a number rather than as 0.
+#
+# The .phc reader (HardyCross::Phc) must refuse "1O0" for a length instead of
+# solving it as 0, and to do that it has to know what num() accepts.  Asking
+# here keeps ONE definition of a number for both input formats.
+#------------------------------------------------------------------------------
+sub is_num {
+    my $t = shift;
+    return 0 unless defined $t;
     # nan and inf are rejected outright: accepting one puts a non-finite value
     # into the network and every later check becomes meaningless.
     return 0 if $t =~ /^[-+]?(nan|inf)/i;
-    return $t =~ /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/ ? $t + 0 : 0;
+    return $t =~ /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/ ? 1 : 0;
 }
 
 #------------------------------------------------------------------------------
@@ -139,8 +152,18 @@ sub read_curve {
 # The GUI needs the second one: its grid IS the model, and round-tripping it
 # through a temporary file to solve it would be both slow and a good way to
 # leave junk behind when something dies mid-edit.
+#
+# The extension chooses the language: a .phc file is the command language and
+# goes to HardyCross::Phc, which translates it into .hcx rows and hands them
+# back to read_string below -- so both formats share every check, default and
+# unit conversion.  Anything else is read as .hcx, as it always has been.
 sub read_model {
     my $path = shift;
+    if ($path =~ /\.phc\z/i) {
+        # Loaded here, not at the top, because Phc.pm itself uses this module.
+        require HardyCross::Phc;
+        return HardyCross::Phc::read_model($path);
+    }
     open my $fh, '<', $path or HardyCross::fail("cannot open input file %s", $path);
     # Slurp inside a do-block so the undefined $/ ends HERE.  Written as a bare
     # "local $/" at the top of the sub, it stayed in force for everything the
@@ -152,10 +175,15 @@ sub read_model {
     return read_string($text);
 }
 
-sub read_string {
-    my $text = shift;
-
-    my $net = {
+#------------------------------------------------------------------------------
+# new_net -- an empty network with the program defaults.
+#
+# Every default a model starts from is set here and nowhere else.  read_string
+# starts from it, and so does the .phc line checker, which parses one row at a
+# time into a scratch network to find out whether the parser would accept it.
+#------------------------------------------------------------------------------
+sub new_net {
+    return {
         nodes => [ {}, { id => 'REF', z => 0, demand => 0, h => 0,
                          pelem => 0, pnode => 0, depth => 0, visited => 0 } ],
         elems => [ {} ],
@@ -172,6 +200,11 @@ sub read_string {
                   # mistakes it for a requirement of the Standard.
                   vel_limit => 6.0, vel_limit_set => 0 },
     };
+}
+
+sub read_string {
+    my $text = shift;
+    my $net  = new_net();
 
     my $section = '';
     my $lineno  = 0;
@@ -425,7 +458,9 @@ sub parse_row {
     # "id node TYPE [K=] [Q=] [P=]": an outlet -- sprinkler, hydrant, hose reel
     # -- as an edge from its node back to the reference node.  Any two of K,
     # Q and P fix the third through Q = K sqrt(P).  FIXEDFLOW is different: a
-    # set demand with no K, added to the node and never corrected.
+    # set demand with no K, added to the node and never corrected.  Its MINP=
+    # (or P=) is the pressure it needs at that flow: it does not change the
+    # solve, but it is checked -- see the fixed-flow note below.
     if ($section eq 'DISCHARGES') {
         my $n  = node_index($net, $tk->[1]);
         my $ty = uc $tk->[2];
@@ -440,9 +475,22 @@ sub parse_row {
 
         if ($ty eq 'FIXEDFLOW' || $ty eq 'FIXED') {
             HardyCross::fail("FIXEDFLOW needs Q=") unless defined $qq;
+            HardyCross::fail("FIXEDFLOW %s has a negative minimum pressure", $tk->[0])
+                if defined $pp && $pp < 0;
             # A fixed-flow outlet is a nodal demand: it sits outside every loop
             # and is never corrected, which is what "fixed" has to mean.
             $net->{nodes}[$n]{demand} += $qq;
+            # Kept as well, by id, so its minimum pressure can be CHECKED: the
+            # outlet compliance table passes or fails it, and the governing
+            # outlet and demand point count it like any other outlet.  The
+            # minimum used to be read and then thrown away, so a fixed flow at
+            # a node far below its required pressure was reported as if all
+            # were well.  The flow itself stays fixed whatever the pressure --
+            # that is what the designer asked for -- so the solve is unchanged.
+            push @{ $net->{fixed} }, {
+                id => $tk->[0], kind => 'FIXEDFLOW', n1 => $n,
+                qreq => $qq, q => $qq, preq => $pp, z => $z,
+            };
             return;
         }
         my $given = grep { defined } ($kk, $qq, $pp);
@@ -514,6 +562,18 @@ sub parse_row {
                 id => $tk->[0], kind => 'ORIFICE', n1 => $n1, n2 => $n2,
                 bore => (kv($tk, 'BORE') // 0) * $net->{f_dia},
                 pipedia => $pd, cd => $cd, q => 0, in_tree => 0,
+            };
+        } elsif ($ty eq 'PRA') {
+            # A pressure ratio valve: outlet pressure = inlet / RATIO.  Its
+            # drop is set from the solved inlet pressure by the solver's outer
+            # loop (HardyCross::ratio_valves); it starts at zero.
+            my $r = kv($tk, 'RATIO') // 0;
+            HardyCross::fail("PRA %s needs RATIO= more than 1", $tk->[0]) if $r <= 1;
+            my $mi = kv($tk, 'MININLET');
+            push @{ $net->{elems} }, {
+                id => $tk->[0], kind => 'RATIO', n1 => $n1, n2 => $n2,
+                ratio => $r, dp => 0, q => 0, in_tree => 0,
+                (defined $mi ? (mininlet => $mi * $net->{f_pres}) : ()),
             };
         } elsif ($ty eq 'BFP') {
             push @{ $net->{elems} }, {

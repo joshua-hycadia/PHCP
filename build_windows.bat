@@ -78,7 +78,9 @@ if errorlevel 1 (
     )
 )
 
-set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF
+rem HardyCross::Phc is loaded with require only when a .phc file is read,
+rem so it is listed here by name rather than left to the dependency scan.
+set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
 set DATA=-a "data/pipes.dat;lib/data/pipes.dat"
@@ -101,9 +103,11 @@ echo.
 echo [6/6] Smoke test: solve an example with phcp.exe...
 phcp.exe examples\05_crosscheck.hcx > smoke_test.txt
 findstr /c:"converged yes" smoke_test.txt >nul || (echo ERROR: phcp.exe did not solve the example. See smoke_test.txt & exit /b 1)
+phcp.exe examples\05_crosscheck.phc > smoke_test_phc.txt
+findstr /c:"converged yes" smoke_test_phc.txt >nul || (echo ERROR: phcp.exe did not solve the .phc example. See smoke_test_phc.txt & exit /b 1)
 phcp.exe examples\07_pipe_database_demo.hcx smoke_test.pdf >nul
 if not exist smoke_test.pdf (echo ERROR: no PDF was written & exit /b 1)
-echo        ok - example solved and converged, PDF report written
+echo        ok - .hcx and .phc examples solved and converged, PDF report written
 
 echo.
 echo ===========================================================================

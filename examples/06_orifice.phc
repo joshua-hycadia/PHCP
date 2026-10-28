@@ -1,0 +1,48 @@
+// 06 - orifice plates to AS 2118.1 Appendix B
+// 
+//   OP1  ORIFICE_P  a required net drop; the solver sizes the bore
+//   OP2  ORIFICE_D  a known bore; the solver computes the net drop
+// 
+// Uncomment ORIF_TABLE to size by the standard's route (equation B3 to get the
+// equivalent pressure Po, then read and interpolate the diameter from the
+// table).  Without it, sizing falls back to the fitted model.  The report
+// states which route produced every number.
+// 
+// WARNING: tables/orifice_synthetic.tbl is NOT Appendix B data.  It was
+// generated from the fitted model only to exercise the table code path.
+// Replace it with the real Table B1 and B2 rows before production use.
+// 
+// Because that file was generated from the fitted model, the two routes agree
+// here trivially.  That demonstrates the mechanism, NOT agreement with the
+// standard - which can only be shown once the printed tables are loaded.
+
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE KPA
+UNITS     FLOW LPM
+UNITS     KFACTOR LPM/KPA
+METHOD    HW
+OPTION    ORIF_STEP 0.5
+
+WATER     SRC 0.0 1000
+NODE      J1 0.0
+NODE      A 0.0
+HYDRANT   A2 0.0 400 28.28427125
+NODE      B 0.0
+HYDRANT   B2 0.0 400 28.28427125
+
+USE       BORE 120
+PIPE      M1 SRC J1 20.0 100.0
+PIPE      P1 J1 A 12.0 50.0
+PIPE      P2 J1 B 12.0 50.0
+
+// OP1 sits in a pipe of no length from A to A2
+USE       ASAM
+PIPE      OP1 A A2 0 50
+OPP       OP1 150
+
+// OP2 sits in a pipe of no length from B to B2
+USE       ASAM
+PIPE      OP2 B B2 0 50
+OFD       OP2 26

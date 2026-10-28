@@ -1,0 +1,19 @@
+// 01 - single branch validation case
+// Static 900 kPa supply -> 100 m of DN100 (C=120) -> one K80 sprinkler.
+// Closed-form answer: Q = 80*sqrt(900 - 1.5689e-4*Q^1.85)  ->  Q ~ 2090 L/min
+
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE KPA
+UNITS     FLOW LPM
+UNITS     KFACTOR LPM/KPA
+METHOD    HW
+OPTION    TOL_FLOW 0.001
+OPTION    TOL_LOOP 0.0005
+
+WATER     N1 0.0 900
+SPRINKLER N2 0.0 -50 80
+
+USE       BORE 120
+PIPE      P1 N1 N2 100.0 100.0

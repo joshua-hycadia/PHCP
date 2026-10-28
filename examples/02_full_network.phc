@@ -1,0 +1,78 @@
+// 02 - full feature demonstration
+// 
+//   two supplies : tank + booster pump, and a town main on a falling curve
+//   pressure devices : BFP loss curve, PRV fixed drop, both orifice modes
+//   discharges : sprinklers, hydrant, hose reel, fixed-flow outlet
+//   two real loops in the grid plus the pseudo-loop between the supplies
+
+TITLE     Combined sprinkler and hydrant network - worked example
+PROJECT   PROJECT Hardy Cross solver demonstration model
+PROJECT   JOB HC-DEMO-002
+PROJECT   DESIGNER A Designer
+PROJECT   REVISION A
+PROJECT   DATE 2026-09-10
+PROJECT   STANDARD AS 2118.1
+PROJECT   DATA_SOURCE Hycadia pipe and fitting database - pipe dimensions and fitting equivalent lengths
+UNITS     LENGTH M
+UNITS     ELEVATION M
+UNITS     SIZE MM
+UNITS     PRESSURE KPA
+UNITS     FLOW LPM
+UNITS     KFACTOR LPM/KPA
+METHOD    HW
+OPTION    TOL_FLOW 0.01
+OPTION    TOL_LOOP 0.005
+OPTION    MAXITER 3000
+
+WATER     T1 0.0 200
+NODE      J1 0.0
+NODE      J2 0.0
+WATER     TM 0.0 1000 3000 700 6000 300
+NODE      K1 0.0
+HREEL     A 10.0 -220 7.5
+NODE      B 10.0
+NODE      C 10.0
+NODE      D 10.0
+HYDRANT   HY 10.0 1200 75.89466384
+NODE      X 10.0
+SPRINKLER X2 10.0 -50 80
+NODE      Y 10.0
+SPRINKLER Y2 10.0 225 115
+
+USE       BORE 120
+PIPE      M1 J2 A 30.0 150.0
+EQV       M1 8.0
+PIPE      M2 K1 B 60.0 150.0
+EQV       M2 12.0
+PIPE      G1 A B 40.0 100.0
+PIPE      G2 B C 40.0 100.0
+PIPE      G3 C D 40.0 100.0
+PIPE      G4 D A 40.0 100.0
+PIPE      G5 A C 55.0 80.0
+PIPE      BR1 D X 10.0 50.0
+PIPE      BR2 C Y 12.0 50.0
+PIPE      BR3 C HY 15.0 100.0
+
+PUMP      PMP1 T1 J1 850 2500 800 4000 600
+
+FIXEDFLOW FF1 B 300 200
+
+// BFP1 sits in a pipe of no length from J1 to J2
+USE       BORE 120
+PIPE      BFP1 J1 J2 0 150
+BFP       BFP1 0 0 1000 25 2000 55 3000 95
+
+// PRV1 sits in a pipe of no length from TM to K1
+USE       BORE 120
+PIPE      PRV1 TM K1 0 150
+PRV       PRV1 0 150
+
+// OP1 sits in a pipe of no length from X to X2
+USE       ASAM
+PIPE      OP1 X X2 0 50
+OPP       OP1 80
+
+// OP2 sits in a pipe of no length from Y to Y2
+USE       ASAM
+PIPE      OP2 Y Y2 0 50
+OFD       OP2 22
