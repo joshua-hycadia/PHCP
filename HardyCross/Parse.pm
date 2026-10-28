@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: MIT -- see LICENSE.  The MIT licence covers this
 # source code; it does not cover the third-party data in data/.
 #
-# Parse.pm -- the .hcx reader.
+# Parse.pm -- the network builder.
 #
-# All numeric values are in the units declared in the UNITS block, which must
-# precede the data; everything is converted to internal units (L/min, kPa, m,
-# mm) on the way in.  Spaces, tabs, commas and semicolons are all separators,
-# which is why a curve point may be written "0,900" or "0 900" interchangeably.
-# Comments start at '!' or '#'.
+# HardyCross::Phc turns each .phc line into a row -- a section word (UNITS,
+# OPTIONS, NODES, PIPES, PUMPS, SUPPLIES, DISCHARGES, DEVICES) and its tokens --
+# and parse_row below adds that row to the network.  All numeric values are in
+# the units set by the UNITS rows, which come first; everything is converted to
+# internal units (L/min, kPa, m, mm) on the way in.
 
 package HardyCross::Parse;
 
@@ -148,14 +148,10 @@ sub read_curve {
     return HardyCross::fit_curve($c, $rising);
 }
 
-# read_model reads a model file: a .phc command file, the one file type a
-# user sees.  HardyCross::Phc translates its lines into rows of the older
-# .hcx block syntax and hands them back to read_string below, so every check,
-# default and unit conversion lives in one place; read_string reads that
-# syntax out of memory, as the tests and the stress tools also use it.
-#
-# A .hcx FILE is refused, with the reason (Joshua, 28 October 2026: there are
-# no .hcx models in use; the format only ever served the prototype).
+# read_model reads a model file: a .phc command file, the one file type PHCP
+# reads.  HardyCross::Phc translates its lines into rows and hands each to
+# parse_row below, so every check, default and unit conversion lives in one
+# place.  Any other file is refused, with the reason.
 sub read_model {
     my $path = shift;
     HardyCross::fail('%s IS NOT A .PHC MODEL. PHCP READS .PHC FILES ONLY', $path)
@@ -168,8 +164,8 @@ sub read_model {
 #------------------------------------------------------------------------------
 # new_net -- an empty network with the program defaults.
 #
-# Every default a model starts from is set here and nowhere else.  read_string
-# starts from it, and so does the .phc line checker, which parses one row at a
+# Every default a model starts from is set here and nowhere else.  The .phc
+# reader starts from it, and so does the .phc line checker, which parses one row at a
 # time into a scratch network to find out whether the parser would accept it.
 #------------------------------------------------------------------------------
 sub new_net {
@@ -190,55 +186,6 @@ sub new_net {
                   # mistakes it for a requirement of the Standard.
                   vel_limit => 6.0, vel_limit_set => 0 },
     };
-}
-
-sub read_string {
-    my $text = shift;
-    my $net  = new_net();
-
-    my $section = '';
-    my $lineno  = 0;
-    for my $line (split /\n/, $text, -1) {
-        $lineno++;
-        my @tk = tokenize($line);
-        next unless @tk;
-        my $head = uc $tk[0];
-        if ($head =~ /^(PROJECT|UNITS|OPTIONS|NODES|PIPES|PUMPS|SUPPLIES|DISCHARGES|DEVICES)$/
-            && @tk == 1) {
-            $section = $head;
-            next;
-        }
-        if ($head eq 'END') { $section = ''; next }
-        next if $section eq '';
-
-        # PROJECT fields feed the report header.  The value is the rest of the
-        # raw line, so a title keeps its spacing and punctuation -- a document
-        # reference like "AS 2118.1:2017, Amdt 1" must survive intact
-        # or the provenance it records is worthless.
-        if ($section eq 'PROJECT') {
-            (my $raw = $line) =~ s/^\s*\S+\s*//;
-            $raw =~ s/[!#].*$//;
-            $raw =~ s/[^\x20-\x7E]//g;
-            $raw =~ s/\s+$//;
-            $net->{project}{ uc $tk[0] } = $raw;
-            next;
-        }
-
-        my $ok = eval { parse_row($net, $section, \@tk); 1 };
-        unless ($ok) {
-            my $err = $@;
-            if (HardyCross::is_model_error($err)) {
-                HardyCross::fail("line %d: %s", $lineno, $err->{msg});
-            }
-            die $err;
-        }
-    }
-    # Kept so the demand calculation can re-solve the model at trial supply
-    # pressures from exactly what was read, rather than from a reconstruction.
-    $net->{source_text} = $text;
-    HardyCross::fail("the input file contains no model")
-        if @{ $net->{nodes} } <= 2 && @{ $net->{elems} } <= 1;
-    return $net;
 }
 
 sub parse_row {
@@ -264,11 +211,6 @@ sub parse_row {
             $o->{method} = uc($v) =~ /^(HW|HAZEN|HAZEN-WILLIAMS)$/ ? 'HW'
                          : uc($v) =~ /^(DW|DARCY|DARCY-WEISBACH)$/ ? 'DW'
                          : HardyCross::fail("METHOD must be HW or DW, not %s", $v);
-        }
-        elsif ($k eq 'PROFILE') {
-            # EPANET makes this run coefficient-identical to OWA EPANET 2.3,
-            # which is what the validation suite compares against.
-            if (uc($v) eq 'EPANET') { @{$o}{qw(hwk hwq hwd)} = (6.073304e7, 1.852, 4.871) }
         }
         elsif ($k eq 'HW_CONST') { $o->{hwk} = num($v) }
         elsif ($k eq 'NU') {

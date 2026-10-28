@@ -13,9 +13,9 @@ which pull request is next.
 ### Process
 
 - Work on a feature branch named in `PLAN.md`.  Never push to `main`, never
-  merge.  Open a pull request; Joshua reviews and merges.
+  merge.  Open a pull request; the maintainer reviews and merges.
 - One pull request per plan stage.  Do not start the next stage until the
-  previous one is merged, unless Joshua says otherwise.
+  previous one is merged, unless the maintainer says otherwise.
 - Run every test below before each commit.  Report the results in the pull
   request.
 - Update `PLAN.md` (status line and checklist) in the same pull request.
@@ -25,7 +25,7 @@ which pull request is next.
 - Do not change `HardyCross.pm`, `HardyCross/Demand.pm`,
   `HardyCross/PipeData.pm`, `HardyCross/Report.pm` or `HardyCross/PDF.pm`
   except where `PLAN.md` says to.  Any change that alters a solved number
-  needs Joshua's approval first; ask, do not decide.
+  needs the maintainer's approval first; ask, do not decide.
 - New input formats translate into the existing parser; they do not
   re-implement its checks, defaults or unit handling.
 
@@ -45,7 +45,7 @@ which pull request is next.
 
 - `data/pipes.dat` is user editable.  The report prints its DATASET name,
   file name and SHA-256; keep it that way.
-- Never change a value in it without Joshua asking.  If a test against it
+- Never change a value in it without the maintainer asking.  If a test against it
   fails, report the failure; do not edit the expected value to match.
 
 ### README.md - keep it current, always

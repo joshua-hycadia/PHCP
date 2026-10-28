@@ -126,7 +126,8 @@ sub flow_path {
 #------------------------------------------------------------------------------
 sub margin_at {
     my ($text, $sid, $p) = @_;
-    my $net = eval { HardyCross::Parse::read_string($text) } or return;
+    require HardyCross::Phc;
+    my $net = eval { HardyCross::Phc::read_string($text) } or return;
     my ($sup) = grep { ($_->{id} // '') eq $sid } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     return unless $sup;
     # Same node, same elevation, a fixed pressure instead of a curve.
