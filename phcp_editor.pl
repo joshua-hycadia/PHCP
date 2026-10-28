@@ -1001,7 +1001,7 @@ sub settings_changed {
 # The DATABASE tab: the pipe and fitting database, viewed and edited.
 #
 # Read-only until EDIT THE DATABASE is ticked, because a change reaches every
-# calculation made after it (Joshua, 28 October 2026).  Four tables -- pipe
+# calculation made after it (decided 28 October 2026).  Four tables -- pipe
 # types, pipe sizes, fittings, K' factors -- each with a filter; a click on a
 # row puts it in the fields below, where it can be changed, added as a new
 # row, or deleted.  SAVE CHANGES checks every row and the whole file, writes

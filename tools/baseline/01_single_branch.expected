@@ -1,0 +1,5 @@
+# Solved results this example must reproduce, in the solver's internal units: Q pipe flow, P node gauge pressure.
+# Frozen from an independent description of the same network, solved at tight tolerances.
+Q P1 2089.93329
+P N1 900
+P N2 682.472057
