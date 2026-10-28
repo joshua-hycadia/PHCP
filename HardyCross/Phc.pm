@@ -154,7 +154,7 @@ my %CMD = (
     OFD       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'BORE', 'size' ] ],
                    opt => [ [ 'CD', 'num' ] ] },
     PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
-                   opt => [ [ 'MININLET', 'pressure' ] ] },
+                   opt => [ [ 'MININLET', 'pressure' ], [ 'BAND', 'num' ] ] },
 );
 $CMD{$_}{name} = $_ for keys %CMD;
 
@@ -842,8 +842,12 @@ sub device_row {
     if ($k eq 'PRA') {
         # Outlet pressure = inlet / ratio; the solver sets the drop from the
         # solved inlet pressure.
+        # MININLET 0 is "no minimum", so a BAND can be given without one.
+        # BAND is a percentage of the inlet pressure; 5 unless given.
+        my ($mi, $band) = @{ $a->{opt} };
         return ('DEVICES', join(' ', $id, $s, $x, 'PRA', 'RATIO=' . fmt(ratio_value($a->{pos}[1])),
-                                (@{ $a->{opt} } ? "MININLET=$a->{opt}[0]" : ())), $n);
+                                (defined $mi && $mi > 0 ? "MININLET=$mi" : ()),
+                                (defined $band ? "BAND=$band" : ())), $n);
     }
     die "device_row: no translation for $k\n";    # a programming error
 }

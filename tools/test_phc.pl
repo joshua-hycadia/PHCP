@@ -335,25 +335,47 @@ print "5. COPIES, CHANGES AND DEVICES\n";
     is('a solve runs through a pipe with a pump in it', $d && HardyCross::solve_model($d));
 
     # The pressure ratio valve, as the manufacturer's worked example: a tank
-    # 153 m up gives about 1500 kPa at a 3:1 valve, and 500 kPa after it.
+    # 153 m up gives about 1500 kPa at a 3:1 valve, and 500 kPa after it --
+    # to within +/-5% of the inlet pressure, 75 kPa.  The calculation uses
+    # the bottom of that band: 1500 x (1/3 - 0.05) = 425 kPa.
     my $t = join "\n", 'WATER TANK 153 0', 'NODE A 0', 'NODE B 0', 'USE S40 120',
         'PIPE P1 TANK A 200000 100', 'PIPE P2 A B 1000 100', 'FIXEDFLOW F B 100', '';
     my ($r, $re) = read_phc($t . "PRA P2 3:1 300\n");
     is('PRA P2 3:1 reads: a RATIO element in pipe P2', $r && { elems_by_id($r) }->{'P2.PRA'}{kind} eq 'RATIO', $re);
     my $ok = HardyCross::solve_model($r);
     my ($q, $p) = results($r);
-    is(sprintf('   outlet = inlet / 3: %.1f kPa in, %.1f kPa out', $p->{A}, $p->{'P2~'}),
-       $ok && abs($p->{'P2~'} - $p->{A} / 3) < 0.05 && abs($p->{A} - 1499) < 2);
+    is(sprintf('   outlet = inlet x (1/3 - 0.05), the bottom of the band: %.1f in, %.1f out', $p->{A}, $p->{'P2~'}),
+       $ok && abs($p->{'P2~'} - $p->{A} * (1 / 3 - 0.05)) < 0.05 && abs($p->{A} - 1499) < 2);
     my $rep = HardyCross::Report::write_report($r, $ok, 't.phc');
-    is('   the report shows the ratio, inlet and outlet, and no warning',
-       $rep =~ /P2\.PRA\s+PRA\s+A\s+P2~.*ratio 3:1, inlet 1499\.\d, outlet 499\.\d/ && $rep =~ /No warnings\./);
+    (my $flat = $rep) =~ s/\s+/ /g;
+    is('   the report shows the ratio, band, inlet and outlet, and no warning',
+       $rep =~ /P2\.PRA\s+PRA\s+A\s+P2~.*ratio 3:1 \+\/-5%, inlet 1499\.\d, outlet 424\.7 \(band 424\.7 to 574\.6\)/
+       && $rep =~ /No warnings\./);
+    is('   it says the calculation uses the bottom of the band',
+       $flat =~ /uses the BOTTOM of each band, outlet = inlet x \(1\/ratio - band\)/);
+    # The top of the band, by hand: 1499.0 x (1/3 + 0.05) = 574.6 kPa.
+    is('   and the highest pressure with the valve at the top of its band: 574.6 kPa',
+       $flat =~ /TOP of its band \(P2\.PRA outlet 574\.6 kPa\), the highest pressure downstream is 574\.6 kPa/,
+       $flat =~ /(With every valve.{0,200})/ ? $1 : 'no statement');
+    my ($nom) = read_phc($t . "PRA P2 3:1 300 0\n");
+    HardyCross::solve_model($nom);
+    my (undef, $pn) = results($nom);
+    is('   BAND 0: the nominal ratio exactly, outlet = inlet / 3', abs($pn->{'P2~'} - $pn->{A} / 3) < 0.05);
+    my ($b2) = read_phc($t . "PRA P2 3:1 0 2\n");
+    HardyCross::solve_model($b2);
+    my (undef, $pb) = results($b2);
+    is('   BAND 2 (and MININLET 0, no minimum): outlet = inlet x (1/3 - 0.02)',
+       abs($pb->{'P2~'} - $pb->{A} * (1 / 3 - 0.02)) < 0.05 && !defined({ elems_by_id($b2) }->{'P2.PRA'}{mininlet}));
+    my ($big, $be) = read_phc($t . "PRA P2 3:1 300 40\n");
+    is('   a band wider than the outlet pressure is refused, on its line',
+       !$big && $be =~ /^line 8: .*a band of 40% of the inlet pressure is more than the 33\.3+% a 3:1 valve passes/, $be);
     my ($lo) = read_phc($t . "PRA P2 3:1 2000\n");
     my $rl = HardyCross::Report::write_report($lo, HardyCross::solve_model($lo), 't.phc');
     is('   an inlet below the stated minimum is a warning', $rl =~ /below its minimum\s+inlet pressure/);
     my ($two) = read_phc($t . "PRA P2 2:1\n");
     HardyCross::solve_model($two);
     my (undef, $p2) = results($two);
-    is('   a 2:1 valve halves it', abs($p2->{'P2~'} - $p2->{A} / 2) < 0.05);
+    is('   a 2:1 valve: inlet x (1/2 - 0.05)', abs($p2->{'P2~'} - $p2->{A} * (0.5 - 0.05)) < 0.05);
 }
 
 #==============================================================================
