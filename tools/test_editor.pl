@@ -309,6 +309,15 @@ my $EX7 = slurp("$EX/07_pipe_database_demo.phc");
     is('   where it is an error: settings are set in the PROJECT tab',
        $c->{lines}[1]{message} eq 'UNITS IS SET IN THE PROJECT TAB, NOT IN THE NETWORK'
        && $c->{lines}[3]{status} eq 'ok');
+    my @form = grep { ref } @HardyCross::Editor::OPTION_FORM;
+    my %seen; $seen{ $_->[0] }++ for @form;
+    is('every option has a plain label and a line of help in the PROJECT tab, once',
+       !grep({ ($seen{$_} // 0) != 1 } @HardyCross::Phc::OPTIONS) && @form == @HardyCross::Phc::OPTIONS
+       && !grep({ !$_->[1] || !$_->[2] || "$_->[1]$_->[2]" =~ /[a-z]/ } @form));
+    is('   each says what a blank means (or that it is not used)',
+       !grep { $_->[2] !~ /BLANK|NOT USED/ } @form);
+    is('every unit quantity has a plain label',
+       !grep { !$HardyCross::Editor::UNIT_LABEL{$_} } @HardyCross::Phc::UNIT_QUANTITIES);
     my $new = HardyCross::Editor::new_settings();
     is('new settings: the office default units, HW',
        $new->{units}{LENGTH} eq 'MM' && $new->{units}{KFACTOR} eq 'LPM/KPA' && $new->{method} eq 'HW');

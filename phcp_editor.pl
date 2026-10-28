@@ -97,11 +97,16 @@ our %C = (
     fault_bg   => '#F9D4D4',     # behind the field validation found at fault
     warn       => '#8A5A00',     # a warning
     proposal   => '#9AA5B4',     # the greyed proposed line
+    sash       => '#E4E7EB',     # the dividers between panes, wide enough to grab
 );
+
+# The ordinary pointer.  X11's "arrow" points up and to the right, so it is
+# left_ptr there; Windows calls the same pointer "arrow".
+our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 
 # Fonts are chosen when the window is built, from what the machine has:
 # Consolas and Segoe UI on Windows, DejaVu on Linux.
-our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S);
+our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S, $UI_S_N);
 sub pick_fonts {
     my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
     my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
@@ -109,7 +114,37 @@ sub pick_fonts {
     $mono //= 'Courier';
     $ui   //= 'Helvetica';
     ($MONO, $MONO_B, $MONO_I) = ([ $mono, 10 ], [ $mono, 10, 'bold' ], [ $mono, 10, 'italic' ]);
-    ($UI, $UI_B, $UI_S) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ]);
+    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ], [ $ui, 8 ]);
+}
+
+#------------------------------------------------------------------------------
+# Crisp on a high-resolution screen.
+#
+# Windows draws a program that has not declared itself DPI-aware at 96 dpi and
+# then stretches the bitmap -- at 150 % scaling everything comes out soft.
+# Perl/Tk does not declare it, so dpi_aware does, before the first window is
+# made.  Tk then measures the real resolution: fonts, given in points, come
+# out at the right size and sharp.  Sizes given in pixels -- padding, the
+# divider and scrollbar widths, the window itself -- are passed through px(),
+# which multiplies them by the screen's scale (1.5 at 150 %), so the layout
+# keeps its proportions.
+#------------------------------------------------------------------------------
+our $SCALE = 1;
+sub px {
+    my $v = shift;
+    return [ map { px($_) } @$v ] if ref $v;
+    return int($v * $SCALE + 0.5);
+}
+
+sub dpi_aware {
+    return unless $^O eq 'MSWin32';
+    eval {
+        require Win32::API;
+        # Per-monitor where Windows offers it (8.1 and later), else system-wide.
+        my $per = Win32::API->new('shcore', 'SetProcessDpiAwareness', 'I', 'I');
+        if ($per) { $per->Call(1) } else { Win32::API->new('user32', 'SetProcessDPIAware', '', 'I')->Call() }
+        1;
+    };
 }
 
 # The window's state.  One editor window per process, so plain package
@@ -118,7 +153,8 @@ our ($mw, $ed, $gutter, $report, $statusbar, $strip, $pill, $vtable);
 our (%list, %list_lines, %list_head);   # ERRORS, WARNINGS, NODES: listbox, entries, heading
 our (%table);                    # PIPES, NODES, OUTLETS: { hlist, data, sort, desc }
 our ($toptabs, $restabs);        # the NETWORK / PROJECT tabs and the results tabs
-our (%btn, %form, %checks);      # toolbar buttons; PROJECT tab fields; HIDE boxes
+our (%btn, %form, %checks);
+our $project_canvas;             # the PROJECT tab's scrolling canvas      # toolbar buttons; PROJECT tab fields; HIDE boxes
 our %pipe_show;                  # the pipe columns shown, by key
 our ($hide_pipes, $hide_nodes) = (0, 0);
 our $path;                       # the file being edited, or undef for a new buffer
@@ -156,7 +192,7 @@ sub flat_button {
         -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
         -activebackground => $p ? $C{accent_dk} : $C{hover},
         -activeforeground => $p ? '#FFFFFF' : $C{ink},
-        -disabledforeground => $C{faint}, -padx => 14, -pady => 5, -cursor => 'hand2');
+        -disabledforeground => $C{faint}, -padx => px(14), -pady => px(5), -cursor => 'hand2');
 }
 
 #------------------------------------------------------------------------------
@@ -174,8 +210,8 @@ sub make_tabs {
     for my $n (@$names) {
         my $f = $t->{bar}->Frame(-background => $C{paper})->pack(-side => 'left');
         my $l = $f->Label(-text => $n, -font => $UI_B, -background => $C{paper}, -foreground => $C{muted},
-                          -padx => 14, -pady => 7, -cursor => 'hand2')->pack(-side => 'top');
-        my $u = $f->Frame(-height => 2, -background => $C{paper})->pack(-side => 'top', -fill => 'x');
+                          -padx => px(14), -pady => px(7), -cursor => 'hand2')->pack(-side => 'top');
+        my $u = $f->Frame(-height => px(2), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
         $t->{label}{$n} = [ $l, $u ];
         $l->bind('<ButtonRelease-1>' => sub { select_tab($t, $n) });
         $t->{page}{$n} = $body->Frame(-background => $C{paper});
@@ -204,22 +240,25 @@ sub select_tab {
 sub check_box {
     my ($parent, $text, $var, $cmd) = @_;
     my $f = $parent->Frame(-background => $C{paper}, -cursor => 'hand2');
-    my $c = $f->Canvas(-width => 14, -height => 14, -background => $C{paper},
-                       -highlightthickness => 0, -borderwidth => 0)->pack(-side => 'left', -padx => [0, 6]);
+    my $b = px(14);
+    my $c = $f->Canvas(-width => $b, -height => $b, -background => $C{paper},
+                       -highlightthickness => 0, -borderwidth => 0)->pack(-side => 'left', -padx => px([0, 6]));
     my $l = $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{ink})
               ->pack(-side => 'left');
+    my $n = $f->Label(-text => '', -font => $UI, -background => $C{paper}, -foreground => $C{muted})
+              ->pack(-side => 'left', -padx => px([4, 0]));
     my $draw = sub {
         $c->delete('all');
         if ($$var) {
-            $c->createRectangle(1, 1, 13, 13, -fill => $C{accent}, -outline => $C{accent});
-            $c->createLine(4, 7, 6, 10, 11, 4, -fill => '#FFFFFF', -width => 2);
+            $c->createRectangle(1, 1, $b - 1, $b - 1, -fill => $C{accent}, -outline => $C{accent});
+            $c->createLine(map({ px($_) } 4, 7, 6, 10, 11, 4), -fill => '#FFFFFF', -width => px(2));
         } else {
-            $c->createRectangle(1, 1, 13, 13, -fill => $C{paper}, -outline => $C{faint});
+            $c->createRectangle(1, 1, $b - 1, $b - 1, -fill => $C{paper}, -outline => $C{faint});
         }
     };
-    $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l;
+    $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l, $n;
     $draw->();
-    return { frame => $f, draw => $draw };
+    return { frame => $f, draw => $draw, label => $l, count => $n };
 }
 
 #------------------------------------------------------------------------------
@@ -229,16 +268,16 @@ sub check_box {
 our @dd_refresh;                  # drop-downs to redraw when settings are loaded
 sub drop_down {
     my ($parent, $var, $choices, $cmd, $default) = @_;
-    my $show = sub { sprintf '%-9s %s', $$var // '', "\x{25BE}" };
+    my $show = sub { sprintf '%-9s %s', length($$var // '') ? $$var : 'DEFAULT', "\x{25BE}" };
     my $mb = $parent->Menubutton(-text => $show->(), -font => $MONO, -relief => 'flat',
         -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
         -background => $C{paper}, -activebackground => $C{hover}, -foreground => $C{ink},
-        -anchor => 'w', -width => 11, -padx => 6, -pady => 3, -indicatoron => 0, -cursor => 'hand2');
+        -anchor => 'w', -width => 11, -padx => px(6), -pady => px(3), -indicatoron => 0, -cursor => 'hand2');
     my $m = $mb->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
         -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
         -activebackground => $C{select}, -activeforeground => $C{ink});
     for my $v (@$choices) {
-        $m->command(-label => $v . (defined $default && $v eq $default ? '   (DEFAULT)' : ''), -command => sub { $$var = $v; $mb->configure(-text => $show->()); $cmd->() });
+        $m->command(-label => ($v eq '' ? 'DEFAULT' : $v) . (defined $default && $v eq $default ? '   (DEFAULT)' : ''), -command => sub { $$var = $v; $mb->configure(-text => $show->()); $cmd->() });
     }
     $mb->configure(-menu => $m);
     push @dd_refresh, sub { $mb->configure(-text => $show->()) };
@@ -255,11 +294,24 @@ sub flat_entry {
         -selectbackground => $C{select}, -selectforeground => $C{ink});
 }
 
+#------------------------------------------------------------------------------
+# divider -- a pane divider the user can drag: a 6-pixel light grey band (a
+# one-pixel line could not be grabbed), the resize pointer over it, and the
+# panes redrawn live while it moves.
+#------------------------------------------------------------------------------
+sub divider {
+    my ($parent, $orient) = @_;
+    return $parent->Panedwindow(-orient => $orient, -background => $C{sash}, -sashwidth => px(6),
+        -sashpad => 0, -borderwidth => 0, -showhandle => 0, -handlesize => 0,
+        -sashrelief => 'flat', -opaqueresize => 1,
+        -sashcursor => $orient eq 'vertical' ? 'sb_v_double_arrow' : 'sb_h_double_arrow');
+}
+
 # flat_scrollbar -- a thin grey scrollbar with no bevels.
 sub flat_scrollbar {
     my ($parent, $orient) = @_;
     return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
-        -elementborderwidth => 0, -width => 11, -troughcolor => $C{panel},
+        -elementborderwidth => 0, -width => px(11), -troughcolor => $C{panel},
         -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
 }
 
@@ -267,9 +319,14 @@ sub flat_scrollbar {
 # build_window -- create every widget.  Returns the main window.
 #==============================================================================
 sub build_window {
+    dpi_aware();
     $mw = MainWindow->new(-background => $C{paper});
+    # The screen's scale against the 96 dpi the sizes here were drawn for;
+    # never below 1, so a low-resolution screen is not cramped further.
+    my $dpi = $mw->winfo('pixels', '1i');
+    $SCALE = $dpi > 96 ? $dpi / 96 : 1;
     pick_fonts();
-    $mw->geometry('1500x950');
+    $mw->geometry(px(1500) . 'x' . px(950));
     $mw->optionAdd('*Font', $UI);
     $mw->optionAdd('*Background', $C{paper});
     $mw->optionAdd('*Menu.Relief', 'flat');
@@ -282,16 +339,14 @@ sub build_window {
     build_toolbar();
 
     # The divider between the work above and the results below can be moved.
-    my $vp = $mw->Panedwindow(-orient => 'vertical', -background => $C{line},
-                              -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
-                              -handlesize => 0, -sashrelief => 'flat');
+    my $vp = divider($mw, 'vertical');
     my $top = $mw->Frame(-background => $C{paper});
     my $bottom = $mw->Frame(-background => $C{paper});
     $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT' ]);
     build_network($toptabs->{page}{NETWORK});
     build_project($toptabs->{page}{PROJECT});
     build_results($bottom);
-    $vp->add($top, -height => 560);
+    $vp->add($top, -height => px(560));
     $vp->add($bottom);
     $vp->pack(-fill => 'both', -expand => 1);
 
@@ -333,18 +388,18 @@ sub build_menus {
 # on the right the model's state: not validated, problems, valid, calculated.
 sub build_toolbar {
     my $tb = $mw->Frame(-background => $C{panel})->pack(-side => 'top', -fill => 'x');
-    my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => 14, -pady => 8);
-    my $sep = sub { $in->Frame(-background => $C{line}, -width => 1, -height => 22)->pack(-side => 'left', -padx => 10) };
-    $btn{NEW}  = flat_button($in, 'NEW',  sub { file_new() })->pack(-side => 'left', -padx => [0, 4]);
-    $btn{OPEN} = flat_button($in, 'OPEN', sub { file_open() })->pack(-side => 'left', -padx => 4);
-    $btn{SAVE} = flat_button($in, 'SAVE', sub { file_save() })->pack(-side => 'left', -padx => 4);
+    my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px(8));
+    my $sep = sub { $in->Frame(-background => $C{line}, -width => 1, -height => px(22))->pack(-side => 'left', -padx => px(10)) };
+    $btn{NEW}  = flat_button($in, 'NEW',  sub { file_new() })->pack(-side => 'left', -padx => px([0, 4]));
+    $btn{OPEN} = flat_button($in, 'OPEN', sub { file_open() })->pack(-side => 'left', -padx => px(4));
+    $btn{SAVE} = flat_button($in, 'SAVE', sub { file_save() })->pack(-side => 'left', -padx => px(4));
     $sep->();
-    $btn{VALIDATE}  = flat_button($in, 'VALIDATE  F4', sub { validate() })->pack(-side => 'left', -padx => 4);
+    $btn{VALIDATE}  = flat_button($in, 'VALIDATE  F4', sub { validate() })->pack(-side => 'left', -padx => px(4));
     $btn{CALCULATE} = flat_button($in, 'CALCULATE  F5', sub { calculate() }, primary => 1)
-                          ->pack(-side => 'left', -padx => 4);
+                          ->pack(-side => 'left', -padx => px(4));
     $sep->();
-    $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => 4);
-    $pill = $in->Label(-text => '', -font => $UI_B, -padx => 12, -pady => 4)->pack(-side => 'right');
+    $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
+    $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
     rule($mw, 'x', -side => 'top');
 }
 
@@ -355,9 +410,7 @@ sub build_toolbar {
 sub build_network {
     my $page = shift;
     build_strip($page);
-    my $hp = $page->Panedwindow(-orient => 'horizontal', -background => $C{line},
-                                -sashwidth => 1, -sashpad => 0, -borderwidth => 0, -showhandle => 0,
-                                -handlesize => 0, -sashrelief => 'flat');
+    my $hp = divider($page, 'horizontal');
     my $left  = $page->Frame(-background => $C{paper});
     my $right = $page->Frame(-background => $C{paper});
 
@@ -365,8 +418,8 @@ sub build_network {
     my $sb = $left->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
     rule($sb, 'x', -side => 'top');
     $statusbar = $sb->Text(-height => 1, -wrap => 'none', -font => $MONO, -background => $C{panel},
-        -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 14, -pady => 6,
-        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0)->pack(-fill => 'x');
+        -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(14), -pady => px(6),
+        -state => 'disabled', -cursor => $POINTER, -takefocus => 0)->pack(-fill => 'x');
     $statusbar->tagConfigure('current', -foreground => $C{accent}, -font => $MONO_B, -underline => 1);
     $statusbar->tagConfigure('muted', -foreground => $C{muted});
     $statusbar->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
@@ -379,8 +432,8 @@ sub build_network {
     my $vsb = flat_scrollbar($ef, 'vertical')->pack(-side => 'right', -fill => 'y');
     my $hsb = flat_scrollbar($ef, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
     $gutter = $ef->Text(-width => 5, -wrap => 'none', -font => $MONO, -background => $C{panel},
-        -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => 6, -pady => 6,
-        -state => 'disabled', -cursor => 'left_ptr', -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
+        -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => px(6), -pady => px(6),
+        -state => 'disabled', -cursor => $POINTER, -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
         ->pack(-side => 'left', -fill => 'y');
     $gutter->tagConfigure('num', -justify => 'right');
     $gutter->tagConfigure('cur', -foreground => $C{ink}, -font => $MONO_B);
@@ -391,16 +444,15 @@ sub build_network {
     });
     rule($ef, 'y', -side => 'left');
     $ed = $ef->TextUndo(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
-        -insertbackground => $C{ink}, -insertwidth => 2, -selectbackground => $C{select},
-        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => 10, -pady => 6,
+        -insertbackground => $C{ink}, -insertwidth => px(2), -selectbackground => $C{select},
+        -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(10), -pady => px(6),
         -spacing1 => 1, -spacing3 => 1, -exportselection => 1,
         -yscrollcommand => sub { $vsb->set(@_); $gutter->yviewMoveto($_[0]) },
         -xscrollcommand => sub { $hsb->set(@_) })->pack(-side => 'left', -fill => 'both', -expand => 1);
     $vsb->configure(-command => sub { $ed->yview(@_) });
     $hsb->configure(-command => sub { $ed->xview(@_) });
-    for my $ev ('<MouseWheel>', '<Button-4>', '<Button-5>') {
-        $gutter->bind($ev => sub { my $d = $ev eq '<Button-4>' ? -3 : 3; $ed->yviewScroll($d, 'units'); Tk->break });
-    }
+    wheel_target($ed);
+    wheel_target($gutter, $ed);       # the wheel over the numbers scrolls the editor
 
     # Syntax colours.  Blue for command words and keywords, black bold for a
     # name being defined, dark blue for numbers, grey italic for comments.
@@ -426,18 +478,19 @@ sub build_network {
     for my $name (qw(ERRORS WARNINGS NODES)) {
         my $f = $right->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
         $list_head{$name} = $f->Label(-text => $name, -font => $UI_S, -anchor => 'w', -background => $C{paper},
-            -foreground => $C{muted}, -padx => 14, -pady => 8)->pack(-side => 'top', -fill => 'x');
+            -foreground => $C{muted}, -padx => px(14), -pady => px(8))->pack(-side => 'top', -fill => 'x');
         $list{$name} = $f->Listbox(-height => 5, -font => $MONO, -background => $C{paper},
             -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
             -selectbackground => $C{select}, -selectforeground => $C{ink}, -relief => 'flat',
-            -borderwidth => 0, -highlightthickness => 0, -activestyle => 'none')
-            ->pack(-fill => 'both', -expand => 1, -padx => [14, 4], -pady => [0, 6]);
+            -borderwidth => 0, -highlightthickness => 0, -activestyle => 'none', -cursor => $POINTER)
+            ->pack(-fill => 'both', -expand => 1, -padx => px([14, 4]), -pady => px([0, 6]));
+        wheel_target($list{$name});
         rule($f, 'x', -side => 'bottom') unless $name eq 'NODES';
         $list_lines{$name} = [];
         my $n = $name;
         $list{$name}->bind('<ButtonRelease-1>' => sub { go_to_list($n) });
     }
-    $hp->add($left, -width => 1000);
+    $hp->add($left, -width => px(1000));
     $hp->add($right);
     $hp->pack(-fill => 'both', -expand => 1);
 }
@@ -472,6 +525,46 @@ sub bind_keys {
     $mw->bind('<Control-r>' => sub { file_report() });
     $mw->bind('<Control-q>' => sub { file_quit() });
     $mw->protocol('WM_DELETE_WINDOW' => sub { file_quit() });
+    bind_wheel();
+}
+
+#------------------------------------------------------------------------------
+# The mouse wheel scrolls what is under the pointer.
+#
+# Windows sends wheel events to the widget with the keyboard focus, so with
+# the cursor in the editor the wheel over the results table scrolled the
+# editor and the table could not be scrolled at all.  Every scrollable pane
+# is registered here (wheel_target puts a 'PhcWheel' tag first in its
+# bindtags); a wheel event, wherever it is delivered, is passed to the
+# registered pane under the pointer, and goes no further.  The same binding
+# on the main window catches the wheel when the focus is in a field of the
+# PROJECT tab.  On Linux the wheel arrives as buttons 4 and 5.
+#------------------------------------------------------------------------------
+our %WHEEL;                      # widget path => the widget the wheel scrolls
+sub wheel_target {
+    my ($w, $target) = @_;
+    $WHEEL{ $w->PathName } = $target // $w;
+    $w->bindtags([ 'PhcWheel', grep { $_ ne 'PhcWheel' } $w->bindtags ]);
+}
+
+sub route_wheel {
+    my ($units, $X, $Y) = @_;           # lines to scroll; the pointer on the screen
+    my $w = $mw->containing($X, $Y);
+    $w = $w->parent while $w && !$WHEEL{ $w->PathName } && $w ne $mw;
+    my $t = $w && $WHEEL{ $w->PathName } or return;
+    $t->yview('scroll', $units, 'units');     # the form every scrollable widget takes
+    Tk->break;
+}
+
+sub bind_wheel {
+    for my $tag ('PhcWheel', $mw) {
+        # Windows: 120 per notch of the wheel, three lines a notch.
+        $mw->bind($tag, '<MouseWheel>' => [ sub { my (undef, $d, $X, $Y) = @_;
+            route_wheel($d > 0 ? -3 * (int($d / 120) || 1) : 3 * (int(-$d / 120) || 1), $X, $Y) },
+            Ev('D'), Ev('X'), Ev('Y') ]);
+        $mw->bind($tag, '<Button-4>' => [ sub { route_wheel(-3, $_[1], $_[2]) }, Ev('X'), Ev('Y') ]);
+        $mw->bind($tag, '<Button-5>' => [ sub { route_wheel(3,  $_[1], $_[2]) }, Ev('X'), Ev('Y') ]);
+    }
 }
 
 # text_widget -- the Text where keys arrive (the editor itself).
@@ -724,16 +817,16 @@ sub state_text { return $pill->cget(-text) }
 #==============================================================================
 sub build_strip {
     my $parent = shift;
-    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => 8, -pady => 6);
+    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(8), -pady => px(6));
     my @groups = @HardyCross::Phc::COMMAND_GROUPS[1 .. $#HardyCross::Phc::COMMAND_GROUPS];
     my $first = 1;
     for my $group (@groups) {
-        $strip->Frame(-background => $C{line}, -width => 1, -height => 16)->pack(-side => 'left', -padx => 8)
+        $strip->Frame(-background => $C{line}, -width => 1, -height => px(16))->pack(-side => 'left', -padx => px(8))
             unless $first;
         $first = 0;
         for my $cmd (@$group) {
             my $l = $strip->Label(-text => $cmd, -font => $MONO_B, -background => $C{paper},
-                                  -foreground => $C{accent}, -padx => 6, -pady => 3, -cursor => 'hand2')
+                                  -foreground => $C{accent}, -padx => px(6), -pady => px(3), -cursor => 'hand2')
                           ->pack(-side => 'left');
             $l->bind('<Enter>' => sub { $l->configure(-background => $C{accent_bg}) });
             $l->bind('<Leave>' => sub { $l->configure(-background => $C{paper}) });
@@ -772,13 +865,26 @@ sub strip_commands {
 #==============================================================================
 sub build_project {
     my $page = shift;
-    my $wrap = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1, -padx => 18, -pady => 12);
+    # The form scrolls: on a short window, or with the results pane dragged
+    # up, the CALCULATION options run below the bottom edge.  A canvas holds
+    # the form, with the same thin scrollbar as the rest of the window.
+    my $sb = flat_scrollbar($page, 'vertical')->pack(-side => 'right', -fill => 'y');
+    my $cv = $page->Canvas(-background => $C{paper}, -highlightthickness => 0, -borderwidth => 0,
+                           -yscrollcommand => sub { $sb->set(@_) })->pack(-fill => 'both', -expand => 1);
+    $sb->configure(-command => sub { $cv->yview(@_) });
+    my $wrap = $cv->Frame(-background => $C{paper});
+    $cv->createWindow(px(18), px(12), -window => $wrap, -anchor => 'nw');
+    $wrap->bind('<Configure>' => sub {
+        $cv->configure(-scrollregion => [ 0, 0, $wrap->reqwidth + px(36), $wrap->reqheight + px(24) ]);
+    });
+    wheel_target($cv);
+    $project_canvas = $cv;
     my $column = sub {
         my ($title) = @_;
-        my $c = $wrap->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'y', -anchor => 'n', -padx => [0, 32]);
+        my $c = $wrap->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'y', -anchor => 'n', -padx => px([0, 26]));
         $c->Label(-text => $title, -font => $UI_B, -background => $C{paper}, -foreground => $C{ink}, -anchor => 'w')
           ->pack(-fill => 'x');
-        rule($c, 'x', -pady => [4, 8]);
+        rule($c, 'x', -pady => px([4, 8]));
         my $g = $c->Frame(-background => $C{paper})->pack(-fill => 'x');
         return $g;
     };
@@ -786,12 +892,12 @@ sub build_project {
     my $label = sub {
         my ($g, $text) = @_;
         $g->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{muted}, -anchor => 'w')
-          ->grid(-row => $row, -column => 0, -sticky => 'w', -pady => 3, -padx => [0, 14]);
+          ->grid(-row => $row, -column => 0, -sticky => 'w', -pady => px(3), -padx => px([0, 14]));
     };
     my $entry = sub {
         my ($g, $field, $var, $width) = @_;
         my $e = flat_entry($g, $var, $width);
-        $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3, -ipady => 3);
+        $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px(3), -ipady => px(3));
         $e->bind('<KeyRelease>' => sub { settings_changed() });
         $form{$field} = $e;
         $row++;
@@ -802,45 +908,77 @@ sub build_project {
     my $g = $column->('PROJECT DETAILS');
     $row = 0;
     $label->($g, 'TITLE');
-    $entry->($g, 'TITLE', \$settings->{title}, 38);
+    $entry->($g, 'TITLE', \$settings->{title}, 34);
     for my $k (@f[0 .. $split]) {
         $settings->{project}{$k} //= '';
         $label->($g, HardyCross::Editor::project_label($k));
-        $entry->($g, $k, \$settings->{project}{$k}, 38);
+        $entry->($g, $k, \$settings->{project}{$k}, 34);
     }
     $g = $column->('DESIGN BASIS');
     $row = 0;
     for my $k (@f[ $split + 1 .. $#f ]) {
         $settings->{project}{$k} //= '';
         $label->($g, HardyCross::Editor::project_label($k));
-        $entry->($g, $k, \$settings->{project}{$k}, 24);
+        $entry->($g, $k, \$settings->{project}{$k}, 22);
     }
 
     $g = $column->('UNITS');
     $row = 0;
     for my $q (@HardyCross::Phc::UNIT_QUANTITIES) {
-        $label->($g, $q);
+        $label->($g, $HardyCross::Editor::UNIT_LABEL{$q});
         my $dd = drop_down($g, \$settings->{units}{$q}, $HardyCross::Phc::UNIT_CHOICES{$q}, sub { settings_changed() },
                             $HardyCross::Phc::UNIT_DEFAULT{$q});
-        $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+        $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px(3));
         $form{$q} = $dd;
         $row++;
     }
+
+    # CALCULATION: each option with a plain label, its .phc name small and
+    # grey beside it, and a line under it saying what it does and what a
+    # blank means (HardyCross::Editor::@OPTION_FORM).
     $g = $column->('CALCULATION');
     $row = 0;
-    $label->($g, 'METHOD');
+    my $help = sub {
+        my ($text) = @_;
+        $g->Label(-text => $text, -font => $UI_S_N, -background => $C{paper}, -foreground => $C{muted},
+                  -justify => 'left', -anchor => 'w', -wraplength => px(300))
+          ->grid(-row => $row++, -column => 0, -columnspan => 2, -sticky => 'w', -pady => px([0, 6]));
+    };
+    my $name = sub {
+        my ($text, $key) = @_;
+        my $f = $g->Frame(-background => $C{paper});
+        $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{ink})->pack(-side => 'left');
+        $f->Label(-text => $key, -font => $UI_S_N, -background => $C{paper}, -foreground => $C{faint})
+          ->pack(-side => 'left', -padx => px([6, 0]));
+        $f->grid(-row => $row, -column => 0, -sticky => 'w', -pady => px([3, 0]), -padx => px([0, 14]));
+    };
+    $name->('FRICTION FORMULA', 'METHOD');
     my $dd = drop_down($g, \$settings->{method}, [qw(HW DW)], sub { settings_changed() });
-    $dd->grid(-row => $row, -column => 1, -sticky => 'w', -pady => 3);
+    $dd->grid(-row => $row++, -column => 1, -sticky => 'w', -pady => px([3, 0]));
     $form{METHOD} = $dd;
-    $row++;
-    for my $o (@HardyCross::Phc::OPTIONS) {
-        $settings->{options}{$o} //= '';
-        $label->($g, $o);
-        $entry->($g, $o, \$settings->{options}{$o}, 12);
+    $help->('HW HAZEN-WILLIAMS, THE SPRINKLER STANDARD\'S METHOD. DW DARCY-WEISBACH, WITH ROUGHNESS IN PLACE OF C.');
+    for my $o (@HardyCross::Editor::OPTION_FORM) {
+        unless (ref $o) {           # a subheading
+            $g->Label(-text => $o, -font => $UI_B, -background => $C{paper}, -foreground => $C{ink}, -anchor => 'w')
+              ->grid(-row => $row++, -column => 0, -columnspan => 2, -sticky => 'w', -pady => px([12, 4]));
+            next;
+        }
+        my ($key, $text, $about, $choices) = @$o;
+        $settings->{options}{$key} //= '';
+        $name->($text, $key);
+        if ($choices) {
+            my $d = drop_down($g, \$settings->{options}{$key}, $choices, sub { settings_changed() });
+            $d->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px([3, 0]));
+            $form{$key} = $d;
+        } else {
+            my $e = flat_entry($g, \$settings->{options}{$key}, 12);
+            $e->grid(-row => $row, -column => 1, -sticky => 'w', -pady => px([3, 0]), -ipady => px(3));
+            $e->bind('<KeyRelease>' => sub { settings_changed() });
+            $form{$key} = $e;
+        }
+        $row++;
+        $help->($about);
     }
-    $g->Label(-text => "HW HAZEN-WILLIAMS, DW DARCY-WEISBACH.\nA BLANK OPTION TAKES ITS DEFAULT.",
-              -font => $UI, -background => $C{paper}, -foreground => $C{faint}, -justify => 'left')
-      ->grid(-row => $row, -column => 0, -columnspan => 3, -sticky => 'w', -pady => [8, 0]);
 }
 
 # settings_changed -- after any change in the PROJECT tab.
@@ -896,9 +1034,9 @@ sub build_results {
     $restabs = make_tabs($parent, [ 'VALIDATION', 'PIPES', 'NODES', 'OUTLETS', 'REPORT' ]);
     my $opts = $restabs->{bar};
     $checks{nodes} = check_box($opts, 'HIDE INACTIVE NODES', \$hide_nodes, sub { fill_table('NODES') });
-    $checks{nodes}{frame}->pack(-side => 'right', -padx => [6, 14]);
+    $checks{nodes}{frame}->pack(-side => 'right', -padx => px([6, 14]));
     $checks{pipes} = check_box($opts, 'HIDE NON-FLOWING PIPES', \$hide_pipes, sub { fill_table('PIPES') });
-    $checks{pipes}{frame}->pack(-side => 'right', -padx => 6);
+    $checks{pipes}{frame}->pack(-side => 'right', -padx => px(6));
 
     build_validation($restabs->{page}{VALIDATION});
     for my $name (qw(PIPES NODES OUTLETS)) {
@@ -909,8 +1047,9 @@ sub build_results {
     my $rsb = flat_scrollbar($rp, 'vertical')->pack(-side => 'right', -fill => 'y');
     $report = $rp->Text(-wrap => 'none', -font => $MONO, -background => $C{paper}, -foreground => $C{ink},
         -selectbackground => $C{select}, -selectforeground => $C{ink}, -borderwidth => 0,
-        -highlightthickness => 0, -padx => 12, -pady => 8, -state => 'disabled',
+        -highlightthickness => 0, -padx => px(12), -pady => px(8), -state => 'disabled', -cursor => $POINTER,
         -yscrollcommand => sub { $rsb->set(@_) })->pack(-fill => 'both', -expand => 1);
+    wheel_target($report);
     $rsb->configure(-command => sub { $report->yview(@_) });
     %pipe_show = map { $_->{key} => $_->{show} } HardyCross::Editor::pipe_columns({ q => '', p => '', l => '' });
 }
@@ -924,11 +1063,16 @@ sub hlist {
     my $h = $box->HList(-header => 1, -columns => $ncol, -background => $C{paper},
         -foreground => $C{ink}, -font => $MONO, -selectbackground => $C{select},
         -selectforeground => $C{ink}, -borderwidth => 0, -highlightthickness => 0,
-        -selectmode => 'browse', -drawbranch => 0, -indent => 0,
+        -selectmode => 'browse', -drawbranch => 0, -indent => 0, -selectborderwidth => 0,
+        -cursor => $POINTER, -takefocus => 0,
         -yscrollcommand => sub { $vsb->set(@_) }, -xscrollcommand => sub { $hsb->set(@_) })
         ->pack(-fill => 'both', -expand => 1);
     $vsb->configure(-command => sub { $h->yview(@_) });
     $hsb->configure(-command => sub { $h->xview(@_) });
+    # A clicked row is shown by its pale blue band alone: HList also draws a
+    # dotted box round the "anchor" row, which looked like a stray outline.
+    $h->configure(-browsecmd => sub { $h->anchorClear });
+    wheel_target($h);
     return ($h, $box);
 }
 
@@ -977,25 +1121,25 @@ sub styles {
         my $bg = $C{paper};      # no stripes: HList cannot run a band past its last column
         for my $al (qw(e w)) {
             $s{"$al$stripe"} = $h->ItemStyle('text', -anchor => $al, -font => $MONO, -background => $bg,
-                -foreground => $C{ink}, -selectforeground => $C{ink}, -padx => 8, -pady => 3);
+                -foreground => $C{ink}, -selectforeground => $C{ink}, -padx => px(8), -pady => px(3));
         }
         $s{"bad$stripe"} = $h->ItemStyle('text', -anchor => 'w', -font => $MONO_B, -background => $bg,
-            -foreground => $C{error}, -padx => 8, -pady => 3);
+            -foreground => $C{error}, -padx => px(8), -pady => px(3));
         $s{"wrap$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
-            -foreground => $C{ink}, -padx => 8, -pady => 4, -wraplength => $o{wrap} // 600, -justify => 'left');
+            -foreground => $C{ink}, -padx => px(8), -pady => px(4), -wraplength => px($o{wrap} // 600), -justify => 'left');
         $s{"what$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI_B, -background => $bg,
-            -foreground => $C{error}, -padx => 8, -pady => 4, -wraplength => 380, -justify => 'left');
+            -foreground => $C{error}, -padx => px(8), -pady => px(4), -wraplength => px(380), -justify => 'left');
         $s{"where$stripe"} = $h->ItemStyle('text', -anchor => 'nw', -font => $UI, -background => $bg,
-            -foreground => $C{ink}, -padx => 8, -pady => 4);
+            -foreground => $C{ink}, -padx => px(8), -pady => px(4));
     }
     $s{good} = $h->ItemStyle('text', -anchor => 'w', -font => $UI_B, -background => $C{paper},
-        -foreground => $C{accent}, -padx => 8, -pady => 8);
+        -foreground => $C{accent}, -padx => px(8), -pady => px(8), -wraplength => px(380));
     $s{muted} = $h->ItemStyle('text', -anchor => 'w', -font => $UI, -background => $C{paper},
-        -foreground => $C{muted}, -padx => 8, -pady => 8);
+        -foreground => $C{muted}, -padx => px(8), -pady => px(8), -wraplength => px(380));
     $s{headm} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $MONO_B,
-        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+        -background => $C{panel}, -foreground => $C{ink}, -padx => px(8), -pady => px(6));
     $s{headw} = $h->ItemStyle('text', -anchor => 'w', -justify => 'left', -font => $UI_B,
-        -background => $C{panel}, -foreground => $C{ink}, -padx => 8, -pady => 6);
+        -background => $C{panel}, -foreground => $C{ink}, -padx => px(8), -pady => px(6));
     return \%s;
 }
 
@@ -1110,7 +1254,27 @@ sub fill_results {
         $table{$name}{data} = $tables->{ lc $name };
         make_table($name);
     }
+    hide_counts();
 }
+
+#------------------------------------------------------------------------------
+# hide_counts -- how many rows each HIDE box would hide, beside it: (2), or
+# (NONE) with the box greyed when every pipe flows or every node is active,
+# so ticking a box that has nothing to hide is not mistaken for a fault.
+#------------------------------------------------------------------------------
+sub hide_counts {
+    for my $k ([ 'pipes', 'PIPES' ], [ 'nodes', 'NODES' ]) {
+        my ($key, $name) = @$k;
+        my $c = $checks{$key} or next;
+        my $d = $table{$name}{data};
+        my $n = $d ? grep { !$_->{active} } @{ $d->{rows} } : undef;
+        $c->{count}->configure(-text => !defined $n ? '' : $n ? "($n)" : '(NONE)');
+        $c->{label}->configure(-foreground => defined $n && !$n ? $C{faint} : $C{ink});
+    }
+}
+
+# hide_count_text -- the count shown beside a HIDE box (for the tests).
+sub hide_count_text { return $checks{ shift() }{count}->cget(-text) }
 
 # table_rows -- what a table shows, row by row (for the tests).
 sub table_rows {
@@ -1139,8 +1303,8 @@ sub build_validation {
     heading($h, $_, $heads[$_], $st->{headw}) for 0 .. 3;
     $h->columnWidth(0, -char => 14);
     $h->columnWidth(1, -char => 16);
-    $h->columnWidth(2, 400);
-    $h->configure(-browsecmd => sub { go_to_fault(shift) });
+    $h->columnWidth(2, px(400));
+    $h->configure(-browsecmd => sub { $h->anchorClear; go_to_fault(shift) });
     $vtable = { hlist => $h, styles => $st };
     fill_validation();
 }
@@ -1283,7 +1447,7 @@ sub pick_list {
     my $lb = $top->Listbox(-height => 14, -width => 64, -font => $MONO, -background => $C{paper},
         -foreground => $C{ink}, -selectbackground => $C{select}, -selectforeground => $C{ink},
         -activestyle => 'none', -relief => 'flat', -borderwidth => 0, -highlightthickness => 0)
-        ->pack(-fill => 'both', -expand => 1, -padx => 1, -pady => 1);
+        ->pack(-fill => 'both', -expand => 1, -padx => px(1), -pady => px(1));
     $lb->insert('end', sprintf('%-9s %s', @$_)) for @$ch;
     $lb->selectionSet(0);
     $lb->activate(0);
