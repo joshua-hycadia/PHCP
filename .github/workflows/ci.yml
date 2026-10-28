@@ -1,0 +1,102 @@
+# PHCP continuous integration and release.
+#
+#   test-linux      every test suite, the editor window under a virtual display
+#   build-windows   build_windows.bat on a Windows runner, exactly as on a PC:
+#                   phcp.exe and phcp_editor.exe, the smoke test, then the test
+#                   suites that need no display; the two programs are kept as
+#                   the run's artefacts
+#   release         on a version tag (v1.2.3) or a release published on
+#                   GitHub: the two programs attached to the release, with the
+#                   notes in release_notes/<tag>.md if there are any
+#
+# Runs on every pull request and every push to main.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Perl/Tk and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y perl-tk xvfb xauth
+      - name: Test suites
+        run: |
+          set -e
+          for t in test_curves test_phc test_pipedata test_report_checks test_pdf test_json \
+                   test_editor test_dbedit test_graph test_tools check_lisp stress_resolver; do
+            echo "== $t"
+            perl tools/$t.pl
+          done
+      - name: Editor window, under Xvfb
+        run: perl tools/test_editor_window.pl
+      - name: Invariance stress, 60 random networks
+        run: perl tools/stress_invariance.pl 60
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with build_windows.bat
+        shell: cmd
+        run: |
+          set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
+          call build_windows.bat
+      - name: Test suites that need no display, on Windows
+        shell: cmd
+        run: |
+          set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
+          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_dbedit test_graph test_tools check_lisp) do (
+            echo == %%t
+            perl tools\%%t.pl || exit /b 1
+          )
+      - name: Keep the programs
+        uses: actions/upload-artifact@v4
+        with:
+          name: phcp-windows
+          path: |
+            phcp.exe
+            phcp_editor.exe
+            tk_build.log
+          if-no-files-found: warn
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    needs: [test-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: phcp-windows
+      - name: Attach the programs to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -e
+          files="phcp.exe"
+          [ -f phcp_editor.exe ] && files="$files phcp_editor.exe"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $files --clobber
+          elif [ -f "release_notes/$TAG.md" ]; then
+            gh release create "$TAG" $files --title "PHCP ${TAG#v}" --notes-file "release_notes/$TAG.md"
+          else
+            gh release create "$TAG" $files --title "PHCP ${TAG#v}" --generate-notes
+          fi

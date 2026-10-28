@@ -332,6 +332,15 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `HardyCross/PipeData.pm`, `HardyCross/DbEdit.pm` | read it (an older database without it reads as none published); the DATABASE tab shows and edits it |
 | `HardyCross/Parse.pm`, `HardyCross/Phc.pm`, `HardyCross/Report.pm` (engine change, approved 28 October 2026) | under `METHOD DW` a pipe's roughness is as given, else the database's for its type, else 0.045 mm - and an assumed 0.045 is flagged in the report's BASIS, the warnings, the editor and the JSON |
 
+## v1.1 - builds and releases
+
+| file | change |
+|---|---|
+| `.github/workflows/ci.yml` | new: every test suite on Linux; the Windows build and the display-free suites on Windows; on a release, the two programs attached |
+| `tools/pack_with_icon.pl`, `build_windows.bat` | the icon on the `.exe` files, set on a copy of the packager's loader; the plain build if that fails |
+| `release_notes/` | the notes for each release, read by the release job |
+| `phcp_viewer.pl` | removed: the editor's results tables do what it did |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -372,3 +381,4 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 - [x] v1.0 - GRAPH tab: Q^1.85 water supply graphs from figures typed in, printed to PDF
 - [x] v1.1 - QUICK TOOLS tab: velocity, K-factor, K-factor converter, pressure loss (HW and DW)
 - [x] v1.1 - Darcy-Weisbach takes the database roughness for a pipe type; an assumed 0.045 mm is flagged (engine change, approved 28 October 2026)
+- [x] v1.1 - CI on Linux and Windows, releases with the programs attached; icon on the .exe files; viewer retired
