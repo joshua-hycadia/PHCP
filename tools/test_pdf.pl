@@ -31,6 +31,7 @@ use strict;
 use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
+use File::Spec;
 
 my @models = @ARGV ? @ARGV : grep { !/grid1000/ } glob("$FindBin::Bin/../examples/*.phc");
 my ($checks, $fails) = (0, 0);
@@ -43,12 +44,21 @@ sub ok {
     return 0;
 }
 
+# run -- phcp.pl on a model, quietly, by this perl and without a shell, so it
+# runs the same on Windows (no /dev/null, no #! line there).
+sub run {
+    open my $out, '>&', \*STDOUT or die; open my $err, '>&', \*STDERR or die;
+    open STDOUT, '>', File::Spec->devnull; open STDERR, '>', File::Spec->devnull;
+    system($^X, "$FindBin::Bin/../phcp.pl", @_);
+    open STDOUT, '>&', $out; open STDERR, '>&', $err;
+}
+
 for my $m (@models) {
     (my $name = $m) =~ s{.*/}{};
     my (undef, $txt) = tempfile(SUFFIX => '.txt', UNLINK => 1);
     my (undef, $pdf) = tempfile(SUFFIX => '.pdf', UNLINK => 1);
-    system("\"$FindBin::Bin/../phcp.pl\" \"$m\" \"$txt\" >/dev/null 2>&1");
-    system("\"$FindBin::Bin/../phcp.pl\" \"$m\" \"$pdf\" >/dev/null 2>&1");
+    run($m, $txt);
+    run($m, $pdf);
     my $P = do { open my $f, '<:raw', $pdf or next; local $/; <$f> };
     my $T = do { open my $f, '<', $txt or next; local $/; <$f> };
 
