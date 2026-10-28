@@ -18,7 +18,11 @@
 #
 #     1. pp -p   packs the script and its modules into a .par archive
 #     2. a copy of parl.exe has its icon replaced, and for a windowed
-#        program its subsystem set to windows (Win32::Exe)
+#        program its subsystem set to windows (Win32::Exe).  parl.exe is
+#        itself a packed program: its own core modules (XSLoader and the
+#        rest) are appended after the end of its PE image, and Win32::Exe
+#        writes the image alone.  So those appended bytes are taken from the
+#        original before the change and put back after it.
 #     3. that copy writes the .exe:  loader -B -O<out.exe> <archive.par>
 #        (-B bundles the core modules, as pp does by default)
 #
@@ -57,11 +61,20 @@ my $cmd = join ' ', map { /[\s;"]/ ? '"' . s/"/\\"/gr . '"' : $_ } 'pp', '-p', '
 system($cmd) == 0 && -s $par
     or die "pack_with_icon: pp -p failed\n";
 
-# 2. the loader, with the icon.
+# 2. the loader, with the icon, and its appended modules put back.
+my $orig = slurp($loader);
+my $overlay = substr($orig, pe_end($orig));
 copy($loader, $tmp) or die "pack_with_icon: cannot copy $loader: $!\n";
 my $exe = Win32::Exe->new($tmp) or die "pack_with_icon: Win32::Exe cannot read $tmp\n";
 $exe->update(icon => $icon, ($mode eq 'gui' ? (gui => 1) : ()));
 $exe->write($tmp);
+my $new = slurp($tmp);
+$new = substr($new, 0, pe_end($new)) . $overlay;
+open my $wf, '>:raw', $tmp or die "pack_with_icon: cannot write $tmp: $!\n";
+print $wf $new;
+close $wf;
+printf "pack_with_icon: loader image %d bytes, its appended modules %d bytes kept\n",
+    pe_end($new), length $overlay;
 
 # 3. the program: the loader with the archive.  Its own output is shown if it
 # fails; and an untouched copy of the loader is tried, so the log says
@@ -85,3 +98,27 @@ unless ($ok) {
 unlink $par, $tmp;
 print "pack_with_icon: $out written with the icon $icon\n";
 exit 0;
+
+sub slurp {
+    my $f = shift;
+    open my $fh, '<:raw', $f or die "pack_with_icon: cannot read $f: $!\n";
+    local $/;
+    return scalar <$fh>;
+}
+
+# pe_end -- where a Windows program's PE image ends in its file: the end of
+# its furthest section.  Anything after it is appended data (an overlay).
+sub pe_end {
+    my $b = shift;
+    die "pack_with_icon: not a Windows program\n" unless substr($b, 0, 2) eq 'MZ';
+    my $pe = unpack 'V', substr($b, 0x3C, 4);
+    die "pack_with_icon: no PE header\n" unless substr($b, $pe, 4) eq "PE\0\0";
+    my ($nsec, $optsz) = (unpack('v', substr($b, $pe + 6, 2)), unpack('v', substr($b, $pe + 20, 2)));
+    my $tab = $pe + 24 + $optsz;
+    my $end = 0;
+    for my $i (0 .. $nsec - 1) {
+        my ($size, $ptr) = unpack 'VV', substr($b, $tab + 40 * $i + 16, 8);
+        $end = $ptr + $size if $ptr + $size > $end;
+    }
+    return $end;
+}
