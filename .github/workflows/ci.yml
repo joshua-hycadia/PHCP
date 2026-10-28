@@ -38,7 +38,7 @@ jobs:
         run: |
           set -e
           for t in test_curves test_phc test_pipedata test_report_checks test_pdf test_json \
-                   test_editor test_dbedit test_graph test_tools check_lisp stress_resolver; do
+                   test_editor test_dbedit test_graph test_tools test_manual check_lisp stress_resolver; do
             echo "== $t"
             perl tools/$t.pl
           done
@@ -60,7 +60,7 @@ jobs:
         shell: cmd
         run: |
           set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
-          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_dbedit test_graph test_tools check_lisp) do (
+          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_dbedit test_graph test_tools test_manual check_lisp) do (
             echo == %%t
             perl tools\%%t.pl || exit /b 1
           )
