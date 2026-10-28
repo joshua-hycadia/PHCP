@@ -6,7 +6,7 @@
 # Json.pm -- the results of a solve as JSON, for other programs.
 #
 # Other programs -- the AutoCAD exporter now, possibly Revit later -- run
-# phcp.exe and read what it prints (Joshua, 28 October 2026: a program to call,
+# phcp.exe and read what it prints (decided 28 October 2026: a program to call,
 # not a DLL).  `phcp.exe --json model.phc` prints one JSON object, described
 # below, and the exit status says how it went: 0 converged, 1 solved but did
 # not converge, 2 the model could not be read or solved.  The JSON is written
