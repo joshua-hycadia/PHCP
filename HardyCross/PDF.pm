@@ -147,7 +147,7 @@ sub paginate {
         # numbers in @$graphs; one supply gives one graph, several give one each.
         if ($l =~ /^ SUPPLY GRAPH/) {
             my $j = $i;
-            $j++ while $j < $#L && $L[$j] !~ /O\s+operating point/;
+            $j++ while $j < $#L && $L[$j] !~ /O\s+operating point|D\s+combined duty/;
             my $graph = $graphs->[ $gi++ ];
             my $h = $graph ? $GRAPH_LINES + 2 : $j - $i + 1;
             $new_page->() if $room->() < $h && $h <= $PER_PAGE && @page;
@@ -522,6 +522,25 @@ sub draw_graph {
 
     # Curves and points, clipped to the plot.
     $o .= sprintf "q %.2f %.2f %.2f %.2f re W n\n", $pl, $pb, $pw, $ph;
+    # Combined: each supply's own curve, thin and grey, under the combined.
+    my @labels;
+    for my $part (@{ $g->{parts} || [] }) {
+        my ($id, $pts) = @$part;
+        my @in = grep { $_->[1] >= 0 } @$pts;
+        next unless @in > 1;
+        $o .= sprintf "%% PHCP-GRAPH PART %s\n", $id;
+        $o .= sprintf "0.55 G 0.6 w %.2f %.2f m\n", $X->($in[0][0]), $Y->($in[0][1]);
+        $o .= sprintf "%.2f %.2f l\n", $X->($_->[0]), $Y->($_->[1]) for @in[1 .. $#in];
+        $o .= "S 0 G\n";
+        # Its name just above the curve, a fifth of the way along the axis.
+        my ($at) = grep { $X->($_->[0]) >= $pl + 0.2 * $pw } @in;
+        next unless $at;
+        # Curves that coincide (two identical pumps) would print their names
+        # on top of each other: each later name steps down a line.
+        my ($lx, $ly) = ($X->($at->[0]), $Y->($at->[1]) + 3);
+        $ly -= 9 while grep { abs($_->[0] - $lx) < 1 && abs($_->[1] - $ly) < 8 } @labels;
+        push @labels, [ $lx, $ly, $id ];
+    }
     my @sp = @{ $g->{supply} };
     $o .= sprintf "%% PHCP-GRAPH SUPPLY %d\n", scalar @sp;
     $o .= sprintf "0 G 1.4 w 1 J 1 j %.2f %.2f m\n", $X->($sp[0][0]), $Y->($sp[0][1]);
@@ -544,7 +563,8 @@ sub draw_graph {
     # others has no demand point, so no D and no margin.
     my ($qd, $pd) = $g->{demand} ? @{ $g->{demand} } : (0, 0);
     my ($xd, $yd, $ya) = $g->{demand} ? ($X->($qd), $Y->($pd), $Y->($g->{p_avail})) : (0, 0, 0);
-    if ($g->{demand} && abs($ya - $yd) > 8) {
+    my $has_margin = $g->{demand} && defined $g->{margin};
+    if ($has_margin && abs($ya - $yd) > 8) {
         my $dir = $ya > $yd ? 1 : -1;
         $o .= sprintf "0.6 w %.2f %.2f m %.2f %.2f l S\n", $xd, $yd + 4 * $dir, $xd, $ya - 4 * $dir;
         for my $end ([ $yd + 3 * $dir, $dir ], [ $ya - 3 * $dir, -$dir ]) {
@@ -556,17 +576,21 @@ sub draw_graph {
     $o .= "Q\n";
     if ($g->{demand}) {
         my ($mlabel, undef, $mval) = @{ $g->{figures}[2] };
-        $o .= $txt->($xd + 5, ($yd + $ya) / 2 - 2.4, "$mlabel $mval", 7, 0, 'l') if abs($ya - $yd) > 8;
+        $o .= $txt->($xd + 5, ($yd + $ya) / 2 - 2.4, "$mlabel $mval", 7, 0, 'l')
+            if $has_margin && abs($ya - $yd) > 8;
 
         # D and O, drawn last so nothing covers them.
         $o .= sprintf "%% PHCP-GRAPH D %.3f %.3f\n", $xd, $yd;
         $o .= sprintf "0 g %.2f %.2f 5 5 re f\n", $xd - 2.5, $yd - 2.5;
         $o .= $txt->($xd - 5, $yd - 2.6, 'D', 8, 1, 'r');
     }
-    my ($xo, $yo) = ($X->($g->{oper}[0]), $Y->($g->{oper}[1]));
-    $o .= sprintf "%% PHCP-GRAPH O %.3f %.3f\n", $xo, $yo;
-    $o .= circle($xo, $yo, 3, 'f');
-    $o .= $txt->($xo + 5, $yo + 4, 'O', 8, 1, 'l');
+    $o .= $txt->(@$_[0, 1], $_->[2], 7, 0, 'l') for @labels;
+    if ($g->{oper}) {
+        my ($xo, $yo) = ($X->($g->{oper}[0]), $Y->($g->{oper}[1]));
+        $o .= sprintf "%% PHCP-GRAPH O %.3f %.3f\n", $xo, $yo;
+        $o .= circle($xo, $yo, 3, 'f');
+        $o .= $txt->($xo + 5, $yo + 4, 'O', 8, 1, 'l');
+    }
 
     # The key, and the figures.
     my $kx = $LEFT + 92 * $cw;
@@ -576,11 +600,20 @@ sub draw_graph {
     $o .= sprintf "0.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky - 4, $LEFT + $COLS * $cw, $ky - 4;
     $line->();
     $o .= sprintf "1.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
-    $o .= $txt->($kx + 30, $ky, "SUPPLY AVAILABLE - $g->{id} AT NODE $g->{node}", 7, 0, 'l');
-    $line->();
-    $o .= sprintf "[3 2] 0 d 0.9 w %.2f %.2f m %.2f %.2f l S [] 0 d\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
-    $o .= circle($kx + 11, $ky + 2.5, 1.5, 'f');
-    $o .= $txt->($kx + 30, $ky, 'SYSTEM CURVE - EACH POINT A FULL SOLVE', 7, 0, 'l');
+    if ($g->{combined}) {
+        $o .= $txt->($kx + 30, $ky, 'ALL SUPPLIES - FLOWS ADDED AT EQUAL PRESSURE', 7, 0, 'l');
+        $line->();
+        $o .= sprintf "0.55 G 0.6 w %.2f %.2f m %.2f %.2f l S 0 G\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
+        $o .= $txt->($kx + 30, $ky, 'EACH SUPPLY ON ITS OWN, NAMED ON ITS CURVE', 7, 0, 'l');
+    } else {
+        $o .= $txt->($kx + 30, $ky, "SUPPLY AVAILABLE - $g->{id} AT NODE $g->{node}", 7, 0, 'l');
+    }
+    if (@{ $g->{sys} } || !$g->{combined}) {
+        $line->();
+        $o .= sprintf "[3 2] 0 d 0.9 w %.2f %.2f m %.2f %.2f l S [] 0 d\n", $kx, $ky + 2.5, $kx + 22, $ky + 2.5;
+        $o .= circle($kx + 11, $ky + 2.5, 1.5, 'f');
+        $o .= $txt->($kx + 30, $ky, 'SYSTEM CURVE - EACH POINT A FULL SOLVE', 7, 0, 'l');
+    }
     if ($g->{shared}) {
         $line->();
         $o .= $txt->($kx + 30, $ky, 'WITH THE OTHER SUPPLIES CONNECTED', 7, 0, 'l');
@@ -593,14 +626,17 @@ sub draw_graph {
     if ($g->{demand}) {
         $line->();
         $o .= sprintf "%.2f %.2f 5 5 re f\n", $kx + 8.5, $ky;
-        $o .= $txt->($kx + 30, $ky, 'D  DEMAND POINT', 7, 0, 'l');
+        $o .= $txt->($kx + 30, $ky, $g->{combined} ? 'D  COMBINED DUTY' : 'D  DEMAND POINT', 7, 0, 'l');
+    }
+    if ($g->{oper}) {
+        $line->();
+        $o .= circle($kx + 11, $ky + 2.5, 3, 'f');
+        $o .= $txt->($kx + 30, $ky, 'O  OPERATING POINT', 7, 0, 'l');
     }
     $line->();
-    $o .= circle($kx + 11, $ky + 2.5, 3, 'f');
-    $o .= $txt->($kx + 30, $ky, 'O  OPERATING POINT', 7, 0, 'l');
     $line->();
-    $line->();
-    $o .= $txt->($kx, $ky, $g->{shared} ? 'THIS SUPPLY' : 'SUPPLY AND DEMAND', 8, 1, 'l');
+    $o .= $txt->($kx, $ky, $g->{combined} ? 'ALL SUPPLIES COMBINED' : $g->{shared} ? 'THIS SUPPLY'
+                            : 'SUPPLY AND DEMAND', 8, 1, 'l');
     $o .= sprintf "0.4 w %.2f %.2f m %.2f %.2f l S\n", $kx, $ky - 4, $LEFT + $COLS * $cw, $ky - 4;
     for my $f (@{ $g->{figures} }) {
         $line->();
