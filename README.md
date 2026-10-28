@@ -50,7 +50,7 @@ P1  A  B  12.0  100  TYPE=ASAM  FIT=1T,2E,1GV,1CV
 
 With `TYPE=` the diameter field is the NOMINAL size; the bore comes from that
 type's PIPE records in the database.  `FIT=` takes the office form `2E,1T` or
-the HydraCALC form `1E1T`.  A pipe without `TYPE=` works as before, with the
+the compact form `1E1T`.  A pipe without `TYPE=` works as before, with the
 bore entered directly - and the report says it carries no database provenance.
 
 ### Which fitting source applies
