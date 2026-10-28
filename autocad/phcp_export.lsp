@@ -10,7 +10,7 @@
 ;;; ---------------------------------------------------------------------------
 ;;; WHAT IT DOES
 ;;; ---------------------------------------------------------------------------
-;;; Turns a 2D pipework layout into a PHCP model file (.hcx) that PHCP solves
+;;; Turns a 2D pipework layout into a PHCP model file (.phc) that PHCP solves
 ;;; and reports on, so the network is never typed in by hand.
 ;;;
 ;;;   PHCPSETUP     create the PHCP layers and symbol blocks, set symbol size
@@ -20,7 +20,7 @@
 ;;;   PHCPELEV      mark node elevations
 ;;;   PHCPHEAD      nominate discharging heads -- place new, or tag existing
 ;;;   PHCPCHECK     check the drawing without exporting; faults are selected
-;;;   PHCPEXPORT    check, then write the .hcx file
+;;;   PHCPEXPORT    check, then write the .phc file
 ;;;   PHCPINFO      list the PHCP data on an object you pick
 ;;;
 ;;; ---------------------------------------------------------------------------
@@ -312,12 +312,18 @@
       (setq kind (getkword "\nSupply type [Static/Curve] <Static>: "))
       (if (= kind "Curve")
         (progn
-          (princ "\nEnter curve points, flow first.  At least two; Enter on a flow to finish.")
-          (while (setq q (getreal (strcat "\n  Point " (itoa (1+ (/ (length pts) 2))) " flow L/min <done>: ")))
+          ;; The static pressure is the curve's point at zero flow, and the
+          ;; model's WATER line needs it; then the flow-test points.
+          (setq p (phcp:get-real "\nStatic pressure (at zero flow), kPa" nil))
+          (if (not p) (progn (princ "\n*** No static pressure given; supply not placed.") (exit)))
+          (setq pts (list 0.0 p))
+          (princ "\nNow the flow-test points, flow first.  At least one; Enter on a flow to finish.")
+          (while (setq q (getreal (strcat "\n  Point " (itoa (/ (length pts) 2)) " flow L/min <done>: ")))
             (setq p (getreal "\n  pressure kPa: "))
             (if p (setq pts (append pts (list q p)))))
           (if (< (length pts) 4)
-            (progn (princ "\n*** A curve needs at least two points; supply not placed.") (exit)))
+            (progn (princ "\n*** A curve needs at least one flow-test point; supply not placed.") (exit)))
+          (setq p nil)
           (setq info (strcat "CURVE " (itoa (/ (length pts) 2)) " points")))
         (progn
           (setq p (phcp:get-real "\nStatic pressure, kPa" nil))
@@ -517,10 +523,28 @@
         (if (< (length (vl-remove nil (list (phcp:num "K" al) (phcp:num "P" al) (phcp:num "Q" al)))) 2)
           (setq probs (cons (list "ERROR" (strcat "head " (phcp:val "ID" al) " needs two of K, pressure and flow") e) probs))))))
 
-  ;; -- supplies
+  ;; -- supplies: on a pipe end, and with a static pressure (the WATER line
+  ;;    of the model needs it; a curve entered before PHCPSUPPLY asked for it
+  ;;    may not start at zero flow)
   (foreach e sups
     (if (not (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
-      (setq probs (cons (list "ERROR" "supply is not on a pipe end - snap it to one" e) probs))))
+      (setq probs (cons (list "ERROR" "supply is not on a pipe end - snap it to one" e) probs)))
+    (if (not (phcp:supply-curve (phcp:xd-get e)))
+      (setq probs (cons (list "ERROR" (strcat "supply " (phcp:val "ID" (phcp:xd-get e))
+                                              " has no static pressure - place it again with PHCPSUPPLY") e) probs))))
+
+  ;; -- a supply or a head names the node it sits on, so a node can carry
+  ;;    only one of them; a head with its own elevation (a drop) has its own
+  ;;    node and does not count
+  (setq ids nil)
+  (foreach e (append sups (vl-remove-if '(lambda (h) (phcp:num "Z" (phcp:xd-get h))) heads))
+    (setq ia (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
+    (if ia
+      (if (assoc ia ids)
+        (setq probs (cons (list "ERROR" (strcat (phcp:val "ID" (phcp:xd-get e)) " and "
+                                                (cdr (assoc ia ids)) " are on the same pipe end - "
+                                                "give the head its own elevation, or move one") e) probs))
+        (setq ids (cons (cons ia (phcp:val "ID" (phcp:xd-get e))) ids)))))
 
   ;; -- pipe IDs: keep existing ones, number new ones after the highest in use
   (setq used (mapcar '(lambda (p) (phcp:val "ID" (phcp:xd-get p))) pipes) np (phcp:next-id "P" used))
@@ -532,6 +556,13 @@
     (setq pid (phcp:val "ID" (phcp:xd-get e)))
     (if (member pid ids)
       (setq probs (cons (list "ERROR" (strcat "two pipes share ID " pid " - copied lines keep their ID; clear it with PHCPPIPE") e) probs))
+      (setq ids (cons pid ids))))
+  ;; -- every name in the model is used once: a supply's or head's ID must not
+  ;;    be a pipe's, another head's, or a plain node's (N1, N2 ...)
+  (foreach e (append sups heads)
+    (setq pid (phcp:name (phcp:val "ID" (phcp:xd-get e))))
+    (if (or (member pid ids) (assoc pid nodes))
+      (setq probs (cons (list "ERROR" (strcat "the ID " pid " is used twice - give this one another ID") e) probs))
       (setq ids (cons pid ids))))
 
   ;; -- per-pipe checks
@@ -575,41 +606,155 @@
 
 ;;;============================================================================
 ;;; WRITING THE MODEL
+;;;
+;;; The model is written in PHCP's command language (.phc): one command per
+;;; line, fields by position, comments after //, everything in capitals.  The
+;;; file reads top to bottom as
+;;;
+;;;   // where it came from
+;;;   TITLE, PROJECT    the cover sheet, as entered with PHCPPROJECT
+;;;   UNITS, METHOD     metres, millimetres, kPa, L/min; Hazen-Williams
+;;;   WATER             the supply: its node, elevation, static pressure and
+;;;                     any flow-test points
+;;;   NODE              every other pipe junction, with its elevation
+;;;   SPRINKLER etc.    every head: its node, elevation, minimum and K
+;;;   USE, PIPE         every pipe, with a USE line wherever the pipe type or
+;;;                     C factor changes; then the drops to heads
+;;;
+;;; A supply or head NAMES its node: the node a head sits on is called by the
+;;; head's ID (S12), the supply's node by the supply's ID (SUP1), and only a
+;;; plain junction is N1, N2 ...  So the calculation's results read against
+;;; the drawing's own IDs.  A head given its own elevation sits on its own
+;;; node, named by its ID; the drop to it is the pipe <ID>_D from the
+;;; branch-line node.
 ;;;============================================================================
 
-(defun phcp:write (fname res uf tol / f nodes pipes heads sups al nd ia ib za zb plan len
-                    hn hz drops dn id v)
-  (setq nodes (nth 0 res) pipes (nth 1 res) heads (nth 2 res) sups (nth 3 res))
+;; A command word padded to the column the fields start in.
+(defun phcp:cmd (c / s)
+  (setq s c)
+  (while (< (strlen s) 10) (setq s (strcat s " ")))
+  s)
+
+;; Text for the model: capitals, and none of the characters the .phc reader
+;; refuses ("!" "#") or reads as a comment ("//").
+(defun phcp:clean (s / i)
+  (setq s (strcase s))
+  (while (setq i (vl-string-search "//" s)) (setq s (strcat (substr s 1 (1+ i)) (substr s (+ i 3)))))
+  (vl-string-translate "!#" "  " s))
+
+;; An ID as a .phc name: capitals, spaces as underscores.
+(defun phcp:name (s) (vl-string-translate " " "_" (strcase s)))
+
+;; Numbers from a space-separated string, e.g. a supply curve.
+(defun phcp:numbers (s / out w i)
+  (setq s (strcat (vl-string-trim " " s) " "))
+  (while (setq i (vl-string-search " " s))
+    (setq w (substr s 1 i) s (vl-string-left-trim " " (substr s (+ i 2))))
+    (if (distof w 2) (setq out (append out (list (distof w 2))))))
+  out)
+
+;; A supply's static pressure and its flow-test points, as
+;; (static (q1 p1 q2 p2 ...)).  A curve entered from zero flow carries its
+;; static pressure as its first point.  nil if the static pressure is unknown.
+(defun phcp:supply-curve (al / pts)
+  (setq pts (if (= (phcp:val "TYPE" al) "CURVE") (phcp:numbers (phcp:val "CURVE" al)) nil))
+  (cond ((and pts (= (car pts) 0.0)) (list (cadr pts) (cddr pts)))
+        ((phcp:num "P" al) (list (phcp:num "P" al) pts))
+        (t nil)))
+
+;; A head's line: TYPE NAME ELEVATION MINFLOW K.  MINFLOW is the minimum flow,
+;; or the minimum pressure as a negative number.  Of K, minimum pressure and
+;; minimum flow any two are entered; K is worked out from the other two when
+;; it is not given, and when all three are, the larger demand governs.
+(defun phcp:head-line (al name z / k p q mf ty)
+  (setq k (phcp:num "K" al) p (phcp:num "P" al) q (phcp:num "Q" al))
+  (if (and (not k) p q (> p 0)) (setq k (/ q (sqrt p))))
+  (setq mf (cond ((and q p k (> q (* k (sqrt p)))) (phcp:fmt q))
+                 (p (strcat "-" (phcp:fmt p)))
+                 (t (phcp:fmt q))))
+  (setq ty (phcp:val "TYPE" al))
+  (strcat (phcp:cmd (cond ((= ty "HYDRANT") "HYDRANT") ((= ty "HOSEREEL") "HREEL") (t "SPRINKLER")))
+          name " " (phcp:fmt z) " " mf " " (phcp:fmt k)))
+
+;; The name of each node, by index: the supply's ID, the ID of a head sitting
+;; on it without a drop, or its own N1, N2 ...
+(defun phcp:node-names (res tol / nodes names i al)
+  (setq nodes (nth 0 res) names (mapcar 'car nodes))
+  (foreach e (nth 3 res)
+    (setq i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
+    (if i (setq names (phcp:set-nth names i (phcp:name (phcp:val "ID" (phcp:xd-get e)))))))
+  (foreach e (nth 2 res)
+    (setq al (phcp:xd-get e) i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
+    (if (and i (not (phcp:num "Z" al)))
+      (setq names (phcp:set-nth names i (phcp:name (phcp:val "ID" al))))))
+  names)
+
+;; A list with its element at index i replaced.
+(defun phcp:set-nth (lst i v / j out)
+  (setq j 0)
+  (foreach x lst (setq out (cons (if (= j i) v x) out) j (1+ j)))
+  (reverse out))
+
+;; A pipe's USE line: its type, and its C factor when one was given.
+(defun phcp:use-line (ty c)
+  (strcat (phcp:cmd "USE") ty (if (and c (/= c "")) (strcat " " c) "")))
+
+;; Fittings as .phc fields: "2E,1T" becomes "2E 1T".
+(defun phcp:fits (f)
+  (if (and f (/= f "")) (strcat " " (vl-string-translate "," " " (strcase f))) ""))
+
+(defun phcp:write (fname res uf tol / f nodes pipes heads sups names al nd ia ib za zb plan len
+                    hz dn v sc use u n i supnodes headnodes)
+  (setq nodes (nth 0 res) pipes (nth 1 res) heads (nth 2 res) sups (nth 3 res)
+        names (phcp:node-names res tol))
   (setq f (open fname "w"))
-  (write-line (strcat "! PHCP model exported from AutoCAD by phcp_export.lsp") f)
-  (write-line (strcat "! Drawing: " (getvar "DWGPREFIX") (getvar "DWGNAME")) f)
-  (write-line (strcat "! Exported: " (menucmd "M=$(edtime,$(getvar,date),YYYY-MO-DD HH:MM)")) f)
-  (write-line "! Node names follow pipe order and may change between exports." f)
-  (write-line "! Pipe and head IDs are stored in the drawing and stay the same." f)
+  (write-line "// PHCP MODEL EXPORTED FROM AUTOCAD BY PHCP_EXPORT.LSP" f)
+  (write-line (strcat "// DRAWING: " (phcp:clean (strcat (getvar "DWGPREFIX") (getvar "DWGNAME")))) f)
+  (write-line (strcat "// EXPORTED: " (menucmd "M=$(edtime,$(getvar,date),YYYY-MO-DD HH:MM)")) f)
+  (write-line "// NODE NAMES FOLLOW PIPE ORDER AND MAY CHANGE BETWEEN EXPORTS." f)
+  (write-line "// PIPE AND HEAD IDS ARE STORED IN THE DRAWING AND STAY THE SAME." f)
   (write-line "" f)
 
-  ;; PROJECT -- only the fields that have been filled in
-  (write-line "PROJECT" f)
+  ;; The cover sheet: only the fields that have been filled in.
   (foreach p *phcp-project-fields*
     (if (and (setq v (phcp:proj-get (car p))) (/= v ""))
-      (write-line (strcat "  " (car p) " " v) f)))
-  (write-line "END" f)
-  (write-line "UNITS\n  FLOW LPM\n  PRESSURE KPA\n  LENGTH M\n  DIAMETER MM\nEND" f)
-  (write-line "OPTIONS\n  METHOD HW\nEND" f)
+      (write-line (if (= (car p) "TITLE")
+                    (strcat (phcp:cmd "TITLE") (phcp:clean v))
+                    (strcat (phcp:cmd "PROJECT") (car p) " " (phcp:clean v)))
+                  f)))
+  (foreach u '("LENGTH M" "ELEVATION M" "SIZE MM" "PRESSURE KPA" "FLOW LPM" "KFACTOR LPM/KPA")
+    (write-line (strcat (phcp:cmd "UNITS") u) f))
+  (write-line (strcat (phcp:cmd "METHOD") "HW") f)
+  (write-line "" f)
 
-  ;; NODES
-  (write-line "NODES" f)
-  (foreach n nodes (write-line (strcat "  " (car n) " " (phcp:fmt (caddr n))) f))
-  ;; head nodes created for drops
+  ;; The supply, then every other node, then the heads.  A node that is a
+  ;; supply's or a head's is written once, as that.
+  (foreach e sups
+    (setq al (phcp:xd-get e)
+          i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol)
+          sc (phcp:supply-curve al)
+          supnodes (cons i supnodes))
+    (write-line (strcat (phcp:cmd "WATER") (nth i names) " " (phcp:fmt (caddr (nth i nodes)))
+                        " " (phcp:fmt (car sc))
+                        (apply 'strcat (mapcar '(lambda (x) (strcat " " (phcp:fmt x))) (cadr sc))))
+                f))
   (foreach e heads
-    (setq al (phcp:xd-get e))
-    (if (phcp:num "Z" al)
-      (write-line (strcat "  " (phcp:val "ID" al) "_H " (phcp:fmt (phcp:num "Z" al))) f)))
-  (write-line "END" f)
+    (setq al (phcp:xd-get e) i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
+    (if (not (phcp:num "Z" al)) (setq headnodes (cons i headnodes))))
+  (setq i 0)
+  (foreach nd nodes
+    (if (not (or (member i supnodes) (member i headnodes)))
+      (write-line (strcat (phcp:cmd "NODE") (nth i names) " " (phcp:fmt (caddr nd))) f))
+    (setq i (1+ i)))
+  (foreach e heads
+    (setq al (phcp:xd-get e) i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol))
+    (write-line (phcp:head-line al (phcp:name (phcp:val "ID" al))
+                                (if (phcp:num "Z" al) (phcp:num "Z" al) (caddr (nth i nodes))))
+                f))
+  (write-line "" f)
 
-  ;; PIPES -- true length from plan length and the change in elevation,
-  ;; unless an override was given
-  (write-line "PIPES" f)
+  ;; Pipes -- true length from the plan length and the change in elevation,
+  ;; unless an override was given.  A USE line wherever the type or C changes.
   (foreach e pipes
     (setq al (phcp:xd-get e)
           ia (phcp:find-node (vlax-curve-getStartPoint e) nodes tol)
@@ -617,50 +762,25 @@
           za (caddr (nth ia nodes)) zb (caddr (nth ib nodes))
           plan (* uf (vlax-curve-getDistAtParam e (vlax-curve-getEndParam e)))
           len (if (phcp:num "LEN" al) (phcp:num "LEN" al) (sqrt (+ (* plan plan) (* (- zb za) (- zb za))))))
-    (write-line (strcat "  " (phcp:val "ID" al) " " (car (nth ia nodes)) " " (car (nth ib nodes))
-                        " " (phcp:fmt len) " " (phcp:val "DN" al)
-                        " TYPE=" (phcp:val "TYPE" al)
-                        (if (phcp:val "C" al) (strcat " C=" (phcp:val "C" al)) "")
-                        (if (phcp:val "FIT" al) (strcat " FIT=" (phcp:val "FIT" al)) ""))
+    (setq u (phcp:use-line (phcp:val "TYPE" al) (phcp:val "C" al)))
+    (if (/= u use) (progn (write-line u f) (setq use u)))
+    (write-line (strcat (phcp:cmd "PIPE") (phcp:name (phcp:val "ID" al)) " " (nth ia names) " " (nth ib names)
+                        " " (phcp:fmt len) " " (phcp:val "DN" al) (phcp:fits (phcp:val "FIT" al)))
                 f))
-  ;; drops: from the branch-line node to the head's own node
+  ;; Drops: from the branch-line node to the head's own node.
   (foreach e heads
     (setq al (phcp:xd-get e))
     (if (setq hz (phcp:num "Z" al))
       (progn
-        (setq ia (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol)
-              nd (nth ia nodes)
+        (setq i (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol)
+              nd (nth i nodes)
               dn (if (phcp:num "DROP_DN" al) (phcp:val "DROP_DN" al) "25"))
-        (write-line (strcat "  " (phcp:val "ID" al) "_D " (car nd) " " (phcp:val "ID" al) "_H "
-                            (phcp:fmt (max 0.001 (abs (- hz (caddr nd))))) " " dn
-                            " TYPE=" (if (phcp:val "DROP_TYPE" al) (phcp:val "DROP_TYPE" al) "ASAM")
-                            (if (phcp:val "DROP_FIT" al) (strcat " FIT=" (phcp:val "DROP_FIT" al)) ""))
+        (setq u (phcp:use-line (if (phcp:val "DROP_TYPE" al) (phcp:val "DROP_TYPE" al) "ASAM") nil))
+        (if (/= u use) (progn (write-line u f) (setq use u)))
+        (write-line (strcat (phcp:cmd "PIPE") (phcp:name (phcp:val "ID" al)) "_D " (nth i names) " "
+                            (phcp:name (phcp:val "ID" al)) " " (phcp:fmt (max 0.001 (abs (- hz (caddr nd)))))
+                            " " dn (phcp:fits (phcp:val "DROP_FIT" al)))
                     f))))
-  (write-line "END" f)
-
-  ;; SUPPLIES
-  (write-line "SUPPLIES" f)
-  (foreach e sups
-    (setq al (phcp:xd-get e)
-          nd (nth (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol) nodes))
-    (write-line (strcat "  " (phcp:val "ID" al) " " (car nd) " " (phcp:val "TYPE" al) " "
-                        (if (= (phcp:val "TYPE" al) "CURVE") (phcp:val "CURVE" al) (phcp:val "P" al)))
-                f))
-  (write-line "END" f)
-
-  ;; DISCHARGES -- a head with a drop discharges at its own node
-  (write-line "DISCHARGES" f)
-  (foreach e heads
-    (setq al (phcp:xd-get e)
-          nd (nth (phcp:find-node (cdr (assoc 10 (entget e))) nodes tol) nodes))
-    (write-line (strcat "  " (phcp:val "ID" al) " "
-                        (if (phcp:num "Z" al) (strcat (phcp:val "ID" al) "_H") (car nd))
-                        " " (phcp:val "TYPE" al)
-                        (if (phcp:num "K" al) (strcat " K=" (phcp:val "K" al)) "")
-                        (if (phcp:num "Q" al) (strcat " Q=" (phcp:val "Q" al)) "")
-                        (if (phcp:num "P" al) (strcat " P=" (phcp:val "P" al)) ""))
-                f))
-  (write-line "END" f)
   (close f))
 
 ;; Node and pipe tags on layer PHCP-TAGS, so the calculation can be read
@@ -707,8 +827,8 @@
     (princ "\n*** Not exported: fix the errors above, then run PHCPEXPORT again.")
     (progn
       (setq fname (getfiled "Save PHCP model"
-                            (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME")) ".hcx")
-                            "hcx" 1))
+                            (strcat (getvar "DWGPREFIX") (vl-filename-base (getvar "DWGNAME")) ".phc")
+                            "phc" 1))
       (if fname
         (progn
           (phcp:write fname res uf *phcp-tol*)

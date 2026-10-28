@@ -80,6 +80,7 @@ perl tools/test_curves.pl           # supply, pump and loss curves
 perl tools/test_pipedata.pl         # pipe and fitting database, 35 checks
 perl tools/test_report_checks.pl    # report hand-checks across the examples
 perl tools/test_pdf.pl              # PDF structure checks
+perl tools/check_lisp.pl            # the AutoCAD exporter's structure (no AutoCAD here)
 perl tools/stress_resolver.pl       # fitting resolver
 perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
 perl tools/test_editor.pl           # the editor's logic, headless
