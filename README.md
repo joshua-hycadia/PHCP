@@ -20,12 +20,16 @@ perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
+perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
-One file type: `.phc`, the command language described below.  `phcp.pl`, the
-editor, the viewer and the AutoCAD exporter all read or write it, and a file of
-any other type is refused with the reason.
+One model file type: `.phc`, the command language described below.  `phcp.pl`,
+the editor, the viewer and the AutoCAD exporter all read or write it, and a
+file of any other type is refused with the reason.  (The editor's GRAPH tab,
+which draws a water supply graph from figures typed in rather than from a
+model, keeps those figures in a `.phg` file of its own - see Water supply
+graph.)
 
 ## The .phc command language
 
@@ -359,6 +363,7 @@ there and selects it.
 | HIDE | HIDE NON-FLOWING PIPES and HIDE INACTIVE NODES, each with the count of rows it would hide beside it - (NONE), and greyed, when every pipe flows or every node is active |
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
+| GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
@@ -378,6 +383,51 @@ Linux with Tk 804.036.  The window has been run on Windows 11
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
 tests, and Tk::TableMatrix is no longer needed.
+
+## Water supply graph
+
+The editor's GRAPH tab draws a water supply graph on Q^1.85 paper from figures
+typed in - before a network is modelled, or from a flow test and a pump's data
+sheet.  It is independent of the model: nothing is read from the network or
+from a calculation, and nothing in it changes them.  Flows in L/min, pressures
+in kPa.
+
+| curve | what it is |
+|---|---|
+| A | the water supply as measured - a flow test - at least two points |
+| B | the loss from the supply to the datum the duties are stated at (pipework, meter, backflow device, height).  One point is a loss line through the origin, rising as Q^1.85; none is no loss |
+| C | the supply available at the datum: A - B |
+| D | a pump curve from churn (0 L/min) out; or none |
+| E | the supply available at the datum with the pump: C + D |
+
+Up to ten DUTY points - a flow needed at a pressure, with a number and a
+description - are each compared with the curve designed against (E with a
+pump, C without): the pressure that curve has at the duty's flow, and the
+margin, or the shortfall.  Each curve passes through its points and is
+straight between them on this paper, by the solver's own curve rule (the same
+as a supply or pump in a model); beyond its last point it continues straight
+in flow.  The axes are worked out from the figures unless set.
+
+The tab has the figures on the left and the graph on the right, redrawn as
+they are typed, with a key under it giving each duty's margin.  A problem -
+a flow with no pressure, flows not rising row by row, a gap between rows, a
+pump not starting at churn, a letter O for a zero - is listed under the
+graph with its row; its fields are shaded, and a click on it goes to the
+field.  PRINT TO PDF writes the sheet: A4 landscape in the report's typeface
+and frame, the graph on the left; on the right the key, the duty points with
+the pressure each has and its margin, and the points entered.  The curve
+designed against is the heavy line.  SAVE GRAPH and OPEN GRAPH keep the
+figures in a `.phg` file - plain text, a keyword and its fields on each line
+(`PROJECT`, `JOB`, `DATE`, `BY`, `PMAX`, `PSTEP`, `QMAX`, `A`, `B`, `D`,
+`DUTY <flow> <pressure> <number> <description>`).  `examples/10_supply_graph.phg`
+is a town main with a booster pump, checked against a sprinkler and a hydrant
+duty.
+
+`HardyCross/Graph.pm` makes every decision - what is wrong, where the curves
+go, what the sheet shows - with no Tk in it; `tools/test_graph.pl` checks
+the curves against figures worked by a formula written out in the test,
+every refusal, the file, and the sheet's PDF (where the plot, curves, points
+and duties are drawn).
 
 ## The report: cover sheet
 
@@ -694,7 +744,8 @@ others on the page, and the report says which check to make.
 | report hand-checks, 8 models | 419 / 419 |
 | PDF structure, typeface and graphs, 8 models | 158 / 158 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 117 / 117 |
+| text editor window, under Xvfb | 130 / 130 |
+| water supply graph | 43 / 43 |
 | database editing and location | 37 / 37 |
 | invariance stress | 9 584 / 9 584 |
 
