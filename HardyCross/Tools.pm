@@ -195,7 +195,8 @@ sub kconvert {
 #------------------------------------------------------------------------------
 # loss -- { type, size, flow, length, c, eps } as typed.  Length blank is one
 # metre; C and roughness blank are the pipe type's.  Returns
-#   { ok => 1, bore, velocity, length, c, eps,
+#   { ok => 1, bore, velocity, length, c, eps, eps_src (GIVEN, DATABASE, or
+#     DEFAULT: 0.045 mm assumed, none given or published),
 #     hw => { per_m, total },
 #     dw => { per_m, total, re, f, regime },
 #     diff (DW - HW, kPa), diff_pct (of HW) }
@@ -210,6 +211,7 @@ sub loss {
     push @err, $de if $de;
     my ($q, $qe) = number('FLOW', $f{flow}, 'nonneg');
     push @err, [ 'FLOW', $qe ] if $qe;
+    my $eps_published = sub { my $t = HardyCross::PipeData::pipe_type(shift); $t && defined $t->{eps} };
     my $len = 1;
     unless (blank($f{length})) {
         my ($l, $le) = number('LENGTH', $f{length});
@@ -220,10 +222,13 @@ sub loss {
         my ($v, $ce) = number('C FACTOR', $f{c});
         if ($ce) { push @err, [ 'C', $ce ] } else { $c = $v }
     }
+    # The roughness: as typed; else the type's, from the database; else the
+    # program default, 0.045 mm -- and then said to be assumed.
     my $eps = $f{type} && !$de ? type_eps($f{type}) : $EPS_DEFAULT;
+    my $eps_src = $f{type} && !$de && $f{type} ne $BORE && $eps_published->($f{type}) ? 'DATABASE' : 'DEFAULT';
     unless (blank($f{eps})) {
         my ($v, $ee) = number('ROUGHNESS', $f{eps}, 'nonneg');
-        if ($ee) { push @err, [ 'EPS', $ee ] } else { $eps = $v }
+        if ($ee) { push @err, [ 'EPS', $ee ] } else { ($eps, $eps_src) = ($v, 'GIVEN') }
     }
     return { ok => 0, errors => \@err } if @err;
 
@@ -241,7 +246,7 @@ sub loss {
     my $re = $v * ($d / 1000) / $nu;
     my $fr = HardyCross::dw_friction($re, $eps, $d);
     return {
-        ok => 1, bore => $d, velocity => $v, length => $len, c => $c, eps => $eps, nu => $nu,
+        ok => 1, bore => $d, velocity => $v, length => $len, c => $c, eps => $eps, eps_src => $eps_src, nu => $nu,
         hw => { per_m => $hw / $len, total => $hw },
         dw => { per_m => $dw / $len, total => $dw, re => $re, f => $fr,
                 regime => $re < 2000 ? 'LAMINAR' : $re < 4000 ? 'TRANSITIONAL' : 'TURBULENT' },
