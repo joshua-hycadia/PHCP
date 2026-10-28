@@ -593,5 +593,50 @@ print "10. PUMPS AGAINST THEIR DUTY, AND THE HOSE ALLOWANCE\n";
     refused('a negative allowance is refused', $one . "OPTION HOSE_ALLOWANCE -5\n", 7, qr/HOSE_ALLOWANCE CANNOT BE NEGATIVE/);
 }
 
+#==============================================================================
+print "11. DESIGN AREAS - each solved, the governing one reported\n";
+#==============================================================================
+{
+    require HardyCross::Areas;
+    require HardyCross::Report;
+    my $t = slurp("$EX/11_design_areas.phc");
+    my ($all, $err) = read_phc($t);
+    is('AREA lines read: three areas, MIDDLE from two lines (4 outlets)',
+       $all && @{ $all->{areas} } == 3 && @{ (grep { $_->{name} eq 'MIDDLE' } @{ $all->{areas} })[0]{outlets} } == 4, $err);
+    my %out = map { $_->{id} => 1 } grep { $_->{kind} eq 'DISCHARGE' } @{ $all->{elems} }[1 .. $#{ $all->{elems} }];
+    is('   read without DESIGN_AREA, every outlet flows', keys %out == 9);
+    my ($near) = read_phc($t . "OPTION DESIGN_AREA NEAR\n");
+    %out = map { $_->{id} => 1 } grep { $_->{kind} eq 'DISCHARGE' } @{ $near->{elems} }[1 .. $#{ $near->{elems} }];
+    is('OPTION DESIGN_AREA NEAR: A1-A4 flow, B1-B4 are shut, HR1 (in no area) flows',
+       join(' ', sort keys %out) eq 'A1 A2 A3 A4 HR1');
+    my ($g, $ok) = HardyCross::Areas::governing($all, HardyCross::solve_model($all));
+    my %r = map { $_->{name} => $_ } @{ $g->{area_results} || [] };
+    is('every area solved; FAR governs, with the least margin at the supply',
+       $ok && keys %r == 3 && $r{FAR}{governs} && $g->{design_area} eq 'FAR' && $g->{area_basis} eq 'SUPPLY'
+       && !grep { $r{FAR}{demand}{margin} > $_->{demand}{margin} } values %r);
+    my $dm = HardyCross::Demand::demand_point($g);
+    is('   the network returned is FAR\'s: its own demand point is the one listed',
+       abs($dm->{p_demand} - $r{FAR}{demand}{p}) < 1e-9 && abs($dm->{q_demand} - $r{FAR}{demand}{q}) < 1e-9);
+    my $rep = HardyCross::Report::write_report($g, $ok, '11_design_areas.phc');
+    (my $flat = $rep) =~ s{\s+}{ }g;
+    is('   the report lists the areas and says FAR governs, and why',
+       $rep =~ /^ FAR\s+4\s+B4\b.*<- GOVERNS$/m && $flat =~ /This report is for area FAR, which governs: it has the least margin at the supply/);
+    my ($forced) = read_phc($t . "OPTION DESIGN_AREA NEAR\n");
+    my ($f2, $ok2) = HardyCross::Areas::governing($forced, HardyCross::solve_model($forced));
+    my $frep = HardyCross::Report::write_report($f2, $ok2, 'x.phc');
+    ($flat = $frep) =~ s{\s+}{ }g;
+    is('OPTION DESIGN_AREA: that area only, nothing picked, and the report says so',
+       $f2 == $forced && !$f2->{area_results} && $flat =~ /for design area NEAR \(4 outlets\), chosen by OPTION DESIGN_AREA/);
+    my ($none) = read_phc(slurp("$EX/01_single_branch.phc"));
+    my ($n2) = HardyCross::Areas::governing($none, 1);
+    is('a model with no AREA is returned as it is', $n2 == $none && !$none->{areas});
+    my $m = join "\n", 'WATER W 0 500', 'NODE J 0', 'SPRINKLER S1 0 -50 8', 'USE BORE 120',
+        'PIPE P1 W J 10 50', 'PIPE P2 J S1 5 25', '';
+    refused('an AREA naming a node not defined', $m . "AREA A S1 S9\n", 7, qr/AREA A: S9 IS NOT DEFINED/);
+    refused('an AREA naming a node that is not an outlet', $m . "AREA A S1 J\n", 7, qr/AREA A: J IS NOT AN OUTLET/);
+    refused('DESIGN_AREA of an area not in the model', $m . "AREA A S1\nOPTION DESIGN_AREA B\n", 8, qr/DESIGN_AREA B: NO AREA OF THAT NAME \(A\)/);
+    refused('   ...or with no area at all', $m . "OPTION DESIGN_AREA B\n", 7, qr/THE MODEL HAS NO AREA/);
+}
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
