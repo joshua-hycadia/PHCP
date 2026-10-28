@@ -12,6 +12,8 @@
 #              and metric (L/min per root bar, and per root kPa)
 #   loss       a pipe type and size, and a flow: the friction loss by
 #              Hazen-Williams and by Darcy-Weisbach, side by side
+#   fittings   a pipe type and size, and fittings: their equivalent length
+#              from the database, fitting by fitting
 #
 # Each takes the fields as typed (text) and returns either the answer or the
 # problems with the fields, each naming its field, so the tab only draws.
@@ -31,9 +33,14 @@
 #   the Colebrook equation when turbulent (Re 4000 and above), 64/Re when
 #   laminar (below 2000), and a straight blend of the two between.
 #
-#   Units: flow L/min, pressure kPa, length m, bore and roughness mm,
-#   velocity m/s.  A K-factor is in L/min per root kPa or per root bar, as
-#   chosen: a K80 head is K 8 in L/min/kPa^0.5 and K 80 in L/min/bar^0.5.
+#   UNITS.  Each calculator takes units => { FLOW, PRESSURE, LENGTH, SIZE,
+#   KFACTOR } -- the PROJECT tab's, with the same choices and the same factors
+#   as a model (HardyCross::Phc).  Fields are read in those units and turned
+#   into L/min, kPa, m and mm for the sums; the answers come back in L/min,
+#   kPa, m and mm, with show(), below, to give them in the units chosen.
+#   Without units, everything is L/min, kPa, m and mm.  Velocity is m/s.  A
+#   K80 head is K 8 in L/min/kPa^0.5, K 80 in L/min/bar^0.5, K 5.6 in
+#   gpm/psi^0.5.
 #==============================================================================
 package HardyCross::Tools;
 
@@ -42,12 +49,50 @@ use warnings;
 use HardyCross;
 use HardyCross::Parse;
 use HardyCross::PipeData;
+require HardyCross::Phc;    # the unit choices and factors; it uses this module's neighbours
 
 # The pipe "type" that takes a bore typed in, rather than a size looked up.
 our $BORE = 'BORE';
 our $EPS_DEFAULT = 0.045;     # mm, as HardyCross::Parse gives a pipe with none
 
 sub blank  { !defined $_[0] || $_[0] !~ /\S/ }
+
+#------------------------------------------------------------------------------
+# Units.
+#------------------------------------------------------------------------------
+our %INTERNAL = (FLOW => 'LPM', PRESSURE => 'KPA', LENGTH => 'M', SIZE => 'MM', KFACTOR => 'LPM/KPA');
+my %KALIAS = (US => 'GPM/PSI', BAR => 'LPM/BAR', KPA => 'LPM/KPA');
+
+# units_of -- a units hash completed: anything not given is the internal unit.
+sub units_of {
+    my $u = shift || {};
+    return { map { $_ => (uc($u->{$_} // '') || $INTERNAL{$_}) } keys %INTERNAL };
+}
+
+# factor -- what one of $unit is in the internal unit of $q: L/min, kPa, m, mm.
+sub factor {
+    my ($q, $unit) = @_;
+    return HardyCross::Phc::unit_factor($q, $unit) if $q eq 'FLOW' || $q eq 'PRESSURE';
+    return HardyCross::Phc::length_metres(1, $unit) if $q eq 'LENGTH';
+    return HardyCross::Phc::size_mm(1, $unit) if $q eq 'SIZE';
+    die "no unit factor for $q\n";
+}
+
+# kfactor_factor -- what a K of 1 in a KFACTOR unit (e.g. GPM/PSI) is in
+# L/min per root kPa: the flow factor over the root of the pressure factor.
+sub kfactor_factor {
+    my $unit = uc shift;
+    $unit = $KALIAS{$unit} // $unit;
+    my ($kq, $kp) = split m{/}, $unit;
+    return factor('FLOW', $kq) / sqrt(factor('PRESSURE', $kp));
+}
+
+# show -- an internal value (L/min, kPa, m, mm) in the unit chosen for $q.
+sub show {
+    my ($q, $v, $units) = @_;
+    return $v / factor($q, units_of($units)->{$q});
+}
+
 sub is_num { defined $_[0] && $_[0] =~ /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*\z/ }
 
 # pipe_types -- the choices for PIPE TYPE: every type in the database, then
@@ -103,12 +148,12 @@ sub number {
 # bore_of -- (bore mm) or (undef, [field, problem]) for a type and a size; for
 # BORE the size field is the bore itself.
 sub bore_of {
-    my ($type, $size) = @_;
+    my ($type, $size, $u) = @_;
     HardyCross::Parse::ensure_db();
     return (undef, [ 'TYPE', 'CHOOSE A PIPE TYPE' ]) if blank($type);
     if ($type eq $BORE) {
         my ($d, $e) = number('BORE', $size);
-        return defined $d ? ($d) : (undef, [ 'SIZE', $e ]);
+        return defined $d ? ($d * factor('SIZE', units_of($u)->{SIZE})) : (undef, [ 'SIZE', $e ]);
     }
     return (undef, [ 'TYPE', "UNKNOWN PIPE TYPE $type" ]) unless HardyCross::PipeData::pipe_type($type);
     return (undef, [ 'SIZE', 'CHOOSE A SIZE' ]) if blank($size);
@@ -118,32 +163,38 @@ sub bore_of {
 }
 
 #------------------------------------------------------------------------------
-# velocity -- { type, size, flow } as typed.  Returns
+# velocity -- { type, size, flow, units } as typed.  Returns
 #   { ok => 1, bore (mm), area (m2), velocity (m/s) }
 #   { ok => 0, errors => [ [field, problem] ] }
 #------------------------------------------------------------------------------
 sub velocity {
     my %f = @_;
+    my $u = units_of($f{units});
     my @err;
-    my ($d, $de) = bore_of($f{type}, $f{size});
+    my ($d, $de) = bore_of($f{type}, $f{size}, $u);
     push @err, $de if $de;
     my ($q, $qe) = number('FLOW', $f{flow}, 'nonneg');
     push @err, [ 'FLOW', $qe ] if $qe;
     return { ok => 0, errors => \@err } if @err;
-    return { ok => 1, bore => $d, area => 3.14159265358979 * ($d / 1000) ** 2 / 4,
+    $q *= factor('FLOW', $u->{FLOW});
+    return { ok => 1, bore => $d, area => 3.14159265358979 * ($d / 1000) ** 2 / 4, q => $q,
              velocity => HardyCross::pipe_velocity($q, $d) };
 }
 
 #------------------------------------------------------------------------------
-# kfactor -- { k, q, p, unit } as typed: exactly two of K, Q (L/min) and
-# P (kPa) given, the third found from Q = K x sqrt(P).  unit is 'KPA' (K in
-# L/min per root kPa, the default) or 'BAR' (per root bar).  Returns
-#   { ok => 1, solved => 'K'|'Q'|'P', k, q, p, k_kpa, k_bar }
+# kfactor -- { k, q, p, unit, units } as typed: exactly two of K, Q and P
+# given, the third found from Q = K x sqrt(P).  Q and P are in units' FLOW and
+# PRESSURE; K in unit, a KFACTOR unit (LPM/KPA, the default; LPM/BAR, LPS/KPA,
+# LPS/BAR, GPM/PSI; or KPA, BAR, US for the commonest).  Returns
+#   { ok => 1, solved => 'K'|'Q'|'P', k (in unit), q (L/min), p (kPa),
+#     k_kpa, k_bar, k_us, unit }
 #   { ok => 0, errors => [ [field, problem] ] }
 #------------------------------------------------------------------------------
 sub kfactor {
     my %f = @_;
     my $unit = uc($f{unit} // 'KPA');
+    $unit = $KALIAS{$unit} // $unit;
+    my $u = units_of($f{units});
     my @given = grep { !blank($f{ lc $_ }) } qw(K Q P);
     return { ok => 0, errors => [ [ 'K', 'GIVE ANY TWO OF K, Q AND P - THE THIRD IS FOUND' ] ] } if @given < 2;
     return { ok => 0, errors => [ [ 'K', 'GIVE ONLY TWO OF K, Q AND P - CLEAR THE ONE TO BE FOUND' ] ] } if @given > 2;
@@ -154,9 +205,11 @@ sub kfactor {
         if ($e) { push @err, [ $x, $e ] } else { $v{$x} = $n }
     }
     return { ok => 0, errors => \@err } if @err;
-    # K in L/min per root kPa for the sums; a K per root bar is ten times it.
-    my $kf = $unit eq 'BAR' ? 10 : 1;
-    my ($k, $q, $p) = (defined $v{K} ? $v{K} / $kf : undef, $v{Q}, $v{P});
+    # The sums in L/min, kPa and L/min per root kPa.
+    my $kf = 1 / kfactor_factor($unit);
+    my ($k, $q, $p) = (defined $v{K} ? $v{K} / $kf : undef,
+                       defined $v{Q} ? $v{Q} * factor('FLOW', $u->{FLOW}) : undef,
+                       defined $v{P} ? $v{P} * factor('PRESSURE', $u->{PRESSURE}) : undef);
     my ($solved) = grep { !defined $v{$_} } qw(K Q P);
     if ($solved eq 'K') {
         return { ok => 0, errors => [ [ 'P', 'PRESSURE P MUST BE ABOVE ZERO TO FIND K' ] ] } unless $p > 0;
@@ -165,7 +218,7 @@ sub kfactor {
     elsif ($solved eq 'Q') { $q = $k * sqrt $p }
     else                   { $p = ($q / $k) ** 2 }
     return { ok => 1, solved => $solved, k => $k * $kf, q => $q, p => $p, k_kpa => $k, k_bar => $k * 10,
-             unit => $unit };
+             k_us => $k / kfactor_factor('GPM/PSI'), unit => $unit };
 }
 
 #------------------------------------------------------------------------------
@@ -173,28 +226,33 @@ sub kfactor {
 # three.  from is 'US' (US gpm per root psi), 'BAR' (L/min per root bar) or
 # 'KPA' (L/min per root kPa).  K = Q / sqrt(P), so a K converts by the flow
 # factor over the root of the pressure factor:
-#   1 US gallon = 3.785411784 L (exact);  1 psi = 6.894757293 kPa
-#   K(L/min/bar^0.5) = K(gpm/psi^0.5) x 3.785411784 x sqrt(100 / 6.894757293)
+#   1 US gallon = 3.785411784 L (exact);  1 psi = 6.894757 kPa (the model's
+#   unit table)
+#   K(L/min/bar^0.5) = K(gpm/psi^0.5) x 3.785411784 x sqrt(100 / 6.894757)
 #                    = K(US) x 14.4163...;   K per root kPa is a tenth of that.
-# So a K5.6 head (US) is K80.7 metric (bar), the K80 it is sold as.  Returns
-#   { ok => 1, us, bar, kpa, from }  or  { ok => 0, errors => [ [field, problem] ] }
+# So a K5.6 head (US) is K80.7 metric (bar), the K80 it is sold as.  from may
+# also be any KFACTOR unit (LPS/KPA, LPS/BAR ...).  Returns
+#   { ok => 1, us, bar, kpa, all => { unit => K, for every KFACTOR unit }, from }
+#   { ok => 0, errors => [ [field, problem] ] }
 #------------------------------------------------------------------------------
-our $GAL = 3.785411784;          # L per US gallon
-our $PSI = 6.894757293168;       # kPa per psi
-our $US_TO_BAR = $GAL * sqrt(100 / $PSI);
 
 sub kconvert {
     my %f = @_;
     my $from = uc($f{from} // 'US');
     my ($k, $e) = number('K', $f{value});
     return { ok => 0, errors => [ [ 'VALUE', $e ] ] } if $e;
-    my $bar = $from eq 'US' ? $k * $US_TO_BAR : $from eq 'KPA' ? $k * 10 : $k;
-    return { ok => 1, from => $from, us => $bar / $US_TO_BAR, bar => $bar, kpa => $bar / 10 };
+    # By the model's own unit factors, so a K converts here exactly as a
+    # model reads it in that unit.
+    my $bar = $k * kfactor_factor($from) * 10;
+    no warnings 'once';
+    my %all = map { $_ => $bar / 10 / kfactor_factor($_) } @{ $HardyCross::Phc::UNIT_CHOICES{KFACTOR} };
+    return { ok => 1, from => $from, us => $all{'GPM/PSI'}, bar => $bar, kpa => $bar / 10, all => \%all };
 }
 
 #------------------------------------------------------------------------------
-# loss -- { type, size, flow, length, c, eps } as typed.  Length blank is one
-# metre; C and roughness blank are the pipe type's.  Returns
+# loss -- { type, size, flow, length, c, eps, units } as typed.  Length blank
+# is one metre; C and roughness blank are the pipe type's.  Returns, in
+# L/min, kPa, m and mm (show() gives them in the units chosen)
 #   { ok => 1, bore, velocity, length, c, eps, eps_src (GIVEN, DATABASE, or
 #     DEFAULT: 0.045 mm assumed, none given or published),
 #     hw => { per_m, total },
@@ -206,16 +264,18 @@ sub kconvert {
 #------------------------------------------------------------------------------
 sub loss {
     my %f = @_;
+    my $u = units_of($f{units});
     my @err;
-    my ($d, $de) = bore_of($f{type}, $f{size});
+    my ($d, $de) = bore_of($f{type}, $f{size}, $u);
     push @err, $de if $de;
     my ($q, $qe) = number('FLOW', $f{flow}, 'nonneg');
     push @err, [ 'FLOW', $qe ] if $qe;
+    $q *= factor('FLOW', $u->{FLOW}) unless $qe;
     my $eps_published = sub { my $t = HardyCross::PipeData::pipe_type(shift); $t && defined $t->{eps} };
     my $len = 1;
     unless (blank($f{length})) {
         my ($l, $le) = number('LENGTH', $f{length});
-        if ($le) { push @err, [ 'LENGTH', $le ] } else { $len = $l }
+        if ($le) { push @err, [ 'LENGTH', $le ] } else { $len = $l * factor('LENGTH', $u->{LENGTH}) }
     }
     my $c = $f{type} && !$de ? type_c($f{type}) : 120;
     unless (blank($f{c})) {
@@ -228,7 +288,7 @@ sub loss {
     my $eps_src = $f{type} && !$de && $f{type} ne $BORE && $eps_published->($f{type}) ? 'DATABASE' : 'DEFAULT';
     unless (blank($f{eps})) {
         my ($v, $ee) = number('ROUGHNESS', $f{eps}, 'nonneg');
-        if ($ee) { push @err, [ 'EPS', $ee ] } else { ($eps, $eps_src) = ($v, 'GIVEN') }
+        if ($ee) { push @err, [ 'EPS', $ee ] } else { ($eps, $eps_src) = ($v * factor('SIZE', $u->{SIZE}), 'GIVEN') }
     }
     return { ok => 0, errors => \@err } if @err;
 
@@ -252,6 +312,43 @@ sub loss {
                 regime => $re < 2000 ? 'LAMINAR' : $re < 4000 ? 'TRANSITIONAL' : 'TURBULENT' },
         diff => $dw - $hw, diff_pct => $hw > 0 ? 100 * ($dw - $hw) / $hw : 0,
     };
+}
+
+#------------------------------------------------------------------------------
+# fittings -- { type, size, spec, c } as typed: fittings on a pipe, in the
+# .phc fitting form (2E 1T GV, or 2E,1T,1GV), and their equivalent length,
+# by HardyCross::PipeData::resolve -- the same look-up, source and
+# corrections as a model's pipe.  C blank is the pipe type's.  Returns
+#   { ok => 1, total (m), source, rows => [ { count, code, label, each, total,
+#     note } ] }
+#   { ok => 0, errors => [ [field, problem] ] }
+# A fitting the database has no value for is an error, as in a model: never
+# zero, never interpolated.
+#------------------------------------------------------------------------------
+sub fittings {
+    my %f = @_;
+    my @err;
+    return { ok => 0, errors => [ [ 'TYPE', 'FITTINGS NEED A PIPE TYPE FROM THE DATABASE, NOT BORE' ] ] }
+        if ($f{type} // '') eq $BORE;
+    my ($d, $de) = bore_of($f{type}, $f{size});
+    push @err, $de if $de;
+    my $c;
+    unless (blank($f{c})) {
+        my ($v, $ce) = number('C FACTOR', $f{c});
+        if ($ce) { push @err, [ 'C', $ce ] } else { $c = $v }
+    }
+    push @err, [ 'SPEC', 'GIVE THE FITTINGS: 2E 1T GV, OR 2E,1T,1GV' ] if blank($f{spec});
+    return { ok => 0, errors => \@err } if @err;
+    (my $spec = uc $f{spec}) =~ s/^\s+|\s+$//g;
+    $spec =~ s/[\s,]+/+/g;
+    # The editor's short forms for the three commonest valves.
+    $spec = join '+', map { s/^(\d*)([GCB])\z/$1 . { G => 'GV', C => 'CV', B => 'BV' }->{$2}/er } split /\+/, $spec;
+    my $r = HardyCross::PipeData::resolve(type => $f{type}, dn => $f{size} + 0, c => $c, spec => $spec);
+    return { ok => 0, errors => [ map { [ 'SPEC', uc ] } @{ $r->{errors} } ] } if @{ $r->{errors} };
+    my @rows = map { { count => $_->{count}, code => $_->{code}, label => HardyCross::Phc::ascii($_->{label} // $_->{code}),
+                       each => $_->{each}, total => $_->{total}, note => $_->{note} } } @{ $r->{records} };
+    my $src = @{ $r->{records} } ? $r->{records}[0]{doc} : '';
+    return { ok => 1, total => $r->{total}, rows => \@rows, source => $src, spec => $spec };
 }
 
 1;
