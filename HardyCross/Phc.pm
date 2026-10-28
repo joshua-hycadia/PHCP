@@ -917,6 +917,10 @@ sub fitting_tables {
     }
     close $fh;
 }
+# reset_db_cache -- forget the lists above, after the database is edited and
+# reloaded, so the next pick list is read from the new file.
+sub reset_db_cache { %FITCODE = %KPCODE = %DNS = () }
+
 # The user interface is 7-bit ASCII in capitals, like the report.
 sub ascii { my $s = shift // ''; $s =~ s/\x{B0}/ DEG/g; $s =~ s/[^\x20-\x7E]//g; uc $s }
 

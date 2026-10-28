@@ -239,8 +239,13 @@ sub write_report {
     if ($uses_db) {
         # The database is user editable, so name the exact file and its
         # fingerprint: a later edit to the data cannot pass for this one.
+        # The program's own database is named by its file name alone; one in
+        # a team folder or beside the program by its full path and where it
+        # came from, so a reader can tell the shared data from a local copy.
         my $db = HardyCross::PipeData::path();
-        $db =~ s{.*[\\/]}{};
+        my $from = HardyCross::PipeData::origin($db);
+        if ($from eq 'BUILT-IN') { $db =~ s{.*[\\/]}{} }
+        else                     { $db .= ' (' . lc($from) . ')' }
         my $iss = HardyCross::PipeData::issued();
         push @notes, 'Pipe dimensions and fitting allowances are taken from the database: '
             . HardyCross::PipeData::dataset() . ($iss ne '' ? " ($iss)" : '')
