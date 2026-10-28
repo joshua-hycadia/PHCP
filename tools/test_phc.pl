@@ -12,8 +12,8 @@
 #
 # What it proves, in order:
 #
-#   1. EXAMPLES.  Every example in .phc solves to the same pipe flows and node
-#      pressures as its .hcx original, the baseline.
+#   1. EXAMPLES.  Every example solves to the pipe flows and node pressures
+#      frozen in tools/baseline.
 #   2. EVERY COMMAND.  A valid line reads; a line missing each field, with a
 #      bad number, a KEY=value, an unknown word, or a duplicate, is refused --
 #      and every refusal names its line.
@@ -92,44 +92,40 @@ sub elems_by_id { my $n = shift; return map { $_->{id} => $_ } grep { $_->{id} }
 # model and not on where the iteration happened to stop.
 my $TIGHT_PHC = "\nOPTION TOL_FLOW 1E-7\nOPTION TOL_LOOP 1E-8\nOPTION MAXITER 200000\n";
 sub tighten_phc { my $t = shift; $t =~ s/^OPTION\s+(TOL_FLOW|TOL_LOOP|MAXITER)\b.*$//mg; $t . $TIGHT_PHC }
-sub tighten_hcx {
-    my $t = shift;
-    $t =~ s/^\s*(TOL_FLOW|TOL_LOOP|MAXITER)\b.*$//mg;
-    $t =~ s/^OPTIONS\s*$/OPTIONS\n  TOL_FLOW 1E-7\n  TOL_LOOP 1E-8\n  MAXITER 200000/m
-        or $t =~ s/^UNITS\s*$/OPTIONS\n  TOL_FLOW 1E-7\n  TOL_LOOP 1E-8\n  MAXITER 200000\nEND\nUNITS/m;
-    return $t;
-}
 
+print "1. EXAMPLES - the same flows and pressures as the frozen results\n";
 #==============================================================================
-print "1. EXAMPLES - the same flows and pressures as the .hcx baseline\n";
-#==============================================================================
-# An orifice plate in .phc takes its pipe's bore from the pipe and fitting
-# database (ASAM DN50: 53.0 mm); the .hcx route used a fixed table (53.1 mm).
-# The baseline is given the database bore, so the comparison is exact.
+# tools/baseline/<example>.expected holds each example's solved pipe flows and
+# node pressures, frozen from an independent description of the same network
+# solved at tight tolerances.  The example must reproduce them.
+# expected -- (flows, pressures) from a frozen results file.
+sub expected {
+    my (%q, %p);
+    for (split /\n/, slurp(shift)) {
+        next if /^#/ || !/\S/;
+        my ($k, $id, $v) = split ' ';
+        ($k eq 'Q' ? \%q : \%p)->{$id} = $v;
+    }
+    return (\%q, \%p);
+}
 for my $phcpath (sort glob("$EX/*.phc")) {
     (my $base = $phcpath) =~ s{.*/}{};
-    # The .hcx baselines are kept in tools/baseline: no longer a user format,
-    # still the independent description each example is checked against.
-    (my $hcxpath = "$FindBin::Bin/baseline/$base") =~ s/\.phc\z/.hcx/;
+    (my $want = "$FindBin::Bin/baseline/$base") =~ s/\.phc\z/.expected/;
     my ($p, $err) = read_phc(slurp($phcpath));
     is("$base reads", $p, $err);
-    next unless $p && -e $hcxpath;
-    my $hcx = slurp($hcxpath);
-    $hcx =~ s/(ORIFICE_[PD].*DN=50)/$1 PIPEDIA=53.0/g;
+    next unless $p && -e $want;
+    my ($qa, $pa) = expected($want);
     if ($base =~ /grid1000/) {
-        my $h = HardyCross::Parse::read_string($hcx);
-        my %pp = map { $_->{id} => 1 } grep { $_->{kind} eq 'PIPE' } @{ $p->{elems} }[1 .. $#{ $p->{elems} }];
-        my @missing = grep { !$pp{ $_->{id} } } grep { $_->{kind} eq 'PIPE' } @{ $h->{elems} }[1 .. $#{ $h->{elems} }];
-        is('   every baseline pipe and node is in the .phc model',
-           !@missing && @{ $p->{nodes} } == @{ $h->{nodes} } + 1);   # + the moved sprinkler's node
+        # Read, not solved, unless --full: every frozen pipe and node is there.
+        my ($qp, $pp) = results($p);
+        my @missing = (grep({ !exists $qp->{$_} } keys %$qa), grep({ !exists $pp->{$_} } keys %$pa));
+        is('   every frozen pipe and node is in the .phc model', !@missing, "missing: @missing");
         next unless $FULL;
-        my ($qa, $pa) = results(solved($h));
         my ($qb, $pb) = results(solved($p));
-        is(sprintf('   solved: worst %.1e L/min, %.1e kPa (within its tolerances)',
+        is(sprintf('   solved: worst %.1e in a pipe flow, %.1e in a node pressure (within its tolerances)',
                    worst($qa, $qb), worst($pa, $pb)), worst($qa, $qb) < 0.5 && worst($pa, $pb) < 0.5);
         next;
     }
-    my ($qa, $pa) = results(solved(HardyCross::Parse::read_string(tighten_hcx($hcx))));
     my ($t) = read_phc(tighten_phc(slurp($phcpath)));
     my ($qb, $pb) = results(solved($t));
     my ($wq, $wp) = (worst($qa, $qb), worst($pa, $pb));
@@ -490,7 +486,13 @@ print "8. FIXED FLOWS - the minimum pressure is checked and can govern\n";
 print "ONE FILE TYPE - a .hcx file is refused, saying why\n";
 #==============================================================================
 {
-    my $out = `"$^X" "$FindBin::Bin/../phcp.pl" "$FindBin::Bin/baseline/01_single_branch.hcx" 2>&1`;
+    # A file in the old block format, written for the test: it must be refused.
+    require File::Temp;
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    open my $o, '>', "$dir/old.hcx" or die "$dir/old.hcx: $!\n";
+    print $o "NODES\n  N1 0\nEND\n";
+    close $o;
+    my $out = `"$^X" "$FindBin::Bin/../phcp.pl" "$dir/old.hcx" 2>&1`;
     my $code = $? >> 8;
     is('phcp.pl refuses a .hcx file: exit status 2, and the reason',
        $code == 2 && $out =~ /IS NOT A \.PHC MODEL\. PHCP READS \.PHC FILES ONLY/, "exit $code: $out");

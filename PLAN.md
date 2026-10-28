@@ -30,7 +30,7 @@ file, and every error named on its line.
 - **The engine does not change.**  `HardyCross.pm`, `HardyCross/Demand.pm`,
   `HardyCross/PipeData.pm`, `HardyCross/Report.pm` and `HardyCross/PDF.pm`
   are touched only where this plan says so.  Any change that alters a solved
-  number needs Joshua's approval first.
+  number needs the maintainer's approval first.
 - **The `.phc` reader translates; it does not re-implement.**  Each `.phc`
   command is turned into the equivalent `.hcx` rows and handed to the existing
   parser, so every hydraulic check and default stays in one place.  The one
@@ -61,7 +61,7 @@ Branch: `phc-language`.
 | `tools/test_phc.pl` | language tests (below) |
 
 There is no `.hcx` to `.phc` converter: no models exist in `.hcx` beyond the
-prototype's examples (Joshua, 28 October 2026), and the examples are rewritten
+prototype's examples (decided 28 October 2026), and the examples are rewritten
 once, checked by the test above.
 
 ### Language
@@ -141,7 +141,7 @@ Units, one `UNITS` line per quantity; defaults (the office's) in brackets:
 | FLOW | LPM LPS M3H GPM (LPM) |
 | KFACTOR | LPM/KPA LPM/BAR LPS/KPA LPS/BAR GPM/PSI (LPM/KPA) |
 
-Velocity is reported in m/s.  Defaults are the office's (Joshua, 28 October
+Velocity is reported in m/s.  Defaults are the office's (decided 28 October
 2026); the K-factor default, LPM/KPA, confirmed the same day.
 
 A length or elevation may carry its own unit: `12M`, `300MM`, `14'3"`, `6'`.
@@ -178,7 +178,7 @@ next line.  Tested headless in `tools/test_phc.pl`.
 
 ### Fixed flows
 
-`FIXEDFLOW`'s minimum pressure is checked (Joshua's decision): passed or failed
+`FIXEDFLOW`'s minimum pressure is checked (decided): passed or failed
 in the report, and counted in the governing outlet and demand point.
 
 ---
@@ -202,7 +202,7 @@ Branch: `phc-editor`.
 
 ### Window
 
-Joshua's layout and look (28 October 2026): a white, flat window - blue and
+The layout and look (decided 28 October 2026): a white, flat window - blue and
 black only as highlight colours, no bevels - with a toolbar (NEW OPEN SAVE,
 VALIDATE, CALCULATE, WRITE REPORT); NETWORK and PROJECT tabs; the editor with
 line numbers, syntax colours, the command strip and the status bar, and an
@@ -239,13 +239,13 @@ HIDE INACTIVE NODES.  Everything user-visible in capitals.
 
 ### Windows
 
-Update `build_windows.bat`; Windows remains "not yet run" until Joshua runs it.
+Update `build_windows.bat`; Windows remains "not yet run" until it is run there.
 
 ---
 
 ## PR 4 - one file type
 
-Decided by Joshua: there are no `.hcx` models in use - the format only ever
+Decided: there are no `.hcx` models in use - the format only ever
 served the prototype - so `.phc` is the one file type a user sees.  (The
 `--convert` command and the editor's conversion planned here were removed in
 PR 2 and PR 3, before any user had a `.hcx` to convert.)
@@ -262,14 +262,12 @@ PR 2 and PR 3, before any user had a `.hcx` to convert.)
 | `build_windows.bat` | smoke test on `.phc` only |
 | `README.md` | one format |
 
-Inside, `.phc` lines are still translated into `.hcx` rows for the existing
-parser (`HardyCross::Parse`); that is how the checks stay in one place, and
-the user never sees it.  `tools/stress_invariance.pl` builds its networks as
-`.hcx` text for the parser and is unaffected.
+Inside, `.phc` lines were still translated into `.hcx` rows for the existing
+parser at this stage; v1.0 removed that step (below).
 
 ## PR 5 - the phcp.exe JSON interface
 
-Decided by Joshua: other programs call `phcp.exe`, not a DLL.  AutoCAD first,
+Decided: other programs call `phcp.exe`, not a DLL.  AutoCAD first,
 possibly Revit later.
 
     phcp.exe --json model.phc          results as JSON on standard output
@@ -289,6 +287,21 @@ possibly Revit later.
 - JSON::PP, which is core Perl.  Written one value to a line in a fixed key
   order, so AutoLISP can find the summary lines without a JSON reader.
 
+## v1.0 - release cleanup
+
+Decided: before v1.0, the `.hcx` text goes entirely, no other program is
+named, and no person is named.
+
+| file | change |
+|---|---|
+| `HardyCross/Phc.pm` | `translate` returns rows; `read_string` hands each to the network builder directly - no `.hcx` text in between |
+| `HardyCross/Parse.pm` | the block-text reader removed; `parse_row` is the network builder |
+| `HardyCross/Demand.pm`, `HardyCross/Report.pm` | the demand point and the PRA top-of-band solve re-read the `.phc` text (engine files: approved) |
+| `tools/baseline/*.hcx` | replaced by `*.expected`: each example's solved flows and pressures, frozen from the `.hcx` solve before it was removed |
+| `tools/stress_invariance.pl` | builds its random networks as `.phc` |
+| `OPTION PROFILE`, `epanet_adapter.pl`, `crosscheck.py` | removed: they served a comparison against another program, and the C++ engine, neither in this repository |
+| every file | no person named; decisions carry their date |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -305,21 +318,22 @@ possibly Revit later.
 - [x] PR 2 - PRA pressure ratio valve in the solver: outlet = inlet / ratio, set in the
   outer loop; warnings for low inlet, reverse flow, unsettled drops
 - [x] PR 2 - supply, pump and loss curves interpolated on Q^1.85 through every point
-  (engine change, approved by Joshua 28 October 2026; `tools/test_curves.pl`)
-- [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by Joshua's decision -
+  (engine change, approved 28 October 2026; `tools/test_curves.pl`)
+- [x] PR 2 - `FIXEDFLOW MINP=` decision recorded: checked, by decision -
   passed or failed in the report and counted in the governing outlet and demand
   point (README, "Fixed flows")
-- [x] PR 3 - `Editor.pm` and `phcp_editor.pl` (light blue and black, by Joshua's choice)
+- [x] PR 3 - `Editor.pm` and `phcp_editor.pl`
 - [x] PR 3 - spreadsheet removed, build script and licence updated
-- [x] PR 3 - Joshua's layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
+- [x] PR 3 - The agreed layout: results tables below, ERRORS / WARNINGS / NODES at right, command strip, all capitals
 - [x] PR 3 - white flat look, syntax colours, line numbers, PROJECT tab for settings, VALIDATE before CALCULATE
-- [x] PR 3 - Windows build run by Joshua (28 October 2026, Perl 5.42.3)
-- [x] DATABASE tab: view and edit the pipe and fitting database (read-only until EDIT is ticked); a team folder for it, else the built-in (Joshua, 28 October 2026)
+- [x] PR 3 - Windows build run (28 October 2026, Perl 5.42.3)
+- [x] DATABASE tab: view and edit the pipe and fitting database (read-only until EDIT is ticked); a team folder for it, else the built-in (decided 28 October 2026)
 - [x] Editor fixes from the Windows run: sharp at 150 %, draggable dividers, wheel under the pointer, HIDE counts, option labels
 - [x] PR 4 - AutoCAD exporter writes `.phc`; `.phc` the one file type
-- [ ] PR 4 - exporter run inside AutoCAD by Joshua
+- [ ] PR 4 - exporter run inside AutoCAD
 - [x] PR 5 - `phcp.exe --json`, documented and tested
-- [x] Pressure ratio valve band: designed to the bottom of +/-5% of inlet, top of band reported (engine change, Joshua 28 October 2026)
-- [x] Report: the supply graph drawn in the PDF on q^1.85 graph paper, from the numbers the text graph uses (engine change, approved by Joshua 28 October 2026)
+- [x] Pressure ratio valve band: designed to the bottom of +/-5% of inlet, top of band reported (engine change, approved 28 October 2026)
+- [x] Report: the supply graph drawn in the PDF on q^1.85 graph paper, from the numbers the text graph uses (engine change, approved 28 October 2026)
 - [x] Report: the PDF set in embedded DejaVu Sans Mono, rules drawn as lines
-- [ ] PR 5 - AutoCAD SOLVE command run by Joshua
+- [ ] PR 5 - AutoCAD SOLVE command run inside AutoCAD
+- [x] v1.0 - `.hcx` removed throughout, no other program or person named
