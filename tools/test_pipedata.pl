@@ -130,5 +130,25 @@ print "ROUGHNESS\n";
     HardyCross::PipeData::load($was);
 }
 
+print "LINE ENDINGS\n";
+{
+    # The database saved with Windows line endings must read the same: a
+    # DASH at the end of a line is still none published, never zero.
+    require File::Temp;
+    my $dir = File::Temp::tempdir(CLEANUP => 1);
+    open my $in, '<:raw', HardyCross::PipeData::path() or die;
+    (my $crlf = do { local $/; <$in> }) =~ s/\r?\n/\r\n/g;
+    close $in;
+    open my $o, '>:raw', "$dir/pipes.dat" or die;
+    print $o $crlf;
+    close $o;
+    my $was = HardyCross::PipeData::path();
+    HardyCross::PipeData::load("$dir/pipes.dat");
+    my $r = $R->(type => 'ASAM', dn => 20, spec => 'CV');
+    is('CR LF file: the DN20 check valve (dash) is still DATA_REQUIRED, not zero', !defined $r->{total});
+    is('   and every roughness still reads', !grep { !defined HardyCross::PipeData::pipe_type($_)->{eps} } HardyCross::PipeData::pipe_types());
+    HardyCross::PipeData::load($was);
+}
+
 printf "\n%d passed, %d failed\n", $pass, $fail;
 exit($fail ? 1 : 0);
