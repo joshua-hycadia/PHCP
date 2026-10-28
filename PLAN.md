@@ -350,6 +350,19 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 | `HardyCross/Window/Tools.pm` | a FITTINGS calculator; every field and answer named in the units chosen |
 | `HardyCross/Graph.pm`, `HardyCross/Window/Graph.pm` | a graph's flow and pressure units, chosen under SHEET (the PROJECT tab's to begin), saved in the `.phg` as UNITS lines, named on the tab and the sheet |
 
+## v1.1 - pump checks and the hose allowance
+
+Engine files changed (Phc, Parse, Demand, Report): asked for as items 6 and 7;
+no solved number changes unless a model uses the new commands.
+
+| file | change |
+|---|---|
+| `HardyCross/PumpCheck.pm` | new: each pump's curve read at its duty, at no flow (shut-off at most 140 % of duty, AS 2941) and at 150 % flow (at least 65 % of duty, NFPA 20, for information) |
+| `HardyCross/Phc.pm`, `HardyCross/Parse.pm` | `PUMPDUTY <pump> <flow> <pressure>`, for a PUMP by name or a BP by its pipe; `OPTION HOSE_ALLOWANCE` |
+| `HardyCross/Demand.pm` | the hose allowance added to the system flow at the demand point and the combined duty |
+| `HardyCross/Report.pm` | PUMP CURVES section; system flow, allowance and demand shown; a note whether an allowance is included |
+| `HardyCross/Editor.pm` | HOSE STREAM ALLOWANCE in the PROJECT tab; PUMPDUTY in the command strip |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -393,3 +406,4 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 - [x] v1.1 - CI on Linux and Windows, releases with the programs attached; icon on the .exe files; viewer retired
 - [x] v1.1 - editor split, one file to a tab
 - [x] v1.1 - QUICK TOOLS: fittings; units in QUICK TOOLS and GRAPH
+- [x] v1.1 - pump checks against the duty (AS 2941 shut-off, 150 % flow for information); hose stream allowance (engine files Phc, Parse, Demand, Report)

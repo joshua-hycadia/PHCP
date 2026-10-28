@@ -37,6 +37,7 @@ use warnings;
 use HardyCross;
 use HardyCross::PipeData;
 use HardyCross::Demand;
+use HardyCross::PumpCheck;
 use HardyCross::PDF;
 
 # 132 columns: the standard width of a monospace engineering listing, and what
@@ -621,6 +622,10 @@ sub write_report {
                     ? '  The supplies operate at one pressure in the modelled network, so their operating '
                       . 'flows, added, are the combined operating point O.'
                     : ''));
+            if ($cd->{q_hose}) {
+                $out .= sprintf "   %-30s %10.1f %-7s\n", 'SYSTEM FLOW at the duty', $cd->{q_system} / $uf, $qu;
+                $out .= sprintf "   %-30s %10.1f %-7s\n", 'HOSE ALLOWANCE, added', $cd->{q_hose} / $uf, $qu;
+            }
             $out .= sprintf "   %-30s %10.1f %-7s at %9.1f %s\n", 'COMBINED DUTY',
                 $cd->{q_demand} / $uf, $qu, $cd->{p_demand} / $up, $pu;
             $out .= sprintf "   %-30s %10s %-7s    %9.1f %s\n", 'COMBINED SUPPLY at that flow', '', '',
@@ -640,6 +645,12 @@ sub write_report {
         $out .= sprintf " Supply %s at node %s, %s\n\n", $s->{id},
             $net->{nodes}[ $s->{n2} ]{id},
             $s->{kind} eq 'SUPPLY_STATIC' ? 'static pressure' : 'flow/pressure curve';
+        # A hose allowance is added at the supply: the system's own flow, the
+        # allowance, then the demand the supply must meet.
+        if ($dm->{q_hose}) {
+            $out .= sprintf "   %-30s %10.1f %-7s\n", 'SYSTEM FLOW at the demand point', $dm->{q_system} / $uf, $qu;
+            $out .= sprintf "   %-30s %10.1f %-7s\n", 'HOSE ALLOWANCE, added', $dm->{q_hose} / $uf, $qu;
+        }
         $out .= sprintf "   %-30s %10.1f %-7s at %9.1f %s\n", 'DEMAND', $dm->{q_demand} / $uf, $qu,
             $dm->{p_demand} / $up, $pu;
         $out .= sprintf "   %-30s %10s %-7s    %9.1f %s\n", 'AVAILABLE at the demand flow', '', '',
@@ -693,6 +704,7 @@ sub write_report {
                 qdp($net->{u_flow}), $e->{q} / $uf, pdp($net->{u_pres}) + 1, $hf / $up, $note;
         }
         $out .= ratio_band_note($net) if grep { $_->{kind} eq 'RATIO' } @sup;
+        $out .= pump_curves($net) if grep { $_->{kind} eq 'PUMP' } @sup;
     }
 
     #------------------------------------------------------- 9. verification
@@ -957,8 +969,11 @@ sub cover_sheet {
     $out .= "\n";
     $out .= wrap(' ', 'DEMAND POINT: the governing outlet receives exactly its minimum - the design '
         . 'condition.  OPERATING POINT: this supply connected, every outlet at or above its '
-        . 'minimum; the schedules in this report are at the operating point.  No hose stream '
-        . 'allowance is included.');
+        . 'minimum; the schedules in this report are at the operating point.  '
+        . (($net->{opts}{hose} // 0) > 0
+            ? sprintf('A hose stream allowance of %.1f %s is added at the supply to the demand (OPTION '
+                      . 'HOSE_ALLOWANCE).', $net->{opts}{hose} / $net->{f_flow}, sym($net->{u_flow}))
+            : 'No hose stream allowance is included (OPTION HOSE_ALLOWANCE adds one).'));
     return $out;
 }
 
@@ -1216,6 +1231,43 @@ sub supply_graph {
         ? sprintf("   O  operating point: %s at %s, %s of the flow of all the supplies\n",
                   $d->{figures}[-2][1], $d->{figures}[-2][2], $d->{figures}[-1][2])
         : "   D  demand point              O  operating point\n";
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# pump_curves -- what the report says under Section 10 about each pump's
+# curve against its rated duty (HardyCross::PumpCheck).
+#------------------------------------------------------------------------------
+sub pump_curves {
+    my $net = shift;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($qu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my $chk = HardyCross::PumpCheck::check($net);
+    my $out = "\n PUMP CURVES - each against its rated duty (PUMPDUTY)\n";
+    $out .= sprintf " %-12s %-22s %-22s %-24s %s\n", 'PUMP', 'DUTY', 'CURVE AT DUTY FLOW',
+        'SHUT-OFF, <= 140% DUTY', "AT 150% FLOW, >= 65% DUTY";
+    $out .= thin();
+    for my $p (@$chk) {
+        unless ($p->{duty}) {
+            $out .= sprintf " %-12s %-22s %-22s %-24s %s\n", $p->{id}, 'NONE GIVEN', '-',
+                sprintf('%.1f %s', $p->{shutoff} / $up, $pu), '-';
+            next;
+        }
+        my ($q, $pd) = @{ $p->{duty} };
+        $out .= sprintf " %-12s %-22s %-22s %-24s %s\n", $p->{id},
+            sprintf('%.1f %s at %.1f', $q / $uf, $qu, $pd / $up),
+            sprintf('%.1f %s', $p->{at_duty}{p} / $up, $p->{at_duty}{ok} ? 'PASS' : 'FAIL'),
+            sprintf('%.1f (max %.1f) %s', $p->{shutoff} / $up, $HardyCross::PumpCheck::SHUTOFF_MAX * $pd / $up,
+                    $p->{shutoff_ok} ? 'PASS' : 'FAIL'),
+            sprintf('%.1f (min %.1f) %s%s', $p->{over}{p} / $up, $HardyCross::PumpCheck::OVERLOAD_P * $pd / $up,
+                    $p->{over}{ok} ? 'MEETS' : 'BELOW', $p->{over}{extrapolated} ? ', EXTRAPOLATED' : '');
+    }
+    $out .= wrap(' ', 'Each curve is read as the solver reads it: through every point entered, straight in Q^1.85 '
+        . 'between them.  SHUT-OFF at most 140% of the duty pressure is the AS 2941-2013 check as the Pump '
+        . 'Industry Australia checklist states it.  150% of the duty flow at not less than 65% of the duty '
+        . 'pressure is NFPA 20, 6.2; that AS 2941 states the same was not confirmed, so it is shown for '
+        . 'information only.  EXTRAPOLATED: beyond the last point of the curve entered.  A pump with no duty '
+        . 'is not checked: give PUMPDUTY <pump> <flow> <pressure>.');
     return $out;
 }
 

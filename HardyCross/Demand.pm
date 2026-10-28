@@ -190,7 +190,12 @@ sub demand_point {
     my ($m, $dn) = margin_at($text, $s->{id}, $hi);
     my ($dsup) = grep { ($_->{id} // '') eq $s->{id} } @{ $dn->{elems} }[1 .. $#{ $dn->{elems} }];
     my ($dgo) = governing_outlet($dn);
-    my $q_d = abs $dsup->{q};
+    # The demand flow: what the system draws at the demand point, plus any
+    # hose allowance (OPTION HOSE_ALLOWANCE), which is added at the supply --
+    # it draws on the supply but not through the network modelled.
+    my $q_sys  = abs $dsup->{q};
+    my $q_hose = $net->{opts}{hose} // 0;
+    my $q_d    = $q_sys + $q_hose;
 
     # What the supply has at that flow.
     my $avail = $s->{kind} eq 'SUPPLY_STATIC'
@@ -201,6 +206,8 @@ sub demand_point {
         supply    => $s,
         governing => $dgo,
         q_demand  => $q_d,
+        q_system  => $q_sys,
+        q_hose    => $q_hose,
         p_demand  => $hi,
         p_avail   => $avail,
         margin    => $avail - $hi,
@@ -357,6 +364,9 @@ sub combined_demand {
     my ($dgo) = governing_outlet($dn);
     my $q_d = 0;
     $q_d += $_->{q} for supplies($dn);
+    # Any hose allowance is added at the supplies, as for one supply.
+    my $q_sys = $q_d;
+    $q_d += $net->{opts}{hose} // 0;
 
     my ($q_o, $p_o, $p_lo) = (0, undef, undef);
     for my $s (@sup) {
@@ -374,6 +384,8 @@ sub combined_demand {
         avail        => $avail,
         p_demand     => $hi,
         q_demand     => $q_d,
+        q_system     => $q_sys,
+        q_hose       => $net->{opts}{hose} // 0,
         p_avail      => $avail->($q_d),
         margin       => $avail->($q_d) - $hi,
         q_oper       => $q_o,
