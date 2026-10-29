@@ -21,6 +21,7 @@ perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-ru
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
 perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
+perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
@@ -32,6 +33,10 @@ model, keeps those figures in a `.phg` file of its own - see Water supply
 graph.)
 
 ## The .phc command language
+
+The full reference - every command, field, unit, option and fitting code,
+with examples and the messages the reader gives - is
+[docs/PHC_REFERENCE.md](docs/PHC_REFERENCE.md).  This section is the summary.
 
 The model is typed as short command lines - one element per line, fields by
 position, no `KEY=value` - in any order:
@@ -69,7 +74,7 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `PROFILE HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA` |
+| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
@@ -905,6 +910,7 @@ others on the page, and the report says which check to make.
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 151 / 151 |
 | quick tools | 58 / 58 |
+| reference manual against the program, its examples solved | 15 / 15 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |

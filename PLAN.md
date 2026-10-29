@@ -388,6 +388,14 @@ SUPPLYGRAPH reports exactly as before.
 | `HardyCross/Report.pm`, `HardyCross/PDF.pm` | an appendix per graph; in the PDF, the sheet drawn on a page after the text, numbered with the report |
 | `phcp.pl`, `HardyCross/Editor.pm`, `HardyCross/Areas.pm` | the model's folder passed to the reader |
 
+## v1.1 - the .phc reference manual
+
+| file | change |
+|---|---|
+| `docs/PHC_REFERENCE.md` | new: the language command by command - syntax, fields, units, options, fittings, pipe types, the names PHCP makes, messages, a complete model |
+| `tools/test_manual.pl` | new: every command, option, unit, cover field, pipe type and fitting code the program knows is in the manual; every example line reads; the complete model solves |
+| `README.md` | points to the manual; `PROFILE`, which is not an option, removed from the OPTION row |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -434,3 +442,4 @@ SUPPLYGRAPH reports exactly as before.
 - [x] v1.1 - pump checks against the duty (AS 2941 shut-off, 150 % flow for information); hose stream allowance (engine files Phc, Parse, Demand, Report)
 - [x] v1.1 - design areas: AREA lines, each solved, the governing one reported (engine files Phc, Report, Json)
 - [x] v1.1 - SUPPLYGRAPH: a GRAPH tab sheet added to a model's report, text and PDF (engine files Phc, Report, PDF)
+- [x] v1.1 - .phc reference manual, checked against the program by tools/test_manual.pl
