@@ -765,8 +765,16 @@ print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
                                  'PIPE P2 A S1 6 0 T   // TO THE HEAD', 'SPRINKLER S1 0 -50 8', '');
     main::settings_changed();
     main::validate();
-    my $r = main::calculate();
+    my @said;
+    my $r = do {
+        no warnings 'redefine';
+        my $real = \&main::message;
+        local *main::message = sub { push @said, $_[0]; $real->(@_) };
+        main::calculate();
+    };
     my @b = split /\n/, main::buffer(), -1;
+    is('while it calculates, the status bar says COMPUTING, with what and the seconds gone',
+       grep { /^[|\/\\-] COMPUTING - (CALCULATING|AUTO SIZING 2 PIPES - TRIAL \d OF 5 - \d+ SOLVES) - \d+ S$/ } @said, "@said");
     is('auto sizing: CALCULATE puts //AS - <size> after each sized line, size 0 kept',
        $r->{ok} && $b[2] =~ /^PIPE P1 W1 A 20 0  \/\/AS - \d+$/ && $b[4] =~ /^PIPE P2 A S1 6 0 T  \/\/AS - \d+ \/\/ TO THE HEAD$/, "@b[2,4]");
     my $r2 = main::calculate();
