@@ -60,7 +60,7 @@ use HardyCross::PipeData;
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
                   VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA
-                  SIZING_GOAL SIZING_MARGIN);
+                  SIZING_GOAL SIZING_MARGIN SIZING_TRIALS);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
                                     RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
@@ -472,6 +472,11 @@ sub check_field {
                 unless $g eq 'SMALLEST' || $g eq 'VOLUME';
             return $push->($g);
         }
+        if ($o eq 'SIZING_TRIALS') {
+            return "SIZING_TRIALS '$v' IS A WHOLE NUMBER OF TRIALS, 1 TO 50"
+                unless $v =~ /^\d+\z/ && $v >= 1 && $v <= 50;
+            return $push->($v);
+        }
         if ($o eq 'SIZING_MARGIN') {
             return "SIZING_MARGIN '$v' IS A PERCENTAGE OF THE SUPPLY (10%) OR A PRESSURE (50)"
                 unless $v =~ /^(\d+(?:\.\d+)?|\.\d+)%\z/ && $1 < 100 || $is_num && $v >= 0;
@@ -596,7 +601,7 @@ sub translate {
         push @project, [ "$p[0] $a->{text}", $n ]  if $k eq 'PROJECT';
         $units{ $p[0] } = $p[1]                    if $k eq 'UNITS';
         $method = [ $p[0], $n ]                    if $k eq 'METHOD';
-        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION' && $p[0] !~ /^(DESIGN_AREA|SIZING_GOAL|SIZING_MARGIN)\z/;
+        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION' && $p[0] !~ /^(DESIGN_AREA|SIZING_\w+)\z/;
         $sizing{ $p[0] } = $p[1]                   if $k eq 'OPTION' && $p[0] =~ /^SIZING_/;
         $design = [ $p[1], $n ]                    if $k eq 'OPTION' && $p[0] eq 'DESIGN_AREA';
     }
