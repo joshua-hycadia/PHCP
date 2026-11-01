@@ -78,6 +78,9 @@ for my $m (grep { !/grid1000/ } sort glob("$EX/*.phc")) {
     }
     my $nfix = () = slurp($m) =~ /^FIXEDFLOW\s+\S+\s+\S+\s+\S+\s+\S+/mg;
     my $nout = () = slurp($m) =~ /^(SPRINKLER|HYDRANT|HREEL)\b/mg;
+    # ...and their copies (NC of an outlet).
+    my %is_out = map { $_ => 1 } slurp($m) =~ /^(?:SPRINKLER|HYDRANT|HREEL)\s+(\S+)/mg;
+    for (slurp($m) =~ /^NC\s+(.*)$/mg) { my ($src, @n) = split; $nout += @n if $is_out{$src} }
     # With design areas, the outlets of the area reported and those in no area.
     if (my @ar = slurp($m) =~ /^AREA\s+(.*)$/mg) {
         my (%in, %open);
