@@ -172,6 +172,7 @@ sub write_report {
     $out .= " Loops are fundamental loops of a spanning tree; supplies and outlets are\n";
     $out .= " edges to a reference node at datum, so pseudo-loops tie fixed-grade points.\n";
     $out .= design_areas($net) if $net->{areas};
+    $out .= auto_sizing($net) if $net->{sizing};
 
     #-------------------------------------------------------- 2. pipe data
     # Which pipe types were used, the standard each is made to, the C factors
@@ -1296,6 +1297,41 @@ sub design_areas {
         . "This report is for area $g->{name}, which governs: $why.  MARGIN is the governing outlet's "
         . "pressure over its requirement; DEMAND is the supply flow and pressure at which that outlet has "
         . "exactly its requirement.");
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# auto_sizing -- Section 1's list of the pipes PHCP sized (size 0 in the
+# model): the size chosen for each, its velocity, and the margin the sized
+# system has under the supply against the margin asked for.
+#------------------------------------------------------------------------------
+sub auto_sizing {
+    my $net = shift;
+    my $s = $net->{sizing};
+    my $up = $net->{f_pres};
+    my $pu = sym($net->{u_pres});
+    my $out = sub_t('AUTO PIPE SIZING');
+    $out .= sprintf " %-6s %-11s %-8s %-40s %8s %10s\n", 'LINE', 'COMMAND', 'TYPE', 'PIPES', 'SIZE', 'VEL m/s';
+    $out .= thin();
+    for my $u (@{ $s->{units} }) {
+        my $pipes = join ' ', @{ $u->{pipes} };
+        $pipes = substr($pipes, 0, 37) . '...' if length $pipes > 40;
+        $out .= sprintf " %-6d %-11s %-8s %-40s %8s %10s\n", $u->{line}, $u->{kind}, $u->{type}, $pipes,
+            "DN$u->{dn}", defined $u->{velocity} ? fx($u->{velocity}, 2) : '-';
+    }
+    my $goal = $s->{goal} eq 'VOLUME' ? 'the least water held in the sized pipes (SIZING_GOAL VOLUME)'
+                                       : 'the smallest pipes that will do (SIZING_GOAL SMALLEST)';
+    my $res = !$s->{passes}
+        ? 'NOT MET: even the largest sizes in the database do not meet the demand with the margin asked for.'
+        : defined $s->{demand_margin}
+        ? sprintf('Met: at the demand point the supply has %.1f %s to spare, against %.1f %s asked for.',
+                  $s->{demand_margin} / $up, $pu, $s->{required} / $up, $pu)
+        : 'Met: every outlet has its requirement from each supply reduced by the margin.';
+    $out .= "\n" . wrap(' ', "Pipes given size 0 in the model were sized by PHCP from the sizes the database has for "
+        . "their pipe type, for $goal, keeping a margin under the supply of $s->{margin} and no sized pipe faster "
+        . "than $s->{vel_limit} m/s.  A PIPE line sizes its pipe and its unchanged copies (PC).  $res  The sizes are "
+        . "chosen by a step-by-step search: a good answer, not always the least possible.  The model keeps size 0, "
+        . "with each size after its line as //AS - <size>.");
     return $out;
 }
 

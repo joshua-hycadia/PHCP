@@ -396,6 +396,19 @@ SUPPLYGRAPH reports exactly as before.
 | `tools/test_manual.pl` | new: every command, option, unit, cover field, pipe type and fitting code the program knows is in the manual; every example line reads; the complete model solves |
 | `README.md` | points to the manual; `PROFILE`, which is not an option, removed from the OPTION row |
 
+## v1.1 - auto pipe sizing
+
+Engine files changed (Phc, Report, Json): SIZE 0 read and sized; a model
+without SIZE 0 solves and reports exactly as before.
+
+| file | change |
+|---|---|
+| `HardyCross/Sizing.pm` | new: the sizes to try for a pipe, the search (up until it passes, then down), the check at the demand point, and the //AS comments |
+| `HardyCross/Phc.pm` | SIZE 0 under a pipe type read at its smallest size and listed for sizing; refused under USE BORE; `OPTION SIZING_GOAL`, `OPTION SIZING_MARGIN` |
+| `HardyCross/Report.pm`, `HardyCross/Json.pm` | AUTO PIPE SIZING in Section 1; `sized` in the JSON |
+| `phcp.pl`, `HardyCross/Editor.pm`, `phcp_editor.pl` | the model sized before design areas; `--annotate`; the editor writes //AS - <size> after each sized line; the two settings in the PROJECT tab |
+| `examples/12_auto_sizing.phc`, `tools/test_sizing.pl`, `docs/PHC_REFERENCE.md` | an example, its tests (each answer checked independently at the demand point), the manual's section 6.6 |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -443,3 +456,4 @@ SUPPLYGRAPH reports exactly as before.
 - [x] v1.1 - design areas: AREA lines, each solved, the governing one reported (engine files Phc, Report, Json)
 - [x] v1.1 - SUPPLYGRAPH: a GRAPH tab sheet added to a model's report, text and PDF (engine files Phc, Report, PDF)
 - [x] v1.1 - .phc reference manual, checked against the program by tools/test_manual.pl
+- [x] v1.1 - auto pipe sizing: SIZE 0 sized for the smallest pipes or least volume, with a margin under the supply; //AS comments (engine files Phc, Report, Json)

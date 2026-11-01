@@ -758,6 +758,22 @@ print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
     is('   the PE pipe takes the database\'s 0.007 mm, and is not flagged', !grep { /P1/ } @w);
 }
 
+{
+    # Auto sizing: CALCULATE writes each size after its line as a comment.
+    $main::settings->{method} = 'HW';
+    main::set_buffer(join "\n", 'WATER W1 0 500', 'USE ASAM', 'PIPE P1 W1 A 20 0', 'NODE A 0',
+                                 'PIPE P2 A S1 6 0 T   // TO THE HEAD', 'SPRINKLER S1 0 -50 8', '');
+    main::settings_changed();
+    main::validate();
+    my $r = main::calculate();
+    my @b = split /\n/, main::buffer(), -1;
+    is('auto sizing: CALCULATE puts //AS - <size> after each sized line, size 0 kept',
+       $r->{ok} && $b[2] =~ /^PIPE P1 W1 A 20 0  \/\/AS - \d+$/ && $b[4] =~ /^PIPE P2 A S1 6 0 T  \/\/AS - \d+ \/\/ TO THE HEAD$/, "@b[2,4]");
+    my $r2 = main::calculate();
+    is('   the model still counts as validated, and calculates again unchanged',
+       $r2->{ok} && main::buffer() eq join("\n", @b), main::buffer());
+}
+
 $main::mw->destroy;
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
