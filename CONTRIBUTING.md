@@ -78,7 +78,7 @@ A stale README is a defect.
 ```
 perl tools/test_phc.pl              # .phc language (--full also solves 04)
 perl tools/test_curves.pl           # supply, pump and loss curves
-perl tools/test_pipedata.pl         # pipe and fitting database, 35 checks
+perl tools/test_pipedata.pl         # pipe and fitting database
 perl tools/test_report_checks.pl    # report hand-checks across the examples
 perl tools/test_pdf.pl              # PDF structure checks
 perl tools/check_lisp.pl            # the AutoCAD exporter's structure (no AutoCAD here)
@@ -88,7 +88,14 @@ perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
 perl tools/test_editor.pl           # the editor's logic, headless
 perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
 perl tools/test_dbedit.pl           # database editing and the team folder, headless
+perl tools/test_graph.pl            # the Q^1.85 water supply graph, and SUPPLYGRAPH in a report
+perl tools/test_tools.pl            # the QUICK TOOLS calculators
+perl tools/test_sizing.pl           # auto pipe sizing, each answer checked at the demand point
+perl tools/test_manual.pl           # docs/PHC_REFERENCE.md against the program
 ```
+
+CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no
+display on Windows, on every pull request.
 
 Add the new suites from `PLAN.md` to this list as they are written.
 No CPAN modules beyond Tk and PAR::Packer (for the
