@@ -361,7 +361,7 @@ sub colour_spans {
 # solved (converged or not); error and its .phc line when it was not.
 #------------------------------------------------------------------------------
 sub solve_text {
-    my ($text, $path) = @_;
+    my ($text, $path, %o) = @_;
     # A supply graph (SUPPLYGRAPH) is found from the model's folder, or the
     # current one for a model not yet saved.
     require File::Basename;
@@ -372,13 +372,13 @@ sub solve_text {
     # Pipes given size 0 are sized (HardyCross::Sizing).
     if ($net->{auto_sizing}) {
         require HardyCross::Sizing;
-        ($net, $conv) = eval { HardyCross::Sizing::size($net, $conv) };
+        ($net, $conv) = eval { HardyCross::Sizing::size($net, $conv, progress => $o{progress}) };
         return error_result($@) unless $net;
     }
     # With design areas (AREA), each is solved and the governing one shown.
     if ($net->{areas}) {
         require HardyCross::Areas;
-        ($net, $conv) = eval { HardyCross::Areas::governing($net, $conv) };
+        ($net, $conv) = eval { HardyCross::Areas::governing($net, $conv, progress => $o{progress}) };
         return error_result($@) unless $net;
     }
     $net->{converged} = $conv;
@@ -740,6 +740,9 @@ our @OPTION_FORM = (
     [ 'SIZING_MARGIN', 'AUTO SIZING MARGIN',
       'HOW FAR UNDER THE SUPPLY THE SIZED SYSTEM MUST BE: A PERCENTAGE OF THE SUPPLY PRESSURE (10%) OR A PRESSURE, '
       . 'IN THE PRESSURE UNIT (50). BLANK: NO MARGIN.' ],
+    [ 'SIZING_TRIALS', 'AUTO SIZING TRIALS',
+      'HOW MANY TRIALS THE SIZING SEARCH MAKES, EACH FROM A DIFFERENT START; THE BEST WINS. MORE TRIALS CAN FIND '
+      . 'SMALLER PIPES BUT TAKE LONGER. 1 TO 50. BLANK: 5.' ],
     [ 'DESIGN_AREA', 'DESIGN AREA',
       'THE ONE DESIGN AREA (AREA) TO SOLVE AND REPORT. BLANK: EVERY AREA IS SOLVED AND THE ONE THAT GOVERNS IS '
       . 'REPORTED. NOT USED WITHOUT AREA LINES.' ],
@@ -903,9 +906,9 @@ sub doc_status  { my ($d, $n, $col) = @_; my ($t, $h) = doc_text($d); return sta
 # doc_solve -- solve_text for a document; an error's line is a network line,
 # or undef with the error in a setting.
 sub doc_solve {
-    my ($d, $path) = @_;
+    my ($d, $path, %o) = @_;
     my ($t, $h) = doc_text($d);
-    my $r = solve_text($t, $path);
+    my $r = solve_text($t, $path, %o);
     # Each sized pipe's size, written into the network as a comment after
     # its line (//AS - 25), for the window to put in the editor.
     if ($r->{ok} && $r->{net}{sizing}) {
