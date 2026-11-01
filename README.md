@@ -15,14 +15,17 @@ perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculat
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
+./phcp.pl model.phc --annotate out.phc   # with auto sizing: the model with each size as //AS - <size>
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
+perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
 perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
 perl tools/test_sizing.pl                # verify auto pipe sizing
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
+perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
 
@@ -346,8 +349,8 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
-| NETWORK | PROJECT                                                 |
-|  USE PIPE PC ... | NODE NC WATER ... | PUMP BP BFP ...  (strip)   |
+| NETWORK | PROJECT | GRAPH | QUICK TOOLS | DATABASE                |
+|  USE PIPE ... | NODE NC ... | PUMP BP ... | AREA ...  (strip)      |
 |  +----+--------------------------------------+ +---------------+ |
 |  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
 |  |  2 | NODE      R1 4.5                     | | WARNINGS      | |
@@ -390,8 +393,9 @@ there and selects it.
 |---|---|
 | syntax colours | command words blue and bold; a name being defined black and bold; references black; numbers dark blue; pipe types, fittings and units blue; comments grey italic.  A line in error has a pale red band and a red line number |
 | line numbers | a gutter beside the editor, scrolled with it; the cursor's line in black.  A click on a number goes to the line |
-| command strip | the network commands, in their three groups.  A click starts a line with that command |
-| status bar | the field template of the current command, the field the cursor is in highlighted; then the line's error, or after a calculation the element's results |
+| command strip | the network commands, in four groups: pipes; nodes and outlets; pumps and devices; design areas and supply graphs.  A click starts a line with that command |
+| status bar | the field template of the current command, the field the cursor is in highlighted; then the line's error, or after a calculation the element's results.  While a calculation runs it shows COMPUTING with a turning mark, what is being done (an auto sizing trial and its solves, a design area) and the seconds gone, and the cursor is busy - the window is working, not stuck |
+| auto sizing | after CALCULATE, each pipe given size 0 has its size written after its line as a comment, `//AS - 25`, size 0 kept.  See Auto pipe sizing |
 | proposals | after Enter the likely next line is shown greyed: the same command, names stepped past any already used (P7 to P8), a pipe starting where the last one ended.  Enter or Tab accepts it; typing anything else discards it |
 | pick list | Ctrl+Space in a `USE` type or a pipe's fittings lists the codes with descriptions |
 | ERRORS / WARNINGS / NODES | live as you type: lines the reader refuses; the last calculation's warnings; nodes undefined or unconnected.  A click goes to the line, or to the PROJECT tab field |
@@ -403,7 +407,7 @@ there and selects it.
 | files | NEW, OPEN, SAVE, SAVE AS, WRITE REPORT (Ctrl+R, `.pdf` or `.txt`; it validates and calculates first if needed).  Any file but a `.phc` is refused with the reason |
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
-| QUICK TOOLS tab | velocity, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
+| QUICK TOOLS tab | velocity, fittings, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
@@ -423,7 +427,9 @@ refuses.  `tools/test_editor.pl` checks those decisions headless;
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
 Linux with Tk 804.036.  The window has been run on Windows 11
-(see Windows below); the test suites themselves have been run on Linux only.
+(see Windows below).  Continuous integration runs every suite on Linux, and
+the suites that need no display on Windows; the window suite runs on Linux
+only.
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
 tests, and Tk::TableMatrix is no longer needed.
@@ -720,10 +726,14 @@ it shows whether run from source or built.  For the `.exe` files the build
 uses `tools/pack_with_icon.pl`: PAR::Packer removed its `--icon` option, and
 rewriting a finished program's resources would disturb the archive appended
 to it, so the icon is set where pp used to set it - on a copy of the
-packager's loader (`parl.exe`, `parlw.exe`), before the program is added
-(the program packed as a `.par` archive, then written out by that loader).
-It needs Win32::Exe, which the script installs.  If any step fails the
-program is built the plain way, without the icon.
+packager's loader (`parl.exe`), before the program is added (the program
+packed as a `.par` archive, then written out by that loader).  For the editor
+the same copy is also marked as a windowed program.  The loader carries its
+own core modules appended after its program image, which rewriting its
+resources would drop, so they are taken off first and put back after the
+icon is set.  It needs Win32::Exe, which the script installs.  If any step
+fails the program is built the plain way, without the icon.  The CI build on
+Windows (28 October 2026) wrote both programs with the icon.
 
 ## Continuous integration and releases
 
@@ -750,6 +760,7 @@ below); Revit could later.
 phcp.exe --json model.phc                     results as JSON on standard output
 phcp.exe --json -                             the model read from standard input
 phcp.exe --json model.phc --report out.pdf    ...and the report written too
+phcp.exe model.phc --annotate out.phc         with auto sizing: the model with each size as //AS - <size>
 ```
 
 The exit status says how it went - 0 converged, 1 solved but did not
@@ -774,6 +785,9 @@ something to read.  Abridged, for example 07:
    "governing" : { "id" : "H2", "margin" : 132.2904 },
    "demand" : { "supply" : "SUP", "flow" : 1889.5674, "pressure" : 223.864,
                 "available" : 650, "margin" : 426.136, "meets" : true },
+   "design_area" : null,
+   "areas" : null,
+   "sized" : null,
    "warnings" : [],
    "errors" : [],
    "summary" : [
@@ -788,7 +802,11 @@ something to read.  Abridged, for example 07:
 
 Flows and pressures are in the model's own units, named in `units`; lengths
 and elevations in m, sizes in mm, velocity in m/s.  A pipe's flow is signed,
-positive from `from` to `to` as the model wrote it.  On an error, `status` is
+positive from `from` to `to` as the model wrote it.  `design_area` and
+`areas` are the design area reported and every area solved (see Design
+areas); `sized` lists the pipes auto sizing sized, each with its line, size
+and velocity (see Auto pipe sizing); each is null when the model has none.
+On an error, `status` is
 `error` and `errors` holds the message with its `.phc` line.  The `summary`
 is what a caller shows a user, one line to a string; the JSON is written one
 value to a line, so even a caller with no JSON reader can find it line by
@@ -954,6 +972,7 @@ others on the page, and the report says which check to make.
 | auto pipe sizing, checked at the demand point | 43 / 43 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
+| fitting resolver fuzz | 0 problems |
 | invariance stress | 9 584 / 9 584 |
 
 ## Stress testing
@@ -1010,3 +1029,10 @@ model, not the standard's tables.  Agreement with other
 implementations does not validate a reading of a standard.  The database is
 user editable: a value changed in it is only as good as the source it was
 taken from.
+
+Auto sizing is a search, not a proof of the least possible sizes: it keeps the
+best of its trials, each checked against the velocity limit and the margin
+under the supply, and the report lists every trial.  Each step of the search
+is a full solve, so a model with many pipes of size 0 takes longer to
+calculate.  It sizes only the pipes given size 0 and only from the sizes the
+database holds for their type.
