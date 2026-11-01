@@ -329,6 +329,7 @@ name is an error. A numeric option's value must be a number.
 | `DESIGN_AREA` | an AREA name | none | Solve and report that one design area only (Section 9.1). |
 | `SIZING_GOAL` | `SMALLEST` or `VOLUME` | `SMALLEST` | For pipes given size 0 (Section 6.6): the smallest pipes that will do, or the least water held in the sized pipes. |
 | `SIZING_MARGIN` | a percentage (`10%`) or a pressure (`50`, PRESSURE unit) | 0 | For pipes given size 0: how far under the supply the sized system must be at the demand point. |
+| `SIZING_TRIALS` | 1 to 50 | 5 | For pipes given size 0: how many trials the sizing search makes, each from a different start. |
 | `FITTING_BASIS` | `CORRECTED` or `STANDARD` | `CORRECTED` | CORRECTED corrects fitting lengths for C and for the installed bore. STANDARD uses the AS 2118.1 values unmodified (the "published Standard alone" election), and the report says so. |
 | `VEL_LIMIT` | m/s, above 0 | 6 | Pipes faster than this are listed in the warnings. A setting, not a clause of a Standard, and the report says which. |
 | `HW_CONST` | number | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. |
@@ -467,6 +468,7 @@ The settings that control it:
 | `SIZING_MARGIN` | `10%` | | at the demand point the system needs at least 10 % less than the supply gives |
 | | `50` | | ...or at least 50 less, in the PRESSURE unit |
 | | (not set) | 0 | no margin |
+| `SIZING_TRIALS` | `1` to `50` | 5 | how many trials the search makes |
 
 A size "will do" when every outlet gets its requirement from the supply
 reduced by the margin, and no sized pipe runs faster than VEL_LIMIT (6 m/s
@@ -477,11 +479,29 @@ Pipes not given size 0 are never changed.
 **What is sized together.** A PIPE line sizes its pipe and every PC copy of it
 not changed since. A CHANGEPIPE line with size 0 sizes the one pipe it changes.
 
-**How.** Every pipe to be sized starts at its smallest size. The pipe whose
-next size up does the most good for its cost is enlarged, one step at a time,
-until the network passes. Each pipe is then tried one size smaller, keeping
-any that still pass. This step-by-step search finds a good answer, not always
-the least possible one.
+**How.** The search makes several trials (SIZING_TRIALS, 5 unless set),
+each from a different start, and keeps the best one that passes:
+
+| trial | starts from |
+|---|---|
+| 1 | every pipe at its smallest size |
+| 2 | every pipe at its largest size |
+| 3 onwards | the best so far, with about a third of the pipes moved a size or two up and a third a size down |
+
+The variations follow a fixed sequence, so the same model always gives the
+same sizes. Each trial then works in three steps:
+
+1. **Up:** the pipe whose next size up does the most good for its cost is
+   enlarged, one step at a time, until the network passes.
+2. **Down:** each pipe is tried one size smaller, keeping any that still pass.
+3. **Swap:** one pipe is moved a size up and another a size down, keeping the
+   change when it still passes and costs less.
+
+"Best" means the least sum of length x bore over the sized pipes (SMALLEST),
+or the least water held in them (VOLUME). The report lists each trial and
+which one was chosen. More trials can find smaller pipes, but take longer.
+While it works, the editor's status bar shows COMPUTING, the trial, the
+number of solves and the seconds gone.
 
 **The answer.**
 - In the editor, CALCULATE writes each size after its line as a comment,
@@ -934,6 +954,7 @@ words in capitals are as PHCP prints them.
 | `DESIGN_AREA X: NO AREA OF THAT NAME (...)` | The option names an area the file does not have. |
 | `PIPE X: SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE ...` | Auto sizing under USE BORE. |
 | `SIZING_MARGIN 'X' IS A PERCENTAGE OF THE SUPPLY (10%) OR A PRESSURE (50)` | Not `10%` (under 100) or a pressure of 0 or more. |
+| `SIZING_TRIALS 'X' IS A WHOLE NUMBER OF TRIALS, 1 TO 50` | Not a whole number from 1 to 50. |
 | `THE FILE HOLDS NO MODEL: NO NODES AND NO PIPES` | Nothing but settings and comments. |
 
 **Warnings** do not stop the solve. They are listed in Section 12 of the

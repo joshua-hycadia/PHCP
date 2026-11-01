@@ -20,6 +20,8 @@
 #                                     than the supply gives at the demand flow
 #                          50         ...or 50 (in the PRESSURE unit) less
 #                                     (blank: 0, no margin)
+#     OPTION SIZING_TRIALS 5          how many trials the search makes (1 to
+#                                     50; blank: 5)
 #
 # WHAT "WILL DO" MEANS
 #   With the sized pipes, every outlet gets at least its requirement from a
@@ -33,16 +35,30 @@
 #   changed.
 #
 # HOW THE SIZES ARE FOUND
-#   1. Every pipe to be sized starts at its smallest size.
-#   2. While the network does not pass, the one pipe whose next size up
+#   Several trials, each from a different start; the best that passes wins.
+#   "Best" is the least sum of length x bore over the sized pipes (SMALLEST),
+#   or the least water they hold (VOLUME).
+#
+#     trial 1      from the smallest sizes
+#     trial 2      from the largest sizes
+#     trial 3 ...  from the best so far, with about a third of the pipes
+#                  moved a size or two up and a third a size down - by a
+#                  fixed sequence, so the same model always gives the same
+#                  sizes
+#
+#   Each trial:
+#   1. UP.  While the network does not pass, the one pipe whose next size up
 #      closes the most of the shortfall for its cost is made one size larger.
 #      The cost of a step is one size (SMALLEST), or the water it adds
 #      (VOLUME).  The shortfall is the governing outlet's pressure short of
 #      its requirement, plus any velocity over the limit, weighted.
-#   3. Then each pipe is tried one size smaller, the biggest saving first,
+#   2. DOWN.  Each pipe is tried one size smaller, the biggest saving first,
 #      and kept smaller if the network still passes, until none can be.
-#   A greedy search: it finds a good answer, not always the very best one,
-#   and the report says what it found and by how much it passes.
+#   3. SWAP.  One pipe a size up and another a size down, kept when it still
+#      passes and costs less - what a step at a time cannot find (skipped for
+#      more than $SWAP_MAX pipes).
+#   A search, not a proof: it finds a good answer, not always the very best
+#   one, and the report lists each trial and which one won.
 #
 #   A PIPE line sizes its pipe and every copy of it (PC) not changed since:
 #   copies are the same pipe by definition.  A CHANGEPIPE line sizes the one
@@ -63,6 +79,8 @@ use HardyCross::PipeData;
 
 our $VEL_WEIGHT = 50;      # kPa of shortfall counted per m/s over the limit
 our $MAX_STEPS  = 2000;    # a ceiling on the search, never reached in practice
+our $SWAP_MAX   = 40;      # the swap pass is skipped for more pipes than this
+our $TRIALS     = 5;       # trials unless OPTION SIZING_TRIALS says otherwise
 
 my $PI = 4 * atan2(1, 1);
 
@@ -139,7 +157,7 @@ sub reduce {
 # solves }.
 #------------------------------------------------------------------------------
 sub size {
-    my ($net, $ok) = @_;
+    my ($net, $ok, %arg) = @_;
     my $units = $net->{auto_sizing} or return ($net, $ok);
     require HardyCross::Phc;
     require HardyCross::Demand;
@@ -147,6 +165,11 @@ sub size {
     my @lines = split /\n/, $text, -1;
     my $o = $net->{sizing_opts} || {};
     my $goal = $o->{SIZING_GOAL} // 'SMALLEST';
+    my $ntrials = $o->{SIZING_TRIALS} // $TRIALS;
+    # progress -- called as the search goes, with a line saying where it is,
+    # so a window can show that it is working, not stuck.
+    my $progress = $arg{progress};
+    my $trial = 0;
     my $m = margin_of($o->{SIZING_MARGIN}, $net);
     my $vlim = $net->{opts}{vel_limit} // 6;
     my %len = map { $_->{id} => $_->{len} } grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
@@ -175,6 +198,8 @@ sub size {
         my $idx = shift;
         my $t = $sized->($idx);
         $t .= "\n" unless $t =~ /\n\z/;
+        $progress->(sprintf('AUTO SIZING %d PIPE%s - TRIAL %d OF %d - %d SOLVES', scalar @$units,
+                            @$units == 1 ? '' : 'S', $trial || 1, $ntrials, $solves)) if $progress;
         my ($short, @vel) = (0);
         for my $case (@cases) {
             my $case_text = $t . (defined $case ? "OPTION DESIGN_AREA $case\n" : '');
@@ -209,47 +234,137 @@ sub size {
         return $goal eq 'VOLUME' ? abs($volume->($units->[$i], $to) - $volume->($units->[$i], $from)) || 1e-12 : 1;
     };
 
-    my @idx = (0) x @$units;
-    my ($passes, $dmargin, $required);
-    for my $round (1 .. 6) {
-        # Up, until it passes.
-        my $now = $assess->(\@idx);
+    # What is made least: the pipes' size, length-weighted (SMALLEST), or
+    # the water they hold (VOLUME).
+    my $objective = sub {
+        my $idx = shift;
+        my $sum = 0;
+        for my $i (0 .. $#$units) {
+            my $d = $units->[$i]{choices}[ $idx->[$i] ][2] / 1000;
+            $sum += $units->[$i]{length} * ($goal eq 'VOLUME' ? $PI / 4 * $d * $d : $d);
+        }
+        return $sum;
+    };
+    my $passes_at = sub { $assess->(shift)->{short} <= 1e-6 };
+    my $top = sub { $#{ $units->[ $_[0] ]{choices} } };
+
+    # up -- one size at a time, the step doing most good for its cost,
+    # until the network passes.  False if even the largest sizes do not.
+    my $up = sub {
+        my $idx = shift;
+        my $now = $assess->($idx);
         my $steps = 0;
         while ($now->{short} > 1e-6 && $steps++ < $MAX_STEPS) {
             my ($best, $bscore, $bres);
             for my $i (0 .. $#$units) {
-                next if $idx[$i] >= $#{ $units->[$i]{choices} };
-                my @t = @idx;
+                next if $idx->[$i] >= $top->($i);
+                my @t = @$idx;
                 $t[$i]++;
                 my $r = $assess->(\@t);
-                my $score = ($now->{short} - $r->{short}) / $cost->($i, $idx[$i], $t[$i]);
+                my $score = ($now->{short} - $r->{short}) / $cost->($i, $idx->[$i], $t[$i]);
                 ($best, $bscore, $bres) = ($i, $score, $r) if !defined $bscore || $score > $bscore;
             }
             last unless defined $best;
             # No step helps (the network does not solve yet, say): enlarge
             # the fastest pipe.
             if ($bscore <= 0) {
-                my @open = grep { $idx[$_] < $#{ $units->[$_]{choices} } } 0 .. $#$units;
+                my @open = grep { $idx->[$_] < $top->($_) } 0 .. $#$units;
                 ($best) = sort { ($now->{vel}[$b] // 0) <=> ($now->{vel}[$a] // 0) } @open;
-                my @t = @idx; $t[$best]++;
+                my @t = @$idx; $t[$best]++;
                 $bres = $assess->(\@t);
             }
-            $idx[$best]++;
+            $idx->[$best]++;
             $now = $bres;
         }
-        last if $now->{short} > 1e-6;          # the largest sizes do not pass
-
-        # Down, while it still passes: the biggest saving first.
+        return $now->{short} <= 1e-6;
+    };
+    # down -- each pipe one size smaller, the biggest saving first, kept
+    # while the network still passes, until none can be.
+    my $down = sub {
+        my $idx = shift;
         my $changed = 1;
         while ($changed) {
             $changed = 0;
-            my @order = sort { $cost->($b, $idx[$b], $idx[$b] - 1) <=> $cost->($a, $idx[$a], $idx[$a] - 1)
-                               || $units->[$b]{choices}[ $idx[$b] ][0] <=> $units->[$a]{choices}[ $idx[$a] ][0] }
-                        grep { $idx[$_] > 0 } 0 .. $#$units;
+            my @order = sort { $cost->($b, $idx->[$b], $idx->[$b] - 1) <=> $cost->($a, $idx->[$a], $idx->[$a] - 1)
+                               || $units->[$b]{choices}[ $idx->[$b] ][0] <=> $units->[$a]{choices}[ $idx->[$a] ][0] }
+                        grep { $idx->[$_] > 0 } 0 .. $#$units;
             for my $i (@order) {
-                my @t = @idx; $t[$i]--;
-                if ($assess->(\@t)->{short} <= 1e-6) { @idx = @t; $changed = 1 }
+                my @t = @$idx; $t[$i]--;
+                if ($passes_at->(\@t)) { @$idx = @t; $changed = 1 }
             }
+        }
+    };
+    # swap -- one pipe a size up and another a size down, kept when it
+    # still passes and costs less: what a step at a time cannot find.
+    my $swap = sub {
+        my $idx = shift;
+        return if @$units > $SWAP_MAX;
+        my $better = 1;
+        while ($better) {
+            $better = 0;
+            PAIR: for my $i (0 .. $#$units) {
+                next if $idx->[$i] >= $top->($i);
+                for my $j (grep { $_ != $i && $idx->[$_] > 0 } 0 .. $#$units) {
+                    my @t = @$idx;
+                    $t[$i]++; $t[$j]--;
+                    next unless $objective->(\@t) < $objective->($idx) - 1e-12;
+                    if ($passes_at->(\@t)) { @$idx = @t; $better = 1; last PAIR }
+                }
+            }
+        }
+    };
+    # A fixed sequence of "random" numbers, so the same model always gives
+    # the same sizes.
+    my $seed = 20261101;
+    my $rand = sub { $seed = ($seed * 1103515245 + 12345) % 2147483648; $seed / 2147483648 };
+
+    my (@idx, @trials, $passes, $dmargin, $required);
+    for my $round (1 .. 6) {
+        @trials = ();
+        my ($best, $bobj);
+        for my $k (1 .. $ntrials) {
+            $trial = $k;
+            my $before = $solves;
+            my @t;
+            my $from;
+            if ($k == 1)    { @t = (0) x @$units; $from = 'the smallest sizes' }
+            elsif ($k == 2) { @t = map { $top->($_) } 0 .. $#$units; $from = 'the largest sizes' }
+            else {
+                # From the best so far, with about a third of the pipes moved
+                # a size or two up and a third a size down.
+                last unless $best;
+                @t = @$best;
+                for my $i (0 .. $#t) {
+                    my $r = $rand->();
+                    $t[$i] += 1 + int($rand->() * 2) if $r < 1 / 3;
+                    $t[$i] -= 1 if $r > 2 / 3;
+                    $t[$i] = 0 if $t[$i] < 0;
+                    $t[$i] = $top->($i) if $t[$i] > $top->($i);
+                }
+                $from = 'the best so far, varied';
+            }
+            my $ok = $up->(\@t);
+            if ($ok) { $down->(\@t); $swap->(\@t) }
+            my $obj = $objective->(\@t);
+            push @trials, { trial => $k, from => $from, passes => $ok ? 1 : 0, objective => $obj,
+                            solves => $solves - $before, sizes => [ map { $units->[$_]{choices}[ $t[$_] ][0] } 0 .. $#t ] };
+            ($best, $bobj) = ([@t], $obj) if $ok && (!defined $bobj || $obj < $bobj - 1e-12);
+            # The largest sizes do not pass: no trial can.
+            last if $k == 2 && !$ok && !$best;
+        }
+        unless ($best) {                       # nothing passes: the largest sizes
+            @idx = map { $top->($_) } 0 .. $#$units;
+            $passes = 0;
+            last;
+        }
+        @idx = @$best;
+        # The first trial to reach the best is the one chosen; any other
+        # reaching it too is marked SAME.
+        my $marked;
+        for (@trials) {
+            next unless $_->{passes} && abs($_->{objective} - $bobj) < 1e-12;
+            $_->{$marked ? 'same' : 'best'} = 1;
+            $marked = 1;
         }
 
         # The check that counts: with one supply, the demand point itself.
@@ -287,6 +402,7 @@ sub size {
                      dn => $u->{choices}[ $idx[$i] ][0], token => $u->{choices}[ $idx[$i] ][1], velocity => $v };
     }
     $out->{sizing} = { units => \@res, goal => $goal, margin => $m->{text}, passes => $passes,
+                       trials => \@trials, ntrials => $ntrials,
                        demand_margin => $dmargin, required => $required, solves => $solves,
                        vel_limit => $vlim, text => $text };
     push @{ $out->{warnings} }, 'auto sizing: even the largest sizes in the database do not meet the demand with '

@@ -75,7 +75,7 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA SIZING_GOAL SIZING_MARGIN` |
+| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA SIZING_GOAL SIZING_MARGIN SIZING_TRIALS` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] - SIZE 0: PHCP sizes the pipe (Auto pipe sizing) |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
@@ -846,10 +846,16 @@ in the PROJECT tab.
 A size will do when every outlet gets its requirement from the supply reduced
 by the margin and no sized pipe exceeds the velocity limit at the operating
 point; with one supply that is confirmed at the demand point itself, and with
-design areas in every area.  The search starts every sized pipe at its
-smallest size, enlarges the one that does most good for its cost until the
-network passes, then tries each one size smaller.  Pipes not given size 0 are
-never changed; a PIPE line sizes its unchanged copies (PC) with it.
+design areas in every area.  The search makes `OPTION SIZING_TRIALS` trials
+(5 unless set), each from a different start - every pipe at its smallest size,
+every pipe at its largest, then the best so far varied - and keeps the best
+that passes: the least length x bore (SMALLEST) or the least water (VOLUME).
+Each trial enlarges the pipe that does most good for its cost until the
+network passes, tries each pipe one size smaller, then tries one pipe up and
+another down.  The same model always gives the same sizes.  While it works,
+the editor's status bar shows COMPUTING, the trial, the number of solves and
+the seconds gone.  Pipes not given size 0 are never changed; a PIPE line
+sizes its unchanged copies (PC) with it.
 
 After CALCULATE the editor writes each size after its line, leaving SIZE 0 so
 the pipe is sized again next time:
@@ -942,10 +948,10 @@ others on the page, and the report says which check to make.
 | report hand-checks, 10 models | 615 / 615 |
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 153 / 153 |
+| text editor window, under Xvfb | 154 / 154 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
-| auto pipe sizing, checked at the demand point | 34 / 34 |
+| auto pipe sizing, checked at the demand point | 43 / 43 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |

@@ -48,13 +48,17 @@ use HardyCross::Demand;
 #     kPa), demand { q, p, avail, margin } or undef, governs (1 for the one) }
 #------------------------------------------------------------------------------
 sub governing {
-    my ($net, $ok) = @_;
+    my ($net, $ok, %arg) = @_;
     return ($net, $ok) unless $net->{areas} && !defined $net->{design_area};
     require HardyCross::Phc;
     my $text = $net->{source_text};
     $text .= "\n" unless $text =~ /\n\z/;
     my @res;
+    my $k = 0;
     for my $a (@{ $net->{areas} }) {
+        # progress -- a line saying where it is, for a window to show.
+        $arg{progress}->(sprintf 'DESIGN AREA %s - %d OF %d', $a->{name}, ++$k, scalar @{ $net->{areas} })
+            if $arg{progress};
         my $n = HardyCross::Phc::read_string($text . "OPTION DESIGN_AREA $a->{name}\n", $net->{model_dir});
         my $c = HardyCross::solve_model($n);
         $n->{converged} = $c;
