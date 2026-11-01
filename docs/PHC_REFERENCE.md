@@ -1,6 +1,7 @@
 # PHCP .phc Language Reference Manual
 
-PHCP 1.1 - the `.phc` model file, command by command.
+The `.phc` model file, command by command, as PHCP reads it on the branch
+this manual is in.
 
 This manual is the reference for every command, field, unit and option the
 `.phc` reader accepts. The README explains how PHCP works and what its report
