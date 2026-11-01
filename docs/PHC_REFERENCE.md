@@ -20,7 +20,7 @@ manual reads and solves.
 3. Units
 4. Command summary
 5. Settings: TITLE, PROJECT, UNITS, METHOD, OPTION
-6. Pipes: USE, PIPE, PC, CHANGEPIPE, EQV
+6. Pipes: USE, PIPE, PC, CHANGEPIPE, EQV, and auto sizing
 7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW
 8. Pumps and devices: PUMP, PUMPDUTY, BP, BFP, PRV, OPP, OFD, PRA
 9. Design and reporting: AREA, SUPPLYGRAPH
@@ -327,6 +327,8 @@ name is an error. A numeric option's value must be a number.
 |---|---|---|---|
 | `HOSE_ALLOWANCE` | flow, FLOW unit | none | A hose stream flow added at the supply. The demand is checked at the system's flow plus this. It cannot be negative. |
 | `DESIGN_AREA` | an AREA name | none | Solve and report that one design area only (Section 9.1). |
+| `SIZING_GOAL` | `SMALLEST` or `VOLUME` | `SMALLEST` | For pipes given size 0 (Section 6.6): the smallest pipes that will do, or the least water held in the sized pipes. |
+| `SIZING_MARGIN` | a percentage (`10%`) or a pressure (`50`, PRESSURE unit) | 0 | For pipes given size 0: how far under the supply the sized system must be at the demand point. |
 | `FITTING_BASIS` | `CORRECTED` or `STANDARD` | `CORRECTED` | CORRECTED corrects fitting lengths for C and for the installed bore. STANDARD uses the AS 2118.1 values unmodified (the "published Standard alone" election), and the report says so. |
 | `VEL_LIMIT` | m/s, above 0 | 6 | Pipes faster than this are listed in the warnings. A setting, not a clause of a Standard, and the report says which. |
 | `HW_CONST` | number | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. |
@@ -443,6 +445,62 @@ USE  BORE 120
 PIPE P5 A B 6000 52.5
 EQV  P5 3.2M
 ```
+
+### 6.6 Auto sizing: SIZE 0
+
+A PIPE or CHANGEPIPE with SIZE `0`, under a `USE <pipe type>`, is sized by
+PHCP from the sizes the database has for that pipe type.
+
+```
+OPTION SIZING_GOAL   SMALLEST
+OPTION SIZING_MARGIN 10%
+USE    ASAM
+PIPE   LA1 J1 A1 3000 0 T
+```
+
+The settings that control it:
+
+| setting | value | default | meaning |
+|---|---|---|---|
+| `SIZING_GOAL` | `SMALLEST` | yes | the smallest pipes that will do |
+| | `VOLUME` | | the least water held in the sized pipes (for a dry or preaction system) |
+| `SIZING_MARGIN` | `10%` | | at the demand point the system needs at least 10 % less than the supply gives |
+| | `50` | | ...or at least 50 less, in the PRESSURE unit |
+| | (not set) | 0 | no margin |
+
+A size "will do" when every outlet gets its requirement from the supply
+reduced by the margin, and no sized pipe runs faster than VEL_LIMIT (6 m/s
+unless set) at the operating point. With one supply this is checked at the
+demand point itself. With design areas (Section 9.1) every area must pass.
+Pipes not given size 0 are never changed.
+
+**What is sized together.** A PIPE line sizes its pipe and every PC copy of it
+not changed since. A CHANGEPIPE line with size 0 sizes the one pipe it changes.
+
+**How.** Every pipe to be sized starts at its smallest size. The pipe whose
+next size up does the most good for its cost is enlarged, one step at a time,
+until the network passes. Each pipe is then tried one size smaller, keeping
+any that still pass. This step-by-step search finds a good answer, not always
+the least possible one.
+
+**The answer.**
+- In the editor, CALCULATE writes each size after its line as a comment,
+  leaving SIZE 0 so the pipe is sized again next time:
+
+  ```
+  PIPE   LA1 J1 A1 3000 0 T  //AS - 40
+  ```
+
+  A comment already on the line is kept after the size. An old `//AS`
+  comment is replaced.
+- On the command line, `phcp.pl model.phc --annotate out.phc` writes the
+  model with the comments.
+- The report's Section 1 lists every sized pipe, its size and velocity, and
+  the margin met against the margin asked for. If even the largest sizes do
+  not pass, the pipes are left at the largest, and the report and warnings
+  say NOT MET.
+
+Auto sizing needs a pipe type: SIZE 0 under `USE BORE` is an error.
 
 ---
 
@@ -874,6 +932,8 @@ words in capitals are as PHCP prints them.
 | `PUMPDUTY X: NO PUMP OF THAT NAME, AND NO PIPE WITH A BOOSTER (BP) IN IT` | The duty names nothing it can check. |
 | `AREA A: X IS NOT AN OUTLET (SPRINKLER, HYDRANT OR HREEL)` | An AREA names a plain node. |
 | `DESIGN_AREA X: NO AREA OF THAT NAME (...)` | The option names an area the file does not have. |
+| `PIPE X: SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE ...` | Auto sizing under USE BORE. |
+| `SIZING_MARGIN 'X' IS A PERCENTAGE OF THE SUPPLY (10%) OR A PRESSURE (50)` | Not `10%` (under 100) or a pressure of 0 or more. |
 | `THE FILE HOLDS NO MODEL: NO NODES AND NO PIPES` | Nothing but settings and comments. |
 
 **Warnings** do not stop the solve. They are listed in Section 12 of the
