@@ -115,6 +115,8 @@ print "1. READING\n";
     refused('SIZING_MARGIN that is neither 10% nor a pressure', $FLOOR . "OPTION SIZING_MARGIN TEN\n", qr/SIZING_MARGIN 'TEN' IS A PERCENTAGE/);
     refused('   nor 100% or more', $FLOOR . "OPTION SIZING_MARGIN 100%\n", qr/IS A PERCENTAGE/);
     refused('   nor below zero', $FLOOR . "OPTION SIZING_MARGIN -5\n", qr/IS A PERCENTAGE/);
+    refused('SIZING_TRIALS of 0', $FLOOR . "OPTION SIZING_TRIALS 0\n", qr/SIZING_TRIALS '0' IS A WHOLE NUMBER OF TRIALS, 1 TO 50/);
+    refused('   or 51, or 2.5', $FLOOR . "OPTION SIZING_TRIALS 2.5\n", qr/IS A WHOLE NUMBER OF TRIALS/);
     my $c = HardyCross::Phc::check_line('PIPE P9 A B 3 0 T', { use => 'ASAM' });
     is('the editor\'s line check takes SIZE 0 under a pipe type', $c->{status} eq 'ok', $c->{message});
 }
@@ -154,6 +156,28 @@ print "3. NO SMALLER WILL DO\n";
                1000 * $vol->($nv->{sizing}), 1000 * $vol->($s)),
        $nv->{sizing}{passes} && $vol->($nv->{sizing}) <= $vol->($s) + 1e-12
        && check($nv->{source_text}, \@AUTO, pct => 10)->{ok});
+}
+
+print "3a. TRIALS\n";
+{
+    my ($n, $s) = @{ $res{'SIZING_MARGIN 10%'} };
+    my @t = @{ $s->{trials} };
+    is('5 trials unless set: from the smallest, from the largest, then varied',
+       $s->{ntrials} == 5 && @t == 5 && $t[0]{from} eq 'the smallest sizes' && $t[1]{from} eq 'the largest sizes'
+       && $t[2]{from} =~ /varied/);
+    my ($chosen) = grep { $_->{best} } @t;
+    is('   exactly one is chosen, and no trial that passes costs less',
+       (grep { $_->{best} } @t) == 1 && !grep { $_->{passes} && $_->{objective} < $chosen->{objective} - 1e-12 } @t);
+    is('   the sizes chosen are that trial\'s',
+       join(' ', map { $_->{dn} } @{ $s->{units} }) eq join(' ', @{ $chosen->{sizes} }));
+    my ($again) = sized($FLOOR . "OPTION SIZING_MARGIN 10%\n");
+    is('the same model gives the same sizes every time',
+       join(' ', map { $_->{dn} } @{ $again->{sizing}{units} }) eq join(' ', map { $_->{dn} } @{ $s->{units} }));
+    my @said;
+    my $n1 = HardyCross::Phc::read_string($FLOOR . "OPTION SIZING_TRIALS 1\n");
+    my ($o1) = HardyCross::Sizing::size($n1, HardyCross::solve_model($n1), progress => sub { push @said, shift });
+    is('SIZING_TRIALS 1: one trial', @{ $o1->{sizing}{trials} } == 1 && $o1->{sizing}{passes});
+    is('   and the search says where it is as it goes', @said > 10 && $said[-1] =~ /^AUTO SIZING 9 PIPES - TRIAL 1 OF 1 - \d+ SOLVES$/, $said[-1]);
 }
 
 print "4. WHAT IS SIZED TOGETHER\n";
@@ -214,9 +238,11 @@ print "7. WITH DESIGN AREAS, IN INCHES, IN THE REPORT AND THE JSON\n";
         push @bad, $a unless $c->{ok};
     }
     is('with AREA lines, the sizes pass in every area', $n->{sizing}{passes} && !@bad, "fails in @bad");
-    my ($g, $gok) = HardyCross::Areas::governing($n, $ok);
+    my @said;
+    my ($g, $gok) = HardyCross::Areas::governing($n, $ok, progress => sub { push @said, shift });
     is('   and the design areas are then reported from the sized model',
        $gok && $g->{area_results} && @{ $g->{area_results} } == 2);
+    is('   each area said as it is solved', "@said" eq 'DESIGN AREA NEAR - 1 OF 2 DESIGN AREA FAR - 2 OF 2', "@said");
     (my $in = $FLOOR) =~ s/^UNITS LENGTH M$/UNITS LENGTH M\nUNITS SIZE IN/m;
     $in =~ s/^(PIPE M1 TOWN R0 30) 100$/$1 4/m;
     $in =~ s/^(PIPE RS R0 R1 4) 100 E$/$1 4 E/m;

@@ -1327,11 +1327,21 @@ sub auto_sizing {
         ? sprintf('Met: at the demand point the supply has %.1f %s to spare, against %.1f %s asked for.',
                   $s->{demand_margin} / $up, $pu, $s->{required} / $up, $pu)
         : 'Met: every outlet has its requirement from each supply reduced by the margin.';
+    if (@{ $s->{trials} || [] }) {
+        $out .= sprintf "\n %-6s %-28s %-8s %16s %8s\n", 'TRIAL', 'STARTING FROM', 'RESULT',
+            $s->{goal} eq 'VOLUME' ? 'WATER, L' : 'SUM L x BORE, m2', 'SOLVES';
+        for my $t (@{ $s->{trials} }) {
+            $out .= sprintf " %-6d %-28s %-8s %16s %8d%s\n", $t->{trial}, $t->{from}, $t->{passes} ? 'PASSES' : 'FAILS',
+                $t->{passes} ? sprintf('%.3f', $s->{goal} eq 'VOLUME' ? 1000 * $t->{objective} : $t->{objective}) : '-',
+                $t->{solves}, $t->{best} ? '  <- CHOSEN' : $t->{same} ? '  SAME' : '';
+        }
+    }
     $out .= "\n" . wrap(' ', "Pipes given size 0 in the model were sized by PHCP from the sizes the database has for "
         . "their pipe type, for $goal, keeping a margin under the supply of $s->{margin} and no sized pipe faster "
-        . "than $s->{vel_limit} m/s.  A PIPE line sizes its pipe and its unchanged copies (PC).  $res  The sizes are "
-        . "chosen by a step-by-step search: a good answer, not always the least possible.  The model keeps size 0, "
-        . "with each size after its line as //AS - <size>.");
+        . "than $s->{vel_limit} m/s.  A PIPE line sizes its pipe and its unchanged copies (PC).  $res  The search made "
+        . "$s->{ntrials} trial(s) (OPTION SIZING_TRIALS), each from a different start, and kept the best that passes: a "
+        . "good answer, not always the least possible.  The model keeps size 0, with each size after its line as "
+        . "//AS - <size>.");
     return $out;
 }
 
