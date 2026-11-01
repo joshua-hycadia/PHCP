@@ -409,6 +409,15 @@ without SIZE 0 solves and reports exactly as before.
 | `phcp.pl`, `HardyCross/Editor.pm`, `phcp_editor.pl` | the model sized before design areas; `--annotate`; the editor writes //AS - <size> after each sized line; the two settings in the PROJECT tab |
 | `examples/12_auto_sizing.phc`, `tools/test_sizing.pl`, `docs/PHC_REFERENCE.md` | an example, its tests (each answer checked independently at the demand point), the manual's section 6.6 |
 
+## v1.1 - sizing trials and a working indicator
+
+| file | change |
+|---|---|
+| `HardyCross/Sizing.pm` | `OPTION SIZING_TRIALS` (default 5): trials from the smallest sizes, the largest, then the best so far varied by a fixed sequence; each up, down and swap; the best that passes kept; a progress callback |
+| `HardyCross/Phc.pm`, `HardyCross/Editor.pm` | SIZING_TRIALS checked (1 to 50) and in the PROJECT tab |
+| `HardyCross/Report.pm` | each trial listed, and the one chosen |
+| `phcp_editor.pl`, `HardyCross/Areas.pm` | COMPUTING in the status bar while a calculation runs, with a turning mark, what is being done and the seconds gone; a busy cursor |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -457,3 +466,4 @@ without SIZE 0 solves and reports exactly as before.
 - [x] v1.1 - SUPPLYGRAPH: a GRAPH tab sheet added to a model's report, text and PDF (engine files Phc, Report, PDF)
 - [x] v1.1 - .phc reference manual, checked against the program by tools/test_manual.pl
 - [x] v1.1 - auto pipe sizing: SIZE 0 sized for the smallest pipes or least volume, with a margin under the supply; //AS comments (engine files Phc, Report, Json)
+- [x] v1.1 - sizing trials (SIZING_TRIALS, default 5) and a COMPUTING indicator while a calculation runs

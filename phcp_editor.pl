@@ -57,6 +57,7 @@
 #   Window/Results.pm          the results: VALIDATION, PIPES, NODES, OUTLETS
 #==============================================================================
 use strict;
+use Time::HiRes ();
 use warnings;
 use FindBin;
 use lib $FindBin::Bin;
@@ -1158,7 +1159,25 @@ sub calculate {
         message('VALIDATE THE INPUTS FIRST (F4): CALCULATE RUNS ONLY ON A MODEL THAT HAS PASSED VALIDATION', 1);
         return { ok => 0, not_validated => 1 };
     }
-    my $r = HardyCross::Editor::doc_solve(doc(), $path);
+    # A calculation can take a while (auto sizing, design areas): the status
+    # bar says what is being worked on, with a turning mark and the seconds
+    # gone, so the window is plainly working and not stuck.
+    my $t0 = time;
+    my ($turn, $shown) = (0, 0);
+    my $progress = sub {
+        my $what = shift;
+        my $now = Time::HiRes::time();
+        return if $now - $shown < 0.15;
+        $shown = $now;
+        message(sprintf('%s COMPUTING - %s - %d S', ('|', '/', '-', '\\')[ $turn++ % 4 ], $what, time - $t0));
+        $mw->update;
+    };
+    $mw->Busy(-recurse => 1);
+    $progress->('CALCULATING');
+    my $r = eval { HardyCross::Editor::doc_solve(doc(), $path, progress => $progress) };
+    my $err = $@;
+    $mw->Unbusy;
+    die $err unless $r;
     if (!$r->{ok}) {
         $solved = undef;
         fill_results();
