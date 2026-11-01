@@ -46,6 +46,8 @@
 #   areas          [ { name, outlets, governing, margin, demand_flow,
 #                    demand_pressure, supply_margin, converged, governs } ]
 #                  every design area solved (HardyCross::Areas), or null
+#   sized          [ { line, pipes, type, dn, size, velocity } ] the pipes
+#                  auto sizing sized (size 0 in the model), or null
 #   warnings       [ text ]
 #   errors         [ { line, message } ]  line is the .phc line, or null
 #   summary        [ text ]  the lines a caller shows a user: the result, the
@@ -154,6 +156,9 @@ sub results {
         governing => $go ? { id => $go->{id}, margin => r4($gm / $up) } : undef,
         warnings => [ @{ $net->{warnings} || [] } ], errors => [],
         design_area => $net->{design_area},
+        sized => $net->{sizing} ? [ map { { line => $_->{line}, pipes => $_->{pipes}, type => $_->{type},
+            dn => $_->{dn}, size => $_->{token}, velocity => defined $_->{velocity} ? 0 + sprintf('%.3f', $_->{velocity}) : undef } }
+            @{ $net->{sizing}{units} } ] : undef,
         areas => $net->{area_results} ? [ map { my $d = $_->{demand}; {
             name => $_->{name}, outlets => $_->{outlets}, governing => $_->{governing},
             margin => defined $_->{margin} ? r4($_->{margin} / $up) : undef,
