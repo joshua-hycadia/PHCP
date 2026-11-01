@@ -369,6 +369,12 @@ sub solve_text {
     return error_result($@) unless $net;
     my $conv = eval { HardyCross::solve_model($net) };
     return error_result($@) unless defined $conv;
+    # Pipes given size 0 are sized (HardyCross::Sizing).
+    if ($net->{auto_sizing}) {
+        require HardyCross::Sizing;
+        ($net, $conv) = eval { HardyCross::Sizing::size($net, $conv) };
+        return error_result($@) unless $net;
+    }
     # With design areas (AREA), each is solved and the governing one shown.
     if ($net->{areas}) {
         require HardyCross::Areas;
@@ -728,6 +734,12 @@ our @OPTION_FORM = (
     [ 'HOSE_ALLOWANCE', 'HOSE STREAM ALLOWANCE',
       'A FLOW, IN THE FLOW UNIT, ADDED AT THE SUPPLY FOR HOSE STREAMS: THE DEMAND IS CHECKED AT THE SYSTEM\'S FLOW '
       . 'PLUS THIS. BLANK: NONE.' ],
+    [ 'SIZING_GOAL', 'AUTO SIZING GOAL',
+      'FOR PIPES GIVEN SIZE 0: SMALLEST - THE SMALLEST PIPES THAT WILL DO; VOLUME - THE LEAST WATER HELD IN THEM '
+      . '(A DRY SYSTEM). BLANK: SMALLEST.', [ '', 'SMALLEST', 'VOLUME' ] ],
+    [ 'SIZING_MARGIN', 'AUTO SIZING MARGIN',
+      'HOW FAR UNDER THE SUPPLY THE SIZED SYSTEM MUST BE: A PERCENTAGE OF THE SUPPLY PRESSURE (10%) OR A PRESSURE, '
+      . 'IN THE PRESSURE UNIT (50). BLANK: NO MARGIN.' ],
     [ 'DESIGN_AREA', 'DESIGN AREA',
       'THE ONE DESIGN AREA (AREA) TO SOLVE AND REPORT. BLANK: EVERY AREA IS SOLVED AND THE ONE THAT GOVERNS IS '
       . 'REPORTED. NOT USED WITHOUT AREA LINES.' ],
@@ -894,6 +906,12 @@ sub doc_solve {
     my ($d, $path) = @_;
     my ($t, $h) = doc_text($d);
     my $r = solve_text($t, $path);
+    # Each sized pipe's size, written into the network as a comment after
+    # its line (//AS - 25), for the window to put in the editor.
+    if ($r->{ok} && $r->{net}{sizing}) {
+        require HardyCross::Sizing;
+        $r->{network} = HardyCross::Sizing::annotate($d->{network}, $r->{net}{sizing}, $h);
+    }
     return $r if $r->{ok};
     if (defined $r->{line}) {
         my $n = $r->{line} - $h;

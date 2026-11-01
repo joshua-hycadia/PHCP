@@ -15,6 +15,10 @@
 #   phcp.pl --json -                   ...the model read from standard input
 #   phcp.pl --json model.phc --report out.pdf
 #                                      ...and the report written as well
+#   phcp.pl model.phc --annotate out.phc
+#                                      pipes given size 0 are sized (auto
+#                                      sizing); out.phc is the model with
+#                                      each size as a comment, //AS - 25
 #
 # The model is a .phc command file, the one file type PHCP reads
 # (HardyCross::Parse::read_model).  A .hcx file is refused with the reason,
@@ -45,12 +49,13 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl [--json] model.phc|- [report.txt|report.pdf] [--report report.pdf]\n";
-my ($json, $model, $report_path) = (0, undef, undef);
+my $USAGE = "usage: phcp.pl [--json] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
+my ($json, $model, $report_path, $annotate) = (0, undef, undef, undef);
 while (@ARGV) {
     my $a = shift @ARGV;
     if    ($a eq '--json')   { $json = 1 }
     elsif ($a eq '--report') { $report_path = shift @ARGV // die $USAGE }
+    elsif ($a eq '--annotate') { $annotate = shift @ARGV // die $USAGE }
     elsif (!defined $model)  { $model = $a }
     elsif (!defined $report_path) { $report_path = $a }
     else  { die $USAGE }
@@ -82,7 +87,18 @@ my $net = eval {
 fail_out($@) unless $net;
 my $ok = eval { HardyCross::solve_model($net) };
 fail_out($@) unless defined $ok;
-# With design areas (AREA), each is solved and the governing one reported.
+# Pipes given size 0 are sized (HardyCross::Sizing), then, with design areas
+# (AREA), each area is solved and the governing one reported.
+if ($net->{auto_sizing}) {
+    require HardyCross::Sizing;
+    my $text = $net->{source_text};
+    ($net, $ok) = eval { HardyCross::Sizing::size($net, $ok) } or fail_out($@);
+    if (defined $annotate) {
+        open my $af, '>', $annotate or die "cannot write $annotate: $!\n";
+        print $af HardyCross::Sizing::annotate($text, $net->{sizing});
+        close $af;
+    }
+}
 if ($net->{areas}) {
     require HardyCross::Areas;
     ($net, $ok) = eval { HardyCross::Areas::governing($net, $ok) } or fail_out($@);

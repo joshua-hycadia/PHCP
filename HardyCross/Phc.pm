@@ -59,7 +59,8 @@ use HardyCross::PipeData;
 # command).  The builder silently ignores an unknown option name; in .phc it
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
-                  VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA);
+                  VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA
+                  SIZING_GOAL SIZING_MARGIN);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
                                     RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
@@ -225,6 +226,9 @@ sub length_metres {
     return ($1 eq '-' ? -1 : 1) * $2 * 0.0254 if $t =~ /^([-+]?)(\d+(?:\.\d+)?)"\z/;
     return undef;
 }
+
+# inch_sizes -- the nominal inch sizes and the DN of each.
+sub inch_sizes { return %INCH_DN }
 
 # size_dn -- a nominal size as a DN, or undef: millimetres rounded, or inches
 # looked up (1.5 is DN40).
@@ -460,6 +464,19 @@ sub check_field {
         my $o = $a->{pos}[0];
         # An area's name keeps its case, as every other name does.
         return $push->($v) if $o eq 'DESIGN_AREA';
+        # Auto sizing (HardyCross::Sizing): what is made least, and the margin
+        # kept under the supply - a percentage of it (10%) or a pressure (50).
+        if ($o eq 'SIZING_GOAL') {
+            my $g = uc $v;
+            return 'SIZING_GOAL IS SMALLEST (THE SMALLEST PIPES) OR VOLUME (THE LEAST WATER IN THE PIPES)'
+                unless $g eq 'SMALLEST' || $g eq 'VOLUME';
+            return $push->($g);
+        }
+        if ($o eq 'SIZING_MARGIN') {
+            return "SIZING_MARGIN '$v' IS A PERCENTAGE OF THE SUPPLY (10%) OR A PRESSURE (50)"
+                unless $v =~ /^(\d+(?:\.\d+)?|\.\d+)%\z/ && $1 < 100 || $is_num && $v >= 0;
+            return $push->($v);
+        }
         if ($NUM_OPTION{$o}) {
             return "$o VALUE '$v' IS NOT A NUMBER" unless $is_num;
             return $push->($v);
@@ -566,7 +583,7 @@ sub translate {
     #---------------------------------------------------- settings, file-wide
     # Each may be given once: a second is an error naming both lines, because
     # "the last one wins" in a file read in any order is a trap.
-    my (%seen, @project, @options, $method, $design);
+    my (%seen, @project, @options, $method, $design, %sizing);
     my %units = %UNIT_DEFAULT;
     for (grep { $kind->($_->[1]) eq 'setting' } @rows) {
         my ($n, $a) = @$_;
@@ -579,7 +596,8 @@ sub translate {
         push @project, [ "$p[0] $a->{text}", $n ]  if $k eq 'PROJECT';
         $units{ $p[0] } = $p[1]                    if $k eq 'UNITS';
         $method = [ $p[0], $n ]                    if $k eq 'METHOD';
-        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION' && $p[0] ne 'DESIGN_AREA';
+        push @options, [ "$p[0] $p[1]", $n ]       if $k eq 'OPTION' && $p[0] !~ /^(DESIGN_AREA|SIZING_GOAL|SIZING_MARGIN)\z/;
+        $sizing{ $p[0] } = $p[1]                   if $k eq 'OPTION' && $p[0] =~ /^SIZING_/;
         $design = [ $p[1], $n ]                    if $k eq 'OPTION' && $p[0] eq 'DESIGN_AREA';
     }
     my $dw = $method && $method->[0] eq 'DW';
@@ -677,7 +695,7 @@ sub translate {
         while (1) {
             my $s = $pipe{$src} or $at->($p->{line}, 'PIPE %s, COPIED AS %s, IS NOT DEFINED', $src, $name);
             $at->($p->{line}, 'PIPE %s IS COPIED FROM ITSELF', $name) if $trail{$src}++;
-            unless ($s->{copy_of}) { $p->{$_} = $s->{$_} for qw(use len size fits); last }
+            unless ($s->{copy_of}) { $p->{$_} = $s->{$_} for qw(use len size fits); $p->{root} = $src; last }
             $src = $s->{copy_of};
         }
     }
@@ -754,6 +772,36 @@ sub translate {
     }
     my $shut = sub { $design && $in_area{ $_[0] } && !$open{ $_[0] } };
 
+    #---------------------------------------------------- auto sizing
+    # A size of 0 under a pipe type asks for the pipe to be sized
+    # (HardyCross::Sizing).  The line that set the size is the one sized: a
+    # PIPE line sizes its pipe and every copy of it (PC) not changed since; a
+    # CHANGEPIPE line sizes the one pipe it changes.  Each is read here at the
+    # smallest size the database has for it, so the model is whole.
+    my @auto;
+    for my $name (sort { $pipe{$a}{line} <=> $pipe{$b}{line} || $a cmp $b } keys %pipe) {
+        my $p = $pipe{$name};
+        next unless HardyCross::Parse::is_num($p->{size}) && $p->{size} == 0;
+        my $type = ($p->{use} || {})->{type} // 'BORE';
+        $at->($p->{line}, 'PIPE %s: SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE - PUT A USE '
+              . '<PIPETYPE> LINE BEFORE IT', $name) if $type eq 'BORE';
+        my ($line, $field) = $change{$name} ? ($change{$name}{line}, 3)
+                           : $p->{copy_of}  ? ($pipe{ $p->{root} }{line}, 5) : ($p->{line}, 5);
+        my ($u) = grep { $_->{line} == $line } @auto;
+        unless ($u) {
+            require HardyCross::Sizing;
+            my $ch = HardyCross::Sizing::choices($type, $p->{fits}, $units{SIZE});
+            $at->($line, 'PIPE %s: NO SIZE OF %s HAS ALL ITS FITTINGS IN THE DATABASE%s, SO IT CANNOT BE SIZED',
+                  $name, $type, $units{SIZE} eq 'IN' ? ' AND A NOMINAL SIZE IN INCHES' : '') unless @$ch;
+            push @auto, $u = { line => $line, field => $field, type => $type, choices => $ch,
+                               kind => $field == 3 ? 'CHANGEPIPE' : 'PIPE', pipes => [], lines => {} };
+        }
+        push @{ $u->{pipes} }, $name;
+        $u->{lines}{ $p->{line} } = 1 unless $change{$name};
+        $u->{lines}{$line} = 1;
+        $p->{auto_dn} = $u->{choices}[0][0];
+    }
+
     #---------------------------------------------------- the rows
     my (@nodes_out, @elems);
     my $z = sub { fmt(length_metres($node{ $_[0] }{z}, $units{ELEVATION})) };
@@ -828,7 +876,8 @@ sub translate {
                 (map { [ 'NODES', @$_ ] } @nodes_out),
                 @elems);
     my $areas = { list => [ map { { name => $_, line => $area{$_}{line}, outlets => $area{$_}{outlets} } } @area_order ],
-                  design => $design ? $design->[0] : undef, graphs => \@graphs };
+                  design => $design ? $design->[0] : undef, graphs => \@graphs,
+                  auto => \@auto, sizing => \%sizing };
     return (\@built, \%units, $areas);
 }
 
@@ -855,7 +904,7 @@ sub pipe_row {
                 . 'OR GIVE THE ALLOWANCE WITH EQV', $name) if @{ $p->{fits} };
         push @row, fmt(size_mm($p->{size}, $units->{SIZE}));
     } else {
-        my $dn = size_dn($p->{size}, $units->{SIZE});
+        my $dn = $p->{auto_dn} // size_dn($p->{size}, $units->{SIZE});
         $at->($n, 'PIPE %s: %s IS NOT A NOMINAL SIZE IN INCHES', $name, $p->{size}) unless defined $dn;
         push @row, $dn, "TYPE=$use->{type}";
         my @fit = map { fitting_code($_) } @{ $p->{fits} };
@@ -923,7 +972,7 @@ sub pipe_size {
     my ($p, $units) = @_;
     my $use = $p->{use} || { type => 'BORE' };
     return (undef, size_mm($p->{size}, $units->{SIZE})) if $use->{type} eq 'BORE';
-    my $dn = size_dn($p->{size}, $units->{SIZE});
+    my $dn = $p->{auto_dn} // size_dn($p->{size}, $units->{SIZE});
     HardyCross::Parse::ensure_db();
     return ($dn, HardyCross::PipeData::bore($use->{type}, $dn // 0) // 0);
 }
@@ -968,6 +1017,9 @@ sub read_string {
     # (OPTION DESIGN_AREA), if any: HardyCross::Areas.
     $net->{areas}       = $areas->{list} if @{ $areas->{list} };
     $net->{design_area} = $areas->{design};
+    # Pipes to be sized (size 0) and how (HardyCross::Sizing).
+    $net->{auto_sizing} = $areas->{auto} if @{ $areas->{auto} };
+    $net->{sizing_opts} = $areas->{sizing};
     # The supply graph sheets (SUPPLYGRAPH), read from the model's folder.
     # Only when the folder is given: a re-read for a re-solve does not need
     # them.  One that cannot be read is a warning, not a failure.
@@ -1176,7 +1228,18 @@ sub check_line {
         my $at = sub { shift; HardyCross::fail(shift, @_) };
         my ($k, @p) = ($a->{key}, @{ $a->{pos} });
         if ($k eq 'PIPE') {
-            my $row = pipe_row({ line => 0, use => $use, start => $p[1], end => $p[2],
+            # SIZE 0: the pipe is to be sized - checked as the reader checks it.
+            my $auto;
+            if (HardyCross::Parse::is_num($p[4]) && $p[4] == 0) {
+                HardyCross::fail('SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE - PUT A USE '
+                                 . '<PIPETYPE> LINE BEFORE IT') if ($use->{type} // 'BORE') eq 'BORE';
+                require HardyCross::Sizing;
+                my $ch = HardyCross::Sizing::choices($use->{type}, $a->{rest}, $units{SIZE});
+                HardyCross::fail('NO SIZE OF %s HAS ALL ITS FITTINGS IN THE DATABASE, SO IT CANNOT BE SIZED',
+                                 $use->{type}) unless @$ch;
+                $auto = $ch->[0][0];
+            }
+            my $row = pipe_row({ line => 0, use => $use, start => $p[1], end => $p[2], auto_dn => $auto,
                                  len => $p[3], size => $p[4], fits => $a->{rest} },
                                $p[0], undef, undef, \%units, ($ctx->{method} // '') eq 'DW', $at);
             HardyCross::Parse::parse_row($net, 'PIPES', [ HardyCross::Parse::tokenize($row) ]);
