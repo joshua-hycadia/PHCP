@@ -695,6 +695,22 @@ sub doc { return { settings => $settings, network => buffer() } }
 # full_text -- the whole .phc file the document makes.
 sub full_text { return (HardyCross::Editor::join_file($settings, buffer()))[0] }
 
+# replace_lines -- the network text changed line by line where it differs,
+# keeping the cursor, the view and the undo history of the rest.
+sub replace_lines {
+    my $new = shift;
+    discard_proposal();
+    my @old = split /\n/, buffer(), -1;
+    my @nl  = split /\n/, $new, -1;
+    return set_buffer($new) unless @old == @nl;
+    for my $i (0 .. $#nl) {
+        next if $old[$i] eq $nl[$i];
+        my $n = $i + 1;
+        $ed->delete("$n.0", "$n.end");
+        $ed->insert("$n.0", $nl[$i]);
+    }
+}
+
 # set_buffer -- replace the network text, as when a file is opened.
 sub set_buffer {
     my $text = shift;
@@ -1152,6 +1168,14 @@ sub calculate {
         update_actions();
         message($r->{error}, 1);
         return $r;
+    }
+    # Auto sizing: each sized pipe's size goes in as a comment after its line,
+    # //AS - 25.  A comment changes nothing in the model, so the text is still
+    # the one that passed VALIDATE.
+    if (defined $r->{network} && $r->{network} ne buffer()) {
+        replace_lines($r->{network});
+        $full = full_text();
+        $valid_text = $full;
     }
     $solved = { net => $r->{net}, converged => $r->{converged}, text => $full };
     fill_results();

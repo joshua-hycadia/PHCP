@@ -21,6 +21,7 @@ perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-ru
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
 perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
+perl tools/test_sizing.pl                # verify auto pipe sizing
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 ```
@@ -74,9 +75,9 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA` |
+| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA SIZING_GOAL SIZING_MARGIN` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
-| `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] |
+| `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] - SIZE 0: PHCP sizes the pipe (Auto pipe sizing) |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
 | `CHANGEPIPE` (`CHP`) | PIPE LENGTH SIZE [FITTINGS ...] - changes a pipe (a copy keeps the original) |
 | `EQV` | PIPE LENGTH - an equivalent length added to a pipe |
@@ -831,6 +832,39 @@ allowance, at the system's pressure, and the supply is read at that flow.
 The report shows the system flow, the allowance and the demand, and states
 in its notes whether an allowance is included.
 
+## Auto pipe sizing
+
+A pipe given SIZE `0` under a `USE <pipetype>` is sized by PHCP from the sizes
+the database has for that type.  `OPTION SIZING_GOAL` chooses what is made
+least - `SMALLEST`, the smallest pipes that will do (the default), or
+`VOLUME`, the least water held in the sized pipes (a dry system's trip time).
+`OPTION SIZING_MARGIN` is the safety margin under the supply: `10%` (the
+system needs at least 10 % less than the supply gives at the demand point) or
+`50` (at least 50 less, in the PRESSURE unit); not set, no margin.  Both are
+in the PROJECT tab.
+
+A size will do when every outlet gets its requirement from the supply reduced
+by the margin and no sized pipe exceeds the velocity limit at the operating
+point; with one supply that is confirmed at the demand point itself, and with
+design areas in every area.  The search starts every sized pipe at its
+smallest size, enlarges the one that does most good for its cost until the
+network passes, then tries each one size smaller.  Pipes not given size 0 are
+never changed; a PIPE line sizes its unchanged copies (PC) with it.
+
+After CALCULATE the editor writes each size after its line, leaving SIZE 0 so
+the pipe is sized again next time:
+
+```
+PIPE      LA1 J1 A1 3 0 T  //AS - 40
+```
+
+`phcp.pl model.phc --annotate out.phc` does the same from the command line.
+Section 1 of the report lists each sized pipe, its size and velocity, and the
+margin met; the JSON lists them as `sized`.  Example 12 sizes the cross main
+and branch lines of example 11's floor.  Each trial is a full solve, so a
+model with many pipes of size 0 takes longer to calculate - seconds for
+example 12.
+
 ## Design areas
 
 A model may hold more outlets than ever flow at once - a whole floor, of
@@ -901,16 +935,17 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 39 / 39 |
-| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance and design areas | 307 / 307 |
+| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 310 / 310 |
 | AutoCAD exporter, structure | 5 / 5 |
-| JSON interface | 90 / 90 |
+| JSON interface | 99 / 99 |
 | supply, pump and loss curves, and supplies combined | 18 / 18 |
-| report hand-checks, 9 models | 515 / 515 |
-| PDF structure, typeface and graphs, 9 models | 173 / 173 |
+| report hand-checks, 10 models | 615 / 615 |
+| PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 151 / 151 |
+| text editor window, under Xvfb | 153 / 153 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
+| auto pipe sizing, checked at the demand point | 34 / 34 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | invariance stress | 9 584 / 9 584 |
