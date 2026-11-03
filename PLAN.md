@@ -5,7 +5,9 @@ merged.  Open for review: the editor fixes from the Windows run, the drawn
 supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
 PR 5 (the JSON interface).  Also open: the 300-model benchmark against other
 calculation programs (`comparison/`), which adds files only and changes no
-solved number.
+solved number; and the orifice plate fix, in which a CD given on `OPP` or `OFD`
+now scales the plate's differential as 1/CD^2 (engine change, approved
+4 November 2026; results move only where a CD is given).
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -469,3 +471,4 @@ without SIZE 0 solves and reports exactly as before.
 - [x] v1.1 - .phc reference manual, checked against the program by tools/test_manual.pl
 - [x] v1.1 - auto pipe sizing: SIZE 0 sized for the smallest pipes or least volume, with a margin under the supply; //AS comments (engine files Phc, Report, Json)
 - [x] v1.1 - sizing trials (SIZING_TRIALS, default 5) and a COMPUTING indicator while a calculation runs
+- [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)

@@ -724,7 +724,13 @@ size and bore.
 | OPP | the DROP wanted, PRESSURE unit | the plate's bore, rounded to ORIF_STEP (0.5 mm unless set) |
 | OFD | the plate's BORE, SIZE unit | the drop at the solved flow |
 
-CD is the discharge coefficient, 0.596 unless given.
+CD is the discharge coefficient, 0.596 unless given; it must be more than 0
+and not more than 1.  The drop is the net loss across the plate: the
+differential across it, 224.954/CD^2 x Q^2/d^4 x (1 - b^4) kPa (Q in L/min,
+d the bore in mm, b = d/D), times the ISO 5167 permanent-loss ratio, which
+also depends on CD.  At a fixed bore the differential goes as 1/CD^2, so a
+plate given CD 0.7826 has (0.596/0.7826)^2 = 0.58 of the differential it has
+at 0.596, and OPP finds a smaller bore for the same drop.
 
 ```
 OPP P7 120

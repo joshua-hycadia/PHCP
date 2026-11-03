@@ -5,7 +5,8 @@
 # source code; it does not cover the third-party data in data/.
 #
 #==============================================================================
-# test_curves.pl -- supply, pump and loss-device curves.
+# test_curves.pl -- supply, pump and loss-device curves, and the orifice
+# plate's discharge coefficient.
 #
 #   perl tools/test_curves.pl
 #
@@ -122,6 +123,52 @@ print "5. SUPPLIES COMBINED - FLOWS ADDED AT EQUAL PRESSURE\n";
     my $ct = HardyCross::Demand::combined_avail($A, $T);
     is('with a static supply: never below the static pressure',
        abs($ct->(1e6) - 700) < 1e-9 && abs($ct->($qa->(800)) - 800) < 1e-6);
+}
+
+print "6. ORIFICE PLATES - THE DISCHARGE COEFFICIENT\n";
+{
+    # The plate's net loss is the differential across it times the ISO 5167
+    # permanent-loss ratio R:
+    #   differential = (224.954 / Cd^2) (Q^2/d^4) (1 - b^4)   kPa, L/min, mm
+    #   R            = [s - Cd b^2]/[s + Cd b^2],  s = sqrt(1 - b^4(1-Cd^2))
+    # 224.954 = 633.28 x 0.596^2, the constant PHCP has always used at its
+    # default Cd.  R is worked here by hand, so dividing it out leaves the
+    # differential, which at fixed bore and beta must go as 1/Cd^2.
+    my $dp = \&HardyCross::orifice_dp;
+    my ($q, $d, $bigd) = (500, 38.5, 60);              # beta 0.642
+    my $b4 = ($d / $bigd) ** 4;
+    my $R  = sub { my $cd = shift;
+        my $s = sqrt(1 - $b4 * (1 - $cd ** 2));
+        ($s - $cd * $b4 ** 0.5) / ($s + $cd * $b4 ** 0.5) };
+    my $diff = sub { my $cd = shift; $dp->($q, $d, $bigd, $cd) / $R->($cd) };
+    my $ref  = $diff->(0.596) * 0.596 ** 2;
+    my $bad  = 0;
+    for my $cd (0.55, 0.596, 0.61, 0.7, 0.7826, 0.9) {
+        $bad++ if abs($diff->($cd) * $cd ** 2 / $ref - 1) > 1e-12;
+    }
+    is('differential x Cd^2 is the same for every Cd (bore, beta fixed)', !$bad);
+    is('Cd 0.7826 vs 0.596: differential in the ratio (0.596/0.7826)^2',
+       abs($diff->(0.7826) / $diff->(0.596) - (0.596 / 0.7826) ** 2) < 1e-12);
+    # At the default the drop is exactly what it was before the main term
+    # took Cd: 633.28 (Q^2/d^4)(1-b^4) R.
+    my $old = 633.28 * $q ** 2 / $d ** 4 * (1 - $b4) * $R->(0.596);
+    is('default Cd 0.596: the drop is unchanged',
+       abs($dp->($q, $d, $bigd, 0.596) / $old - 1) < 1e-12,
+       sprintf('%.6f against %.6f kPa', $dp->($q, $d, $bigd, 0.596), $old));
+    # The constant is rho/2 (1/60000)^2 (4/pi)^2 1e12 at about 999.1 kg/m3;
+    # at 998.2 kg/m3 it would be 224.75 - within 0.1%.
+    my $pi = 4 * atan2(1, 1);
+    my $k998 = 998.2 / 2 * (4 / $pi) ** 2 / 3.6e9 * 1e12 / 1000;
+    is('the constant is within 0.1% of the 998.2 kg/m3 value (224.75)',
+       abs($ref / ($q ** 2 / $d ** 4 * (1 - $b4)) / $k998 - 1) < 1e-3);
+    # OPP sizes with the same Cd: the bore found gives the drop asked for,
+    # and a higher Cd needs a smaller bore for the same drop.
+    my ($b596, $b783) = map { HardyCross::orifice_size($q, 150, $bigd, $_) } 0.596, 0.7826;
+    is('OPP: the bore sized at Cd 0.7826 gives the drop asked for',
+       abs($dp->($q, $b783, $bigd, 0.7826) - 150) < 1e-6,
+       sprintf('bore %.4f mm gives %.6f kPa', $b783, $dp->($q, $b783, $bigd, 0.7826)));
+    is('OPP: a higher Cd needs a smaller bore for the same drop', $b783 < $b596,
+       sprintf('%.3f mm at 0.7826, %.3f mm at 0.596', $b783, $b596));
 }
 
 print "\n$pass passed, $fail failed\n";
