@@ -1,0 +1,355 @@
+{
+ "schema": "phcp.benchmark.model/1",
+ "id": "T065",
+ "family": "tree",
+ "seed": 20261168,
+ "params": {
+  "ranges": 1,
+  "heads_per_range": 9,
+  "centre_fed": false,
+  "head_spacing_m": 3.24,
+  "range_spacing_m": 3.01,
+  "elevation_m": 5.2,
+  "feed_m": 38.9
+ },
+ "basis": {
+  "method": "Hazen-Williams",
+  "c_factor": 120.0,
+  "k_factor_lpm_kpa05": 8.0,
+  "min_head_pressure_kpa": 50.0,
+  "fittings": "none",
+  "bores": "AS 1074 Medium, explicit"
+ },
+ "counts": {
+  "heads": 9,
+  "nodes": 22,
+  "pipes": 21,
+  "loops": 0
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "kind": "supply",
+   "x": 0,
+   "y": 0,
+   "z": 0
+  },
+  {
+   "id": 2,
+   "kind": "junction",
+   "x": -38.9,
+   "y": 0,
+   "z": 0
+  },
+  {
+   "id": 3,
+   "kind": "junction",
+   "x": -38.9,
+   "y": 0,
+   "z": 5.2
+  },
+  {
+   "id": 4,
+   "kind": "junction",
+   "x": -38.9,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 5,
+   "kind": "junction",
+   "x": -37.28,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 6,
+   "kind": "head",
+   "x": -37.28,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 7,
+   "kind": "junction",
+   "x": -34.04,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 8,
+   "kind": "head",
+   "x": -34.04,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 9,
+   "kind": "junction",
+   "x": -30.8,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 10,
+   "kind": "head",
+   "x": -30.8,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 11,
+   "kind": "junction",
+   "x": -27.56,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 12,
+   "kind": "head",
+   "x": -27.56,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 13,
+   "kind": "junction",
+   "x": -24.32,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 14,
+   "kind": "head",
+   "x": -24.32,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 15,
+   "kind": "junction",
+   "x": -21.08,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 16,
+   "kind": "head",
+   "x": -21.08,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 17,
+   "kind": "junction",
+   "x": -17.84,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 18,
+   "kind": "head",
+   "x": -17.84,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 19,
+   "kind": "junction",
+   "x": -14.6,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 20,
+   "kind": "head",
+   "x": -14.6,
+   "y": 1.0,
+   "z": 4.9
+  },
+  {
+   "id": 21,
+   "kind": "junction",
+   "x": -11.36,
+   "y": 1.0,
+   "z": 5.2
+  },
+  {
+   "id": 22,
+   "kind": "head",
+   "x": -11.36,
+   "y": 1.0,
+   "z": 4.9
+  }
+ ],
+ "pipes": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 38.9
+  },
+  {
+   "id": 2,
+   "from": 2,
+   "to": 3,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 5.2
+  },
+  {
+   "id": 3,
+   "from": 3,
+   "to": 4,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 1.0
+  },
+  {
+   "id": 4,
+   "from": 5,
+   "to": 6,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 5,
+   "from": 4,
+   "to": 5,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 1.62
+  },
+  {
+   "id": 6,
+   "from": 7,
+   "to": 8,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 7,
+   "from": 5,
+   "to": 7,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 3.24
+  },
+  {
+   "id": 8,
+   "from": 9,
+   "to": 10,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 9,
+   "from": 7,
+   "to": 9,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 3.24
+  },
+  {
+   "id": 10,
+   "from": 11,
+   "to": 12,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 11,
+   "from": 9,
+   "to": 11,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 3.24
+  },
+  {
+   "id": 12,
+   "from": 13,
+   "to": 14,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 13,
+   "from": 11,
+   "to": 13,
+   "dn": 40,
+   "bore_mm": 41.9,
+   "length_m": 3.24
+  },
+  {
+   "id": 14,
+   "from": 15,
+   "to": 16,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 15,
+   "from": 13,
+   "to": 15,
+   "dn": 40,
+   "bore_mm": 41.9,
+   "length_m": 3.24
+  },
+  {
+   "id": 16,
+   "from": 17,
+   "to": 18,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 17,
+   "from": 15,
+   "to": 17,
+   "dn": 32,
+   "bore_mm": 36.0,
+   "length_m": 3.24
+  },
+  {
+   "id": 18,
+   "from": 19,
+   "to": 20,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 19,
+   "from": 17,
+   "to": 19,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 3.24
+  },
+  {
+   "id": 20,
+   "from": 21,
+   "to": 22,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3
+  },
+  {
+   "id": 21,
+   "from": 19,
+   "to": 21,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 3.24
+  }
+ ]
+}
