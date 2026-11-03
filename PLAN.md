@@ -3,7 +3,9 @@
 Status: PR 1, PR 2 (`.phc` language, positional layout) and PR 3 (text editor)
 merged.  Open for review: the editor fixes from the Windows run, the drawn
 supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
-PR 5 (the JSON interface).
+PR 5 (the JSON interface).  Also open: the 300-model benchmark against other
+calculation programs (`comparison/`), which adds files only and changes no
+solved number.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
