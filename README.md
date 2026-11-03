@@ -114,7 +114,14 @@ splits the pipe at a node named `<pipe>~` at the start node's elevation, and
 the device appears in the report as `<pipe>.<device>` (`51.BP`).  A `BFP` or
 `PRV` with one pair at flow 0 (`BFP 51 0 35`) is a loss that does not vary with
 flow.  An orifice plate takes its pipe's nominal size and its bore from the
-pipe and fitting database.
+pipe and fitting database.  Its drop is the net loss across it: the
+differential across the plate, 224.954/CD^2 x Q^2/d^4 x (1 - b^4) kPa, times
+the ISO 5167 permanent-loss ratio.  CD is 0.596 unless given, and must be
+more than 0 and not more than 1.  Until 4 November 2026 a CD given on `OPP`
+or `OFD` changed only the loss ratio and not the differential, whose constant
+(633.28) holds CD 0.596; it now scales the differential as 1/CD^2.  Plates at
+the default CD, and so every example, are unchanged; a plate given CD 0.7826
+at beta 0.642 now drops 0.58 of what it did.
 
 **Pressure ratio valves.**  A `PRA` holds its outlet at its inlet pressure
 divided by its ratio: 1500 kPa into a 3:1 valve gives 500 kPa out.  The drop

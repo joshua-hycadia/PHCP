@@ -230,12 +230,20 @@ sub pipe_hf_dw {
 
 sub orifice_dp {
     # Fitted model, NOT part of AS 2118.1:
-    #   dP = 633.28 (Q^2/d^4)(1-b^4) R,  b = d/D,  Cd = 0.596
+    #   dP = 633.28 (0.596/Cd)^2 (Q^2/d^4)(1-b^4) R,  b = d/D
     #   R  = [s - Cd b^2]/[s + Cd b^2],  s = sqrt(1 - b^4(1-Cd^2))
+    # The first part is the differential across the tappings,
+    # (rho/2)(Q/(Cd A))^2 (1-b^4).  In kPa with Q in L/min and d in mm its
+    # constant is 224.954/Cd^2; 224.954 = 633.28 x 0.596^2 is the value PHCP
+    # has always used at its default Cd of 0.596 (rho about 999.1 kg/m3, within
+    # 0.1% of the 224.75 that 998.2 kg/m3 gives).  It is written as
+    # 633.28 (0.596/Cd)^2 so that the default gives exactly the drop it always
+    # has, and a CD given on the plate scales the differential as 1/Cd^2.
     # R is the ISO 5167 permanent pressure loss ratio, so dP is the NET loss
     # across the plate rather than the differential across the tappings --
     # which is the quantity a network calculation needs.
     my ($aq, $d, $bigd, $cd) = @_;
+    $cd //= 0.596;
     return 0 if $d <= $D_TINY || $aq <= 0;
     my $beta = $bigd > $D_TINY ? ($d / $bigd < 0.99999 ? $d / $bigd : 0.99999) : 0;
     my $b4   = $beta ** 4;
@@ -244,11 +252,13 @@ sub orifice_dp {
     my $cb2  = $cd * $beta ** 2;
     my $r    = ($s - $cb2) / ($s + $cb2);
     $r = 0 if $r < 0;
-    return 633.28 * $aq ** 2 / $d ** 4 * (1 - $b4) * $r;
+    return 633.28 * (0.596 / $cd) ** 2 * $aq ** 2 / $d ** 4 * (1 - $b4) * $r;
 }
 
 sub orifice_size {
     # dP falls monotonically with bore, so bisection is unconditionally safe.
+    # The bore is found with orifice_dp itself, at the plate's own Cd, so a
+    # plate sized here gives back exactly the drop it was sized for.
     # A fixed-point iteration on the approach factor oscillates once beta gets
     # large and is deliberately not used.
     my ($aq, $target, $bigd, $cd) = @_;

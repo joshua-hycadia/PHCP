@@ -518,6 +518,10 @@ sub parse_row {
             if $ty eq 'ORIFICE_D' && $bore <= 0;
         HardyCross::fail("orifice %s bore is not smaller than the pipe bore", $tk->[0])
             if $ty eq 'ORIFICE_D' && $pd > 0 && $bore >= $pd;
+        # The plate's drop goes as 1/Cd^2, so a CD of 0 or less has no meaning
+        # and one above 1 is not a sharp-edged plate.
+        HardyCross::fail("orifice %s CD must be more than 0 and not more than 1", $tk->[0])
+            if $ty =~ /^ORIFICE_[PD]$/ && ($cd <= 0 || $cd > 1);
 
         if ($ty eq 'PRV') {
             push @{ $net->{elems} }, {
