@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "results"
 REF = "phcp"
-ENGINES = ["phcp", "au1", "au2", "us1", "us2", "epanet"]
-LABEL = {"phcp": "PHCP 1.0.0", "au1": "AU Calc Program 1", "au2": "AU Calc Program 2",
+ENGINES = ["phcp", "au", "us1", "us2", "us3", "epanet"]
+LABEL = {"phcp": "PHCP 1.0.0", "au": "AU Calc Program", "us3": "US Calc Program 3",
          "us1": "US Calc Program 1", "us2": "US Calc Program 2", "epanet": "EPANET 2.2"}
 FAM = ["tree", "loop", "grid"]
 

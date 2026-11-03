@@ -984,10 +984,10 @@ no fittings, K8.0 heads at 50 kPa, requirement mode.  Run 4 November 2026.
 
 | program | required supply pressure vs PHCP, median (worst) |
 |---|---|
-| AU Calc Program 1 | +0.74% (1.40%) |
-| AU Calc Program 2 | -0.01% (0.04%) |
+| AU Calc Program | +0.74% (1.40%) |
 | US Calc Program 1 | +0.18% (1.05%) |
 | US Calc Program 2 | -0.02% (0.04%) |
+| US Calc Program 3 | -0.01% (0.04%) |
 | EPANET 2.2 | +0.48% (1.03%) |
 
 The two programs reading higher use the 1.852 / 4.871 form of Hazen-Williams.

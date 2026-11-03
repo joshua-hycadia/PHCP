@@ -12,11 +12,11 @@ domain), only identified by origin:
 | Label | What it is |
 |---|---|
 | PHCP 1.0.0 | this program, the reference for every comparison below |
-| AU Calc Program 1 | an established Australian sprinkler and hydrant calculation program |
-| AU Calc Program 2 | an established Australian sprinkler calculation program |
+| AU Calc Program | an established Australian sprinkler and hydrant calculation program |
 | US Calc Program 1 | an established US sprinkler calculation program (its calculation engine) |
 | US Calc Program 2 | an established US sprinkler design program (its calculation engine) |
-| US Calc Program 3 | an established US sprinkler calculation program - **not run**: it has no scripting interface, and 300 models by hand was not attempted |
+| US Calc Program 3 | an established US sprinkler calculation program (its calculation library) |
+| US Calc Program 4 | an established US sprinkler calculation program - **not run**: it has no scripting interface, and 300 models by hand was not attempted |
 | EPANET 2.2 | US EPA network solver, `runepanet.exe` |
 
 ## Result
@@ -26,10 +26,10 @@ pressure to within 1.4%, and two of them to within 0.04% on every model.
 
 | Engine | Supply vs PHCP: median | P95 abs | max abs | Total flow vs PHCP: median | Worst head pressure difference: median / max | Median run time |
 |---|---|---|---|---|---|---|
-| AU Calc Program 1 | +0.74% | 1.17% | 1.40% | +0.11% | 1.26 / 23.7 kPa | 1.30 s |
-| AU Calc Program 2 | -0.01% | 0.02% | 0.04% | -0.00% | 0.01 / 0.12 kPa | 0.12 s |
+| AU Calc Program | +0.74% | 1.17% | 1.40% | +0.11% | 1.26 / 23.7 kPa | 1.30 s |
 | US Calc Program 1 | +0.18% | 0.61% | 1.05% | +0.00% | 0.05 / 1.20 kPa | 0.35 s |
 | US Calc Program 2 | -0.02% | 0.03% | 0.04% | -0.01% | 0.05 / 0.66 kPa | 0.23 s |
+| US Calc Program 3 | -0.01% | 0.02% | 0.04% | -0.00% | 0.01 / 0.12 kPa | 0.12 s |
 | EPANET 2.2 | +0.48% | 0.84% | 1.03% | +0.05% | 0.70 / 17.0 kPa | 0.23 s |
 | PHCP 1.0.0 | reference | | | | | 3.75 s |
 
@@ -41,12 +41,12 @@ row of [`results/results.csv`](results/results.csv).
 
 ### What the differences are
 
-- **AU Calc Program 2 and US Calc Program 2 agree with PHCP to within
+- **US Calc Program 2 and US Calc Program 3 agree with PHCP to within
   0.04%** on all 300 models, in the requirement, the total flow, every head
   pressure (worst 0.12 and 0.66 kPa) and every pipe flow.  Both use the
   Hazen-Williams law in the same form as AS 2118.1 Clause 14.10
   (exponents 1.85 and 4.87).
-- **AU Calc Program 1 (+0.74%) and EPANET (+0.48%) read higher, and the
+- **AU Calc Program (+0.74%) and EPANET (+0.48%) read higher, and the
   difference grows with the size of the system.**  Both use the SI form of
   Hazen-Williams with exponents 1.852 and 4.871.  At the same flow and bore
   that law gives more friction than the 1.85 / 4.87 form: -0.1% in a DN25 at
@@ -106,7 +106,7 @@ The calculation basis is the same for every program:
 | Tolerances | each program's own defaults |
 
 Where a program only solves forward from a fixed supply pressure (AU Calc
-Program 1 and EPANET), the harness searches on the supply pressure (secant
+Program and EPANET), the harness searches on the supply pressure (secant
 method) until the governing head is within 0.01 kPa of 50 kPa.  The number of
 outer solves is the `iterations` column in `results.csv`.  EPANET's heads are
 emitters with coefficient K x sqrt(9.80665), exponent 0.5.
@@ -138,7 +138,7 @@ Python 3.10 or later and matplotlib.  To check PHCP itself on any model:
 - The drivers for the other programs are not published, because each
   program's input format would identify it.  This folder holds the models, the
   normalised results and the comparison.
-- AU Calc Program 1 reports pressures to 0.01 kPa, and US Calc Program 1 to
+- AU Calc Program reports pressures to 0.01 kPa, and US Calc Program 1 to
   0.001 bar.  Differences below about 0.1 kPa are within that resolution.
 - Several of the larger models need supply pressures far above anything
   installed (G050 needs about 3,600 kPa).  They were kept, because they stress
