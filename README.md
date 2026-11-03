@@ -975,6 +975,26 @@ others on the page, and the report says which check to make.
 | fitting resolver fuzz | 0 problems |
 | invariance stress | 9 584 / 9 584 |
 
+### Comparison with other calculation programs
+
+`comparison/` is a 300-model benchmark (100 trees, 100 looped mains, 100
+grids, 4 to 240 operating heads) solved by PHCP 1.0.0 and five other
+programs on one basis: Hazen-Williams C = 120, explicit AS 1074 Medium bores,
+no fittings, K8.0 heads at 50 kPa, requirement mode.  Run 4 November 2026.
+
+| program | required supply pressure vs PHCP, median (worst) |
+|---|---|
+| AU Calc Program 1 | +0.74% (1.40%) |
+| AU Calc Program 2 | -0.01% (0.04%) |
+| US Calc Program 1 | +0.18% (1.05%) |
+| US Calc Program 2 | -0.02% (0.04%) |
+| EPANET 2.2 | +0.48% (1.03%) |
+
+The two programs reading higher use the 1.852 / 4.871 form of Hazen-Williams.
+PHCP was the slowest of the six (median 3.75 s a model, 21.5 s for grids).
+`comparison/README.md` has the method, the full tables, the plots, the models
+and every result, and the scripts to regenerate them.
+
 ## Stress testing
 
 `tools/stress_invariance.pl` needs no reference program.  It takes a random
