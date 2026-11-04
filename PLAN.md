@@ -507,4 +507,5 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
 - [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
+- [x] Revit: outlets, devices (booster, loss, reducing valve, orifice, ratio valve), renumber copies, colour key, select failures, pipe tags, apply a suggested DN. No engine change.
 - [ ] Revit extension run inside Revit 2022 to 2027

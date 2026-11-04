@@ -24,13 +24,14 @@ from phcp.fittings import (  # noqa: E402
     builtin_code, map_fitting, parse_fitting_string, parse_rules,
 )
 from phcp.model import (  # noqa: E402
-    Fitting, Network, Outlet, Pipe, Pt, Supply, clean_text, walk, write_phc,
-    zero_pipe_sizes, parse_curve,
+    Fitting, Network, Node, Outlet, Pipe, Pt, Supply, clean_text, note_positions,
+    parse_curve, parse_device, renumber_copies, walk, write_phc, zero_pipe_sizes,
 )
 from phcp.parameters import PARAMS, RESULT_PARAMS  # noqa: E402
 from phcp.results import (  # noqa: E402
-    accept, colour_ability, colour_flow, colour_velocity, element_results,
-    pipes_over_velocity, suggestions,
+    accept, colour_ability, colour_flow, colour_velocity, dns_to_apply,
+    element_results, failing_ids, fast_ids, legend_note, pipes_over_velocity,
+    suggestions,
 )
 from phcp.runner import command_for, run  # noqa: E402
 from phcp.sizes import find_database, load  # noqa: E402
@@ -530,6 +531,120 @@ try:
     is_("a different JSON interface is refused", False)
 except Exception as err:
     is_("a different JSON interface is refused", "interface" in str(err))
+
+
+# ---------------------------------------------------------------- 9. outlets, devices, copies, colour key
+print("\n9. DEVICES, COPIES, AND WHAT TO SHOW")
+
+
+def summary_text_of(result):
+    data = result.data or {}
+    errs = data.get("errors") or []
+    if errs:
+        return " | ".join(str(e) for e in errs)
+    return "exit %s" % result.code
+
+
+def chain():
+    """A supply, five pipes and one head, so each device has a pipe."""
+    net = net_with()
+    net.pipes = [
+        pipe("p1", (0, 0, 0), (2000, 0, 0), pid="P1", ptype="ASAM", dn=100,
+             device="BP", device_data="400 1000 350", duty_text="1000 350"),
+        pipe("p2", (2000, 0, 0), (4000, 0, 0), pid="P2", ptype="ASAM", dn=100,
+             device="PRV", device_data="0 40"),
+        pipe("p3", (4000, 0, 0), (6000, 0, 0), pid="P3", ptype="ASAM", dn=100,
+             device="OPP", device_data="80"),
+        pipe("p4", (6000, 0, 0), (8000, 0, 0), pid="P4", ptype="ASAM", dn=100,
+             device="OFD", device_data="20"),
+        pipe("p5", (8000, 0, 0), (10000, 0, 0), pid="P5", ptype="ASAM", dn=100,
+             device="PRA", device_data="3:1 200"),
+        pipe("p6", (10000, 0, 0), (12000, 0, 0), pid="P6", ptype="ASAM", dn=65,
+             device="BFP", device_data="0 10 500 25"),
+    ]
+    net.supplies = [Supply("sup", Pt(0, 0, 0), sid="SUP1", static_kpa=900)]
+    net.outlets = [Outlet("s", Pt(12000, 0, 0), "SPRINKLER", oid="S1", k=80, min_pressure=50)]
+    bond(net, "sup", "p1:A")
+    bond(net, "s", "p6:B")
+    return net
+
+
+devices = walk(chain())
+is_("a booster, valves and plates walk", devices.ok, issue_text(devices))
+if devices.ok:
+    body = write_phc(devices)
+    for line in (
+        "BP        P1 400.000 1000.000 350.000",
+        "PUMPDUTY  P1 1000.000 350.000",
+        "PRV       P2 0.000 40.000",
+        "OPP       P3 80.000",
+        "OFD       P4 20.000",
+        "PRA       P5 3:1 200.000",
+        "BFP       P6 0.000 10.000 500.000 25.000",
+    ):
+        is_("writes " + line[:40], line in body, "missing from the model")
+    solved_dev = run(command_for(os.path.join(ROOT, "phcp.pl")), body, cwd=ROOT)
+    is_("the engine accepts the devices", solved_dev.code != 2, summary_text_of(solved_dev))
+
+
+both = net_with()
+both.pipes = [pipe("p", (0, 0, 0), (1000, 0, 0), pid="P1", ptype="ASAM", dn=50,
+                   loss_kpa=10, device="PRV", device_data="0 40")]
+both.supplies = [Supply("sup", Pt(0, 0, 0), sid="SUP1", static_kpa=400)]
+both.outlets = [Outlet("s", Pt(1000, 0, 0), "SPRINKLER", oid="S1", k=8, min_pressure=50)]
+bond(both, "sup", "p:A")
+bond(both, "s", "p:B")
+both_w = walk(both)
+is_("a pipe holds one device",
+    any("one device" in m for m in messages(both_w, "error")))
+
+bad = net_with()
+bad.pipes = [pipe("p", (0, 0, 0), (1000, 0, 0), pid="P1", ptype="ASAM", dn=50,
+                  device="PRA", device_data="1:1")]
+bad.supplies = [Supply("sup", Pt(0, 0, 0), sid="SUP1", static_kpa=400)]
+bad.outlets = [Outlet("s", Pt(1000, 0, 0), "SPRINKLER", oid="S1", k=8, min_pressure=50)]
+bond(bad, "sup", "p:A")
+bond(bad, "s", "p:B")
+bad_w = walk(bad)
+is_("a ratio of 1 is refused",
+    any("more than 1" in m for m in messages(bad_w, "error")))
+
+is_("3:1 is kept as a ratio", parse_device("PRA", "3:1 0 5")[:1] == ["3:1"])
+
+copies = renumber_copies([
+    (1, "P1", "PHCP ID"),
+    (4, "P2", "PHCP ID"),
+    (9, "P1", "PHCP ID"),
+    (12, "P1", "PHCP ID"),
+])
+is_("the original keeps its id and the copies take the next free ones",
+    copies == [(9, "PHCP ID", "P3"), (12, "PHCP ID", "P4")], str(copies))
+selected = renumber_copies([
+    (1, "P1", "PHCP ID"),
+    (9, "P1", "PHCP ID"),
+], only_ids=[1])
+is_("renumbering the original does not change it", selected == [])
+
+node = Node(0)
+node.name = "N2"
+node.x, node.y, node.z = 0.0, 0.0, 0.0
+tagged = note_positions(
+    [node],
+    [pipe("p", (0, 0, 0), (1000, 0, 0), pid="P1")])
+is_("a node tag sits beside the node and a pipe tag sits beside the middle",
+    (200.0, 0.0, 0.0, "N2") in tagged and (500.0, 200.0, 0.0, "P1") in tagged,
+    str(tagged))
+
+_cols, legend = colour_velocity({"a": 1.0}, limit=6)
+is_("the colour key is a note, one band to a line",
+    legend_note(legend).startswith("PHCP\n") and legend_note(legend).count("\n") == 4)
+
+is_("failing outlets are the ones that do not pass",
+    failing_ids({1: {"pass": False}, 2: {"pass": True}}) == [1])
+is_("pipes over the limit are the fast ones",
+    fast_ids({1: 2.0, 2: 7.0}, 6) == [2])
+is_("a suggested size is copied, and size 0 is not a size",
+    dns_to_apply({1: 50, 2: 0, 3: None}) == {1: 50.0})
 
 
 # ---------------------------------------------------------------- 8. parameters and buttons

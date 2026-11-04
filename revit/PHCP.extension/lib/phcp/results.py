@@ -219,6 +219,50 @@ def _flow_rgb(flow):
     return FLOW_BANDS[-1][1]
 
 
+def legend_note(legend):
+    """The colour key as a text note: one band to a line."""
+    lines = ["PHCP"]
+    for rgb, label in legend:
+        lines.append("#%02X%02X%02X  %s" % (int(rgb[0]), int(rgb[1]), int(rgb[2]), label))
+    return "\n".join(lines)
+
+
+def failing_ids(outlets):
+    """Revit ids of outlets whose stored pass is no.
+
+    outlets is {revit id: {"pass": bool, ...}}, as the host reads it back.
+    An outlet with no pass yet is not in that dict, so it is not selected.
+    """
+    return [rid for rid, out in outlets.items() if out.get("pass") is False]
+
+
+def fast_ids(speeds, limit=None):
+    """Revit ids of pipes whose stored velocity is over the limit."""
+    cap = float(limit if limit else DEFAULT_VELOCITY_LIMIT)
+    return [rid for rid, speed in speeds.items() if speed is not None and abs(speed) > cap]
+
+
+def dns_to_apply(suggested):
+    """{revit id: suggested DN} to the sizes worth storing.
+
+    A blank and a size of 0 are left.  Size 0 asks the engine to choose; it
+    is not itself a size to put on the pipe.  The Revit diameter is not in
+    this map.  The caller writes PHCP DN only.
+    """
+    out = {}
+    for rid, dn in suggested.items():
+        if dn is None:
+            continue
+        try:
+            value = float(dn)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        out[rid] = value
+    return out
+
+
 def _band(fraction, table):
     for edge, rgb, _label in table:
         if edge is None or fraction <= edge:
