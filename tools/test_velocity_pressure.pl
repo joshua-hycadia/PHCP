@@ -29,8 +29,9 @@
 #   4. THE LANGUAGE AND THE OUTPUT.  A bad value is refused on its line; the
 #      report, the editor's outlet table and the JSON state the basis.
 #
-# Example 04 (the 1000-pipe grid) is left out of 2 and 3 unless --full: it is
-# slow, and 02, 07 and 11 already have loops and in-line heads.
+# Example 04 (the 1000-pipe grid) is left out: one solve of it takes some 37
+# minutes, and 02, 07 and 11 already have loops and in-line heads.  Its OFF
+# results are checked by test_phc.pl --full.
 #==============================================================================
 use strict;
 use warnings;
@@ -41,7 +42,6 @@ use HardyCross::Parse;
 use HardyCross::Phc;
 
 my $FREEZE = grep { $_ eq '--freeze' } @ARGV;
-my $FULL   = grep { $_ eq '--full' } @ARGV;
 my $EX     = "$FindBin::Bin/../examples";
 my $FROZEN = "$FindBin::Bin/baseline/velocity_pressure_off.txt";
 my $GW     = $HardyCross::GAMMA_W;
@@ -64,7 +64,7 @@ sub elems { my $n = shift; @{ $n->{elems} }[1 .. $#{ $n->{elems} }] }
 sub pipe_q { my $n = shift; map { $_->{id} => $_->{q} } grep { $_->{kind} eq 'PIPE' } elems($n) }
 sub node_p { my $n = shift; map { $_->{id} => $_->{h} - $GW * $_->{z} } grep { $_->{id} ne 'REF' } @{ $n->{nodes} }[1 .. $#{ $n->{nodes} }] }
 
-my @examples = grep { $FULL || !/grid1000/ } sort glob("$EX/*.phc");
+my @examples = grep { !/grid1000/ } sort glob("$EX/*.phc");
 
 #------------------------------------------------------------------------------
 # --freeze: every example's solved flows and pressures, to 12 significant
@@ -73,7 +73,7 @@ my @examples = grep { $FULL || !/grid1000/ } sort glob("$EX/*.phc");
 if ($FREEZE) {
     open my $o, '>', $FROZEN or die "$FROZEN: $!\n";
     print $o "# Solved pipe flows (Q, L/min) and node gauge pressures (P, kPa) of every example\n"
-           . "# (04 only with --full), frozen from the solver before OPTION VELOCITY_PRESSURE existed.\n"
+           . "# frozen from the solver before OPTION VELOCITY_PRESSURE existed (example 04 is not included).\n"
            . "# With the option OFF, or not given, every example must still give these.\n";
     for my $m (@examples) {
         (my $b = $m) =~ s{.*/}{};
