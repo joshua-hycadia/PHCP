@@ -10,7 +10,7 @@
 #   perl phcp_flow.pl [model.phc]
 #
 #   +------------------------------------------------------------------+
-#   | NEW OPEN SAVE | VALIDATE CALCULATE | ARRANGE FIT      [ status ] |
+#   | NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT  [ status ] |
 #   +--------+----------------------------------------------+----------+
 #   | SELECT |                                              |  card    |
 #   | WATER  |   blocks, and the pipes drawn between them   |          |
@@ -53,19 +53,22 @@ our %C = (
     faint     => '#A3AAB4',
     accent    => '#1F5FBF',
     accent_dk => '#184C99',
+    accent_bg => '#E8F0FC',
+    select    => '#D3E3FA',
     pipe      => '#3D4754',
     error     => '#C62828',
+    error_bg  => '#FDEEEE',
 );
 my %KIND_COLOR = (
     WATER => '#1F5FBF', NODE => '#374151', SPRINKLER => '#0E7490',
     HYDRANT => '#1B6B3A', HREEL => '#8A5A00',
 );
 our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
-our ($UI, $UI_B, $UI_S);
+our ($UI, $UI_B, $UI_S, $MONO);
 our ($BW, $BH) = (172, 86);     # a block, in page units; the view scales it
 
 # The window's state.  One window, so package variables.
-our ($mw, $canvas, $insp, $status_lbl);
+our ($mw, $canvas, $insp, $card, $card_cv, $status_lbl);
 our ($doc, $path, $saved_text, $valid_text, $sel, $tool, $zoom, $gesture);
 our (%btn, %toolbtn, %FV);
 our @FKEYS;
@@ -88,18 +91,35 @@ sub dpi_aware {
 sub pick_fonts {
     my %have = map { lc $_ => 1 } $mw->fontFamilies;
     my ($ui) = grep { $have{ lc $_ } } 'Segoe UI', 'DejaVu Sans', 'Liberation Sans', 'Helvetica Neue', 'Arial';
+    my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
     $ui //= 'Helvetica';
-    ($UI, $UI_B, $UI_S) = ([ $ui, 9 ], [ $ui, 10, 'bold' ], [ $ui, 8 ]);
+    $mono //= 'Courier';
+    ($UI, $UI_B, $UI_S) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8 ]);
+    $MONO = [ $mono, 9 ];
 }
 
+# flat -- a button with no bevel.  A one-pixel rule stands in for the border,
+# the same way the text editor draws its toolbar.
 sub flat {
     my ($parent, $text, $cmd) = @_;
     return $parent->Button(
-        -text => $text, -command => $cmd,
-        -relief => 'flat', -borderwidth => 0, -highlightthickness => 0,
-        -bg => $C{panel}, -fg => $C{ink},
+        -text => $text, -command => $cmd, -font => $UI_B,
+        -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
+        -highlightbackground => $C{line}, -highlightcolor => $C{accent},
+        -bg => $C{paper}, -fg => $C{ink},
         -activebackground => $C{hover}, -activeforeground => $C{ink},
-        -padx => 10, -pady => 6, -font => $UI, -cursor => $POINTER,
+        -padx => 12, -pady => 5, -cursor => 'hand2',
+    );
+}
+
+# flat_scrollbar -- Tk's own bar is bevelled.  This one is a flat grey strip.
+sub flat_scrollbar {
+    my ($parent, $orient) = @_;
+    return $parent->Scrollbar(
+        -orient => $orient, -relief => 'flat', -borderwidth => 0,
+        -elementborderwidth => 0, -width => 11, -troughcolor => $C{panel},
+        -background => '#CDD2D9', -activebackground => '#B4BBC5',
+        -highlightthickness => 0,
     );
 }
 
@@ -110,8 +130,17 @@ sub build_window {
     dpi_aware();
     $mw = MainWindow->new(-title => 'PHCP FLOW');
     $mw->configure(-bg => $C{panel});
-    $mw->geometry('1280x800');
+    $mw->geometry('1440x860');
     pick_fonts();
+    # Menus are drawn by Tk with a bevel unless told otherwise.  These apply
+    # to every menu made after this, including a choice on the card.
+    $mw->optionAdd('*Menu.relief' => 'flat');
+    $mw->optionAdd('*Menu.activeBorderWidth' => 0);
+    $mw->optionAdd('*Menu.borderWidth' => 1);
+    $mw->optionAdd('*Menu.background' => $C{paper});
+    $mw->optionAdd('*Menu.foreground' => $C{ink});
+    $mw->optionAdd('*Menu.activeBackground' => $C{select});
+    $mw->optionAdd('*Menu.activeForeground' => $C{ink});
     $doc = HardyCross::Flow::blank();
     $saved_text = HardyCross::Flow::write_text($doc);
     $valid_text = undef;
@@ -121,37 +150,60 @@ sub build_window {
     $gesture = undef;
     $path = undef;
 
-    my $bar = $mw->Frame(-bg => $C{panel})->pack(-fill => 'x');
-    flat($bar, 'NEW', \&file_new)->pack(-side => 'left');
-    flat($bar, 'OPEN', \&file_open)->pack(-side => 'left');
-    flat($bar, 'SAVE', \&file_save)->pack(-side => 'left');
-    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 6, -pady => 6);
-    flat($bar, 'VALIDATE', \&do_validate)->pack(-side => 'left');
-    $btn{CALCULATE} = flat($bar, 'CALCULATE', \&do_calculate);
-    $btn{CALCULATE}->pack(-side => 'left', -padx => 2);
-    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 6, -pady => 6);
-    flat($bar, 'ARRANGE', \&do_arrange)->pack(-side => 'left');
-    flat($bar, 'FIT', \&fit_view)->pack(-side => 'left');
+    my $bar = $mw->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 8);
+    flat($bar, 'NEW', \&file_new)->pack(-side => 'left', -padx => [0, 4]);
+    flat($bar, 'OPEN', \&file_open)->pack(-side => 'left', -padx => 4);
+    flat($bar, 'SAVE', \&file_save)->pack(-side => 'left', -padx => 4);
+    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
+    flat($bar, 'VALIDATE  F4', \&do_validate)->pack(-side => 'left', -padx => 4);
+    $btn{CALCULATE} = flat($bar, 'CALCULATE  F5', \&do_calculate);
+    $btn{CALCULATE}->pack(-side => 'left', -padx => 4);
+    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
+    flat($bar, 'ARRANGE', \&do_arrange)->pack(-side => 'left', -padx => 4);
+    flat($bar, 'FIT', \&fit_view)->pack(-side => 'left', -padx => 4);
     $status_lbl = $bar->Label(
-        -text => '', -anchor => 'e', -font => $UI, -bg => $C{panel}, -fg => $C{muted},
-    )->pack(-side => 'right', -padx => 12);
+        -text => '', -anchor => 'e', -font => $UI_B, -bg => $C{panel}, -fg => $C{muted},
+        -padx => 10, -pady => 4,
+    )->pack(-side => 'right', -padx => 4);
 
     $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
 
     my $body = $mw->Frame(-bg => $C{panel})->pack(-fill => 'both', -expand => 1);
-    my $pal = $body->Frame(-bg => $C{panel}, -width => 148)->pack(-side => 'left', -fill => 'y');
+    my $pal = $body->Frame(-bg => $C{panel}, -width => 156)->pack(-side => 'left', -fill => 'y');
     $pal->packPropagate(0);
     $body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
 
     my $held = $body->Scrolled('Canvas',
         -scrollbars => 'se', -bg => $C{paper}, -highlightthickness => 0,
+        -relief => 'flat', -borderwidth => 0,
         -width => 820, -height => 640, -cursor => $POINTER,
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
     $canvas = $held->Subwidget('canvas');
+    $canvas->configure(-relief => 'flat', -borderwidth => 0, -highlightthickness => 0);
+    for my $name (qw(xscrollbar yscrollbar)) {
+        my $sb = $held->Subwidget($name) or next;
+        $sb->configure(
+            -relief => 'flat', -borderwidth => 0, -elementborderwidth => 0,
+            -width => 11, -troughcolor => $C{panel}, -highlightthickness => 0,
+            -background => '#CDD2D9', -activebackground => '#B4BBC5',
+        );
+    }
 
     $body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
-    $insp = $body->Frame(-bg => $C{panel}, -width => 300)->pack(-side => 'left', -fill => 'y');
+    # Wide enough that a drawing's title fits on one line.  The card scrolls
+    # when a pipe's device, or the project lines, run past the window.
+    $insp = $body->Frame(-bg => $C{panel}, -width => 460)->pack(-side => 'left', -fill => 'y');
     $insp->packPropagate(0);
+    my $card_sb = flat_scrollbar($insp, 'vertical');
+    $card_sb->pack(-side => 'right', -fill => 'y');
+    $card_cv = $insp->Canvas(
+        -bg => $C{panel}, -highlightthickness => 0, -borderwidth => 0, -relief => 'flat',
+        -yscrollcommand => [ $card_sb, 'set' ],
+    )->pack(-side => 'left', -fill => 'both', -expand => 1);
+    $card_sb->configure(-command => [ $card_cv, 'yview' ]);
+    $card = $card_cv->Frame(-bg => $C{panel});
+    $card_cv->createWindow(0, 0, -window => $card, -anchor => 'nw', -tags => 'cardwin');
+    $card_cv->bind('<Configure>' => \&fit_card);
 
     $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
     $mw->Label(
@@ -159,13 +211,20 @@ sub build_window {
         -anchor => 'w', -font => $UI_S, -bg => $C{panel}, -fg => $C{muted},
     )->pack(-fill => 'x', -padx => 10, -pady => 4);
 
+    # A thin bar of the block's colour, so the tool and the block agree.
+    # PIPE and PUMP sit below a rule: they connect blocks, they are not blocks.
+    my %mark = (%KIND_COLOR, SELECT => $C{accent}, PIPE => $C{pipe}, PUMP => $C{accent});
     for my $name ('SELECT', @HardyCross::Flow::BLOCK_KINDS, 'PIPE', 'PUMP') {
-        my $b = $pal->Button(
+        $pal->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x', -padx => 12, -pady => [8, 6])
+            if $name eq 'PIPE';
+        my $row = $pal->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 1);
+        $row->Frame(-bg => $mark{$name}, -width => 3)->pack(-side => 'left', -fill => 'y');
+        my $b = $row->Button(
             -text => $name, -command => sub { set_tool($name) },
             -relief => 'flat', -borderwidth => 0, -highlightthickness => 0,
-            -anchor => 'w', -font => $UI, -cursor => $POINTER,
-            -padx => 12, -pady => 5,
-        )->pack(-fill => 'x', -padx => 6, -pady => 1);
+            -anchor => 'w', -font => $UI, -cursor => 'hand2',
+            -padx => 10, -pady => 5,
+        )->pack(-side => 'left', -fill => 'x', -expand => 1);
         $toolbtn{$name} = $b;
     }
     set_tool('SELECT');
@@ -220,7 +279,12 @@ sub set_tool {
 sub status {
     my ($msg, $bad) = @_;
     return unless $status_lbl;
-    $status_lbl->configure(-text => $msg // '', -fg => $bad ? $C{error} : $C{muted});
+    my ($fg, $bg) = ($C{muted}, $C{panel});
+    if ($bad) { ($fg, $bg) = ($C{error}, $C{error_bg}) }
+    elsif (defined $msg && $msg =~ /^(VALID|CONVERGED|SAVED|OPENED|ARRANGED)\b/) {
+        ($fg, $bg) = ($C{accent}, $C{accent_bg});
+    }
+    $status_lbl->configure(-text => $msg // '', -fg => $fg, -bg => $bg);
 }
 
 sub set_title {
@@ -238,6 +302,7 @@ sub sync_calc {
     $btn{CALCULATE}->configure(
         -bg => $on ? $C{accent} : $C{panel},
         -fg => $on ? '#FFFFFF' : $C{faint},
+        -highlightbackground => $on ? $C{accent} : $C{line},
         -activebackground => $on ? $C{accent_dk} : $C{panel},
         -activeforeground => $on ? '#FFFFFF' : $C{faint},
     );
@@ -293,8 +358,8 @@ sub draw_node {
     my $on = defined $sel && $sel eq $n->{id};
     my $tag = [ 'node', 'node:' . $n->{id} ];
     $canvas->createRectangle($x1, $y1, $x2, $y2,
-        -fill => $C{paper}, -outline => $on ? $C{accent} : $C{line}, -width => $on ? 2 : 1,
-        -tags => $tag);
+        -fill => $on ? $C{accent_bg} : $C{paper}, -outline => $on ? $C{accent} : $C{line},
+        -width => 1, -tags => $tag);
     $canvas->createRectangle($x1, $y1, $x1 + 5 * $zoom, $y2,
         -fill => $KIND_COLOR{ $n->{kind} } || $C{ink}, -outline => '', -tags => $tag);
     my $r = 5 * ($zoom < 1 ? $zoom : 1) + 3;
@@ -304,24 +369,54 @@ sub draw_node {
         $canvas->createOval($px - $r, $py - $r, $px + $r, $py + $r,
             -fill => $C{paper}, -outline => $C{accent}, -width => 1, -tags => [ @$tag, 'port' ]);
     }
-    my $tx = $x1 + 12 * $zoom;
-    $canvas->createText($tx, $y1 + 8 * $zoom, -anchor => 'nw', -text => $n->{kind},
+    my $tx = $x1 + 14 * $zoom;
+    my $room = $x2 - $tx - 8 * $zoom;
+    $canvas->createText($tx, $y1 + 8 * $zoom, -anchor => 'nw',
+        -text => clip_to($UI_S, $n->{kind}, $room),
         -fill => $KIND_COLOR{ $n->{kind} } || $C{ink}, -font => $UI_S, -tags => $tag);
-    $canvas->createText($tx, $y1 + 24 * $zoom, -anchor => 'nw', -text => $n->{name},
+    $canvas->createText($tx, $y1 + 24 * $zoom, -anchor => 'nw',
+        -text => clip_to($UI_B, $n->{name}, $room),
         -fill => $C{ink}, -font => $UI_B, -tags => [ @$tag, 'name' ]);
     return if $zoom < 0.8;
-    my $sub = 'EL ' . $n->{z};
-    $sub .= '   ' . $n->{static} if $n->{kind} eq 'WATER';
-    $sub .= '   K ' . $n->{k} if defined $n->{k};
+    # The card holds every figure.  The block only has room for a short line,
+    # so a long K or a list of fixed flows is cut rather than drawn across
+    # the next pipe.
+    my $sub = 'EL ' . short_num($n->{z});
+    $sub .= '   ' . short_num($n->{static}) if $n->{kind} eq 'WATER';
+    $sub .= '   K ' . short_num($n->{k}) if defined $n->{k};
     my @ff = map { $_->{name} } grep { $_->{node} eq $n->{id} } @{ $doc->{flows} };
     $sub .= '   ' . join(' ', @ff) if @ff;
-    $canvas->createText($tx, $y1 + 46 * $zoom, -anchor => 'nw', -text => $sub,
+    $canvas->createText($tx, $y1 + 46 * $zoom, -anchor => 'nw',
+        -text => clip_to($UI_S, $sub, $room),
         -fill => $C{muted}, -font => $UI_S, -tags => $tag);
     if (defined $n->{pressure}) {
         $canvas->createText($tx, $y1 + 64 * $zoom, -anchor => 'nw',
-            -text => sprintf('%.1f %s', $n->{pressure}, $doc->{units}{PRESSURE}),
+            -text => clip_to($UI_S, sprintf('%.1f %s', $n->{pressure}, $doc->{units}{PRESSURE}), $room),
             -fill => $C{accent}, -font => $UI_S, -tags => [ @$tag, 'result' ]);
     }
+}
+
+# short_num -- a number on a block, not the figure the card keeps.  10.0 stays
+# 10.0.  Only a long fraction is shortened, so the line still fits the block.
+sub short_num {
+    my $v = shift;
+    return '' unless defined $v;
+    return $v unless $v =~ /^-?\d+\.\d{3,}\z/;
+    return sprintf('%.1f', $v);
+}
+
+# clip_to -- drop characters until the text is no wider than the block.
+sub clip_to {
+    my ($font, $text, $px) = @_;
+    $text = '' unless defined $text;
+    return $text if !$canvas || $px < 12;
+    my $w = eval { $canvas->fontMeasure($font, $text) };
+    return $text unless defined $w;
+    while (length $text > 1 && $w > $px) {
+        substr($text, -1, 1) = '';
+        $w = $canvas->fontMeasure($font, $text);
+    }
+    return $text;
 }
 
 sub draw_edge {
@@ -346,13 +441,14 @@ sub draw_edge {
     } else {
         my $label = $e->{name} . '  ' . $e->{size};
         $label .= '  AS ' . $e->{sized} if defined $e->{sized};
-        $canvas->createText($mx, $my - 16, -text => $label, -font => $UI_S, -fill => $C{ink},
-            -tags => [ 'wire', 'wire:' . $e->{id} ]);
-        if (defined $e->{flow}) {
-            $canvas->createText($mx, $my - 28, -font => $UI_S, -fill => $C{accent},
-                -text => flow_text($e->{flow}),
-                -tags => [ 'wire', 'result', 'wire:' . $e->{id} ]);
-        }
+        my $tags = [ 'wire', 'wire:' . $e->{id} ];
+        # The words sit on the paper, just above the wire, so the line does
+        # not strike through them.  A device keeps its own box on the wire.
+        my $lh = $canvas->fontMetrics($UI_S, '-linespace') || 13;
+        my $base = $my - ($e->{device} ? 12 : 2);
+        paper_text($mx, $base, $label, $UI_S, $C{ink}, $tags);
+        paper_text($mx, $base - $lh, flow_text($e->{flow}), $UI_S, $C{accent},
+            [ @$tags, 'result' ]) if defined $e->{flow};
         device_pill($e, $mx, $my) if $e->{device};
     }
 }
@@ -361,7 +457,7 @@ sub pump_box {
     my ($e, $mx, $my) = @_;
     my $tag = [ 'wire', 'pump', 'wire:' . $e->{id} ];
     $canvas->createRectangle($mx - 46, $my - 16, $mx + 46, $my + 16,
-        -fill => '#E8F0FC', -outline => $C{accent}, -width => 1, -tags => $tag);
+        -fill => $C{accent_bg}, -outline => $C{accent}, -width => 1, -tags => $tag);
     $canvas->createText($mx, $my - 4, -text => $e->{name}, -font => $UI_B, -fill => $C{accent}, -tags => $tag);
     $canvas->createText($mx, $my + 8, -text => defined $e->{flow} ? flow_text($e->{flow}) : 'PUMP',
         -font => $UI_S, -fill => $C{ink}, -tags => [ @$tag, defined $e->{flow} ? 'result' : () ]);
@@ -399,6 +495,24 @@ sub curve {
         push @p, $u**3 * $y1 + 3 * $u * $u * $t * $y1 + 3 * $u * $t * $t * $y2 + $t**3 * $y2;
     }
     return @p;
+}
+
+# paper_text -- a label with the page behind it.  Drawn after the wire, so
+# the wire stops at the words instead of running through them.
+sub paper_text {
+    my ($x, $y, $text, $font, $fill, $tags) = @_;
+    my $id = $canvas->createText($x, $y, -text => $text, -font => $font, -fill => $fill,
+        -anchor => 's', -tags => $tags);
+    my @b = $canvas->bbox($id);
+    if (@b) {
+        # The paper is not a result.  A caller that gathers result text would
+        # ask a rectangle for -text, and Tk refuses.
+        my @bg = grep { $_ ne 'result' } @$tags;
+        $canvas->createRectangle($b[0] - 3, $b[1] - 1, $b[2] + 3, $b[3] + 1,
+            -fill => $C{paper}, -outline => '', -tags => \@bg);
+        $canvas->raise($id);
+    }
+    return $id;
 }
 
 # flow_text -- how much water is moving, in the file's unit.  The solver's
@@ -640,9 +754,9 @@ sub select_id {
 }
 
 sub refresh_inspector {
-    return unless $insp;
+    return unless $card;
     $building = 1;
-    $_->destroy for $insp->children;
+    $_->destroy for $card->children;
     %FV = ();
     @FKEYS = ();
     my $obj = defined $sel ? HardyCross::Flow::find($doc, $sel) : undef;
@@ -655,29 +769,73 @@ sub refresh_inspector {
         card_file();
     }
     $building = 0;
+    bind_card_wheel($card);
+    fit_card();
+    $mw->afterIdle(\&fit_card) if $mw;
+}
+
+# fit_card -- the card is as wide as its column, and scrolls if it is taller
+# than the window.  The height is read after idle layout: packing the fields
+# does not change reqheight until Tk has arranged them, and a scroll region
+# taken too early stops short of the last line.
+our $fitting_card;
+sub fit_card {
+    return if $fitting_card;
+    return unless $card_cv && $card;
+    my $w = $card_cv->width || 0;
+    return if $w < 2;
+    $fitting_card = 1;
+    $card_cv->itemconfigure('cardwin', -width => $w);
+    $mw->idletasks if $mw;
+    my $h = $card->reqheight || 1;
+    $h = $card->height if $card->height > $h;
+    $card_cv->configure(-scrollregion => [ 0, 0, $w, $h ]);
+    $fitting_card = 0;
+}
+
+sub bind_card_wheel {
+    my $w = shift;
+    return unless $w && $card_cv;
+    $w->bind('<Button-4>' => sub { $card_cv->yviewScroll(-3, 'units') });
+    $w->bind('<Button-5>' => sub { $card_cv->yviewScroll(3, 'units') });
+    $w->bind('<MouseWheel>' => sub {
+        my $d = $_[0]->XEvent->delta // 0;
+        $card_cv->yviewScroll($d > 0 ? -3 : 3, 'units');
+    });
+    bind_card_wheel($_) for $w->children;
 }
 
 sub card_head {
-    my ($title, $sub) = @_;
-    $insp->Label(-text => $title, -font => $UI_B, -bg => $C{panel}, -fg => $C{ink}, -anchor => 'w')
-        ->pack(-fill => 'x', -padx => 12, -pady => [12, 0]);
-    $insp->Label(-text => $sub, -font => $UI_S, -bg => $C{panel}, -fg => $C{muted}, -anchor => 'w')
-        ->pack(-fill => 'x', -padx => 12, -pady => [0, 8]) if defined $sub && $sub ne '';
+    my ($title, $sub, $sub_fg) = @_;
+    $card->Label(-text => $title, -font => $UI_B, -bg => $C{panel}, -fg => $C{ink}, -anchor => 'w')
+        ->pack(-fill => 'x', -padx => 14, -pady => [14, 0]);
+    $card->Label(-text => $sub, -font => $UI_S, -bg => $C{panel}, -fg => $sub_fg || $C{muted}, -anchor => 'w')
+        ->pack(-fill => 'x', -padx => 14, -pady => [2, 8]) if defined $sub && $sub ne '';
 }
 
+sub card_section {
+    my $text = shift;
+    $card->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x', -padx => 14, -pady => [12, 0]);
+    $card->Label(-text => $text, -font => $UI_S, -bg => $C{panel}, -fg => $C{muted}, -anchor => 'w')
+        ->pack(-fill => 'x', -padx => 14, -pady => [6, 2]);
+}
+
+# The label sits above the value.  A title is longer than a side column can
+# hold beside its name, and the value then has the whole width of the card.
 sub form_entry {
     my ($label, $key, $value) = @_;
     $FV{$key} = defined $value ? $value : '';
     push @FKEYS, $key;
-    my $row = $insp->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 12, -pady => 2);
-    $row->Label(-text => $label, -width => 11, -anchor => 'w', -font => $UI_S,
-        -bg => $C{panel}, -fg => $C{muted})->pack(-side => 'left');
+    my $row = $card->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 14, -pady => 3);
+    $row->Label(-text => $label, -anchor => 'w', -font => $UI_S,
+        -bg => $C{panel}, -fg => $C{muted})->pack(-fill => 'x');
     my $e = $row->Entry(
-        -textvariable => \$FV{$key}, -font => $UI, -width => 16,
+        -textvariable => \$FV{$key}, -font => $MONO,
         -relief => 'flat', -highlightthickness => 1,
         -highlightbackground => $C{line}, -highlightcolor => $C{accent},
         -bg => $C{paper}, -fg => $C{ink}, -insertbackground => $C{ink},
-    )->pack(-side => 'left', -fill => 'x', -expand => 1);
+        -selectbackground => $C{select}, -selectforeground => $C{ink},
+    )->pack(-fill => 'x', -expand => 1);
     $e->bind('<FocusOut>' => \&commit_form);
     $e->bind('<Return>' => \&commit_form);
 }
@@ -689,27 +847,44 @@ sub form_menu {
     unshift @opt, $value if $value ne '' && !grep { $_ eq $value } @opt;
     $FV{$key} = $value;
     push @FKEYS, $key;
-    my $row = $insp->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 12, -pady => 2);
-    $row->Label(-text => $label, -width => 11, -anchor => 'w', -font => $UI_S,
-        -bg => $C{panel}, -fg => $C{muted})->pack(-side => 'left');
-    $row->Optionmenu(
-        -options => \@opt, -variable => \$FV{$key}, -font => $UI,
-        -relief => 'flat', -borderwidth => 1, -highlightthickness => 0,
-        -bg => $C{paper}, -activebackground => $C{hover},
-        -command => sub {
+    my $row = $card->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 14, -pady => 3);
+    $row->Label(-text => $label, -anchor => 'w', -font => $UI_S,
+        -bg => $C{panel}, -fg => $C{muted})->pack(-fill => 'x');
+    # Optionmenu draws a bevelled indicator.  A menubutton with the arrow in
+    # its text is the flat choice the text editor uses.
+    my $mb = $row->Menubutton(
+        -text => menu_text($value), -font => $MONO,
+        -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
+        -highlightbackground => $C{line}, -highlightcolor => $C{accent},
+        -bg => $C{paper}, -fg => $C{ink},
+        -activebackground => $C{hover}, -activeforeground => $C{ink},
+        -anchor => 'w', -padx => 6, -pady => 2, -indicatoron => 0, -cursor => 'hand2',
+    )->pack(-fill => 'x', -expand => 1);
+    my $m = $mb->Menu(
+        -tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
+        -activeborderwidth => 0, -bg => $C{paper}, -fg => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink},
+    );
+    for my $v (@opt) {
+        $m->command(-label => $v, -command => sub {
             return if $building || $applying;
+            $FV{$key} = $v;
+            $mb->configure(-text => menu_text($v));
             commit_form();
             # Rebuilding the card now would destroy this menu while its own
             # command is still running.
             if ($rebuild) { $mw->after(1, sub { refresh_inspector(); redraw() }) }
             else { redraw() }
-        },
-    )->pack(-side => 'left', -fill => 'x', -expand => 1);
+        });
+    }
+    $mb->configure(-menu => $m);
 }
+
+sub menu_text { my $v = shift; return (defined $v && $v ne '' ? $v : '') . '  ' . "\x{25BE}" }
 
 sub card_button {
     my ($text, $cmd) = @_;
-    flat($insp, $text, $cmd)->pack(-fill => 'x', -padx => 12, -pady => 4);
+    flat($card, $text, $cmd)->pack(-fill => 'x', -padx => 14, -pady => 4);
 }
 
 sub card_file {
@@ -719,10 +894,14 @@ sub card_file {
     for my $q (@HardyCross::Phc::UNIT_QUANTITIES) {
         form_menu($q, "unit_$q", $doc->{units}{$q}, $HardyCross::Phc::UNIT_CHOICES{$q});
     }
-    my $i = 0;
-    for my $p (@{ $doc->{project} }) {
-        form_entry($p->{field}, "project_$i", $p->{text});
-        $i++;
+    if (@{ $doc->{project} }) {
+        # A rule only.  The first line is itself labelled PROJECT.
+        $card->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x', -padx => 14, -pady => [12, 6]);
+        my $i = 0;
+        for my $p (@{ $doc->{project} }) {
+            form_entry($p->{field}, "project_$i", $p->{text});
+            $i++;
+        }
     }
 }
 
@@ -730,7 +909,7 @@ sub card_node {
     my $n = shift;
     my $sub = defined $n->{pressure}
         ? sprintf('%.1f %s', $n->{pressure}, $doc->{units}{PRESSURE}) : '';
-    card_head($n->{kind}, $sub);
+    card_head($n->{kind}, $sub, defined $n->{pressure} ? $C{accent} : undef);
     form_entry('NAME', 'name', $n->{name});
     form_entry('ELEVATION', 'z', $n->{z});
     if ($n->{kind} eq 'WATER') {
@@ -742,8 +921,7 @@ sub card_node {
     }
     my @ff = grep { $_->{node} eq $n->{id} } @{ $doc->{flows} };
     if (@ff) {
-        $insp->Label(-text => 'FIXED FLOW', -font => $UI_S, -bg => $C{panel}, -fg => $C{muted}, -anchor => 'w')
-            ->pack(-fill => 'x', -padx => 12, -pady => [10, 2]);
+        card_section('FIXED FLOW');
         for my $fl (@ff) {
             form_entry('NAME', $fl->{id} . ':name', $fl->{name});
             form_entry('FLOW', $fl->{id} . ':q', $fl->{q});
@@ -766,7 +944,7 @@ sub card_edge {
     my $sub = '';
     $sub = sprintf('%.1f %s', $e->{flow}, $doc->{units}{FLOW}) if defined $e->{flow};
     $sub .= ($sub ? '   ' : '') . 'AS ' . $e->{sized} if defined $e->{sized};
-    card_head($e->{kind} eq 'PUMP' ? 'PUMP' : 'PIPE', $sub);
+    card_head($e->{kind} eq 'PUMP' ? 'PUMP' : 'PIPE', $sub, $sub ne '' ? $C{accent} : undef);
     form_entry('NAME', 'name', $e->{name});
     if ($e->{kind} eq 'PUMP') {
         form_entry('CHURN', 'churn', $e->{churn});

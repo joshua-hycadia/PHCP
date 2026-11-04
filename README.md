@@ -464,7 +464,7 @@ block does not: a position is only a comment.
 
 ```
 +------------------------------------------------------------------+
-| NEW OPEN SAVE | VALIDATE CALCULATE | ARRANGE FIT      [ status ] |
+| NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT  [ status ] |
 +--------+----------------------------------------------+----------+
 | SELECT |                                              |  card    |
 | WATER  |   blocks, and the pipes drawn between them   |          |
@@ -482,7 +482,7 @@ block does not: a position is only a comment.
 | move | drag a block.  A click that barely moves snaps back |
 | pan, zoom | the middle button or the right button pans; the wheel zooms.  FIT keeps the blocks large enough to read and scrolls a long main |
 | arrange | lays the supplies to the left and the rest by how far the water travels |
-| card | the file's title, method and units, or the block or pipe that is selected.  A fixed flow is edited on its junction |
+| card | the file's title, method and units, or the block or pipe that is selected.  Each value sits under its label, in a flat field or a flat menu, and the card scrolls.  A fixed flow is edited on its junction |
 | results | after a calculation that converges, the pressure on each block and the flow on each pipe, in the file's units.  The page shows the amount; the solver's sign is only the direction along the pipe |
 | files | NEW, OPEN, SAVE.  Any file but a `.phc` is refused.  Saving rewrites the file in a fixed order |
 
@@ -497,6 +497,11 @@ kept.
 A new drawing uses metres for length, as the examples do, and
 Hazen-Williams.  The office default for a length with no unit line is
 millimetres; this program does not start there.
+
+The window is drawn the same way as the text editor: a white page, one-pixel
+rules, flat buttons, fields and menus, and blue only for the highlight.
+Words on a pipe sit on the paper, so the line does not run through them.
+A long number on a block is shortened; the card keeps the full figure.
 
 The window is `phcp_flow.pl`.  What the drawing contains, and whether the
 file it writes calculates, is `HardyCross/Flow.pm`, which has no Tk in it.
@@ -1117,7 +1122,7 @@ others on the page, and the report says which check to make.
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
 | drawn network, headless (`tools/test_flow.pl`) | 92 / 92 |
-| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 21 / 21 |
+| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 24 / 24 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |

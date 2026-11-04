@@ -56,6 +56,25 @@ $main::mw->update;
 is('white page', $main::canvas->cget('-bg') eq '#FFFFFF');
 is('flat: the toolbar buttons have no bevel',
    !grep { $_->cget('-relief') ne 'flat' } values %main::toolbtn, $main::btn{CALCULATE});
+my @bevel;
+sub bevelled {
+    my $w = shift;
+    for my $c ($w->children) {
+        my $class = eval { $c->class } || '';
+        if ($class =~ /^(Button|Menubutton|Scrollbar|Entry)\z/) {
+            my $rel = eval { $c->cget('-relief') } // '';
+            push @bevel, "$class $rel" if $rel ne 'flat';
+        }
+        bevelled($c);
+    }
+}
+bevelled($main::mw);
+is('flat: fields, menus and scrollbars have no bevel', !@bevel, join('; ', @bevel));
+sub walk {
+    my $w = shift;
+    return () unless $w;
+    return $w, map { walk($_) } $w->children;
+}
 is('SELECT is the tool, and it is the highlight',
    $main::tool eq 'SELECT' && $main::toolbtn{SELECT}->cget('-bg') eq '#1F5FBF');
 is('CALCULATE waits for VALIDATE', $main::btn{CALCULATE}->cget('-fg') eq '#A3AAB4');
@@ -94,6 +113,13 @@ is('the pipe flow is drawn', (grep { /LPM/ } @results) >= 1);
 is('example 02 opens', main::open_path('examples/02_full_network.phc', 1));
 $main::mw->update;
 is('a pump is drawn as a pump', $main::canvas->find('withtag', 'pump') >= 1);
+my ($title_e) = grep { eval { $_->class eq 'Entry' && $_->get =~ /COMBINED SPRINKLER/ } } walk($main::card);
+is('the title fits in its field', $title_e && $title_e->fontMeasure($title_e->cget('-font'), $title_e->get) <= $title_e->width - 8,
+   $title_e ? $title_e->width . ' px for ' . length($title_e->get) . ' letters' : 'no title field');
+$main::mw->update;
+my @sr = @{ $main::card_cv->cget('-scrollregion') };
+is('the card scrolls as far as its last line',
+   $sr[3] >= $main::card->reqheight - 2, "@sr against " . $main::card->reqheight);
 is('a device is named on its pipe', $main::canvas->find('withtag', 'device') >= 1);
 
 my $out = "$TMP/drawn.phc";
