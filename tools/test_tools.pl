@@ -255,5 +255,97 @@ print "5. REFUSED - each problem names its field\n";
     refused('a negative roughness', HardyCross::Tools::loss(type => 'ASAM', size => 50, flow => 100, eps => -1), 'EPS', qr/CANNOT BE NEGATIVE/);
 }
 
+#==============================================================================
+print "8. ORIFICE PLATE - the same sum as OPP and OFD\n";
+#==============================================================================
+{
+    # Written out here, not taken from the engine: the net loss is the
+    # tapping differential times the ISO 5167 permanent-loss ratio.
+    #   differential = 633.28 (0.596/Cd)^2 (Q^2/d^4) (1-b^4)    kPa, L/min, mm
+    #   R = [s - Cd b^2] / [s + Cd b^2],  s = sqrt(1 - b^4 (1 - Cd^2))
+    # OPP finds d by bisection because the loss falls as the bore grows, then
+    # rounds to the step by int(d/step + 0.5) * step.
+    my $hand_dp = sub {
+        my ($q, $d, $D, $cd) = @_;
+        $cd //= 0.596;
+        return 0 if $d <= 0 || $q <= 0;
+        my $beta = $d / $D < 0.99999 ? $d / $D : 0.99999;
+        my $b4 = $beta ** 4;
+        my $inside = 1 - $b4 * (1 - $cd ** 2);
+        $inside = 1e-12 if $inside < 1e-12;
+        my $s = sqrt($inside);
+        my $den = $s + $cd * $beta ** 2;
+        my $R = $den == 0 ? 0 : ($s - $cd * $beta ** 2) / $den;
+        $R = 0 if $R < 0;
+        return 633.28 * (0.596 / $cd) ** 2 * $q ** 2 / $d ** 4 * (1 - $b4) * $R;
+    };
+    my $hand_size = sub {
+        my ($q, $target, $D, $cd) = @_;
+        return 0 if $q <= 1e-6 || $target <= 1e-9 || $D <= 1e-9;
+        my ($lo, $hi) = (0.001 * $D, 0.9995 * $D);
+        return $hi if $hand_dp->($q, $hi, $D, $cd) > $target;
+        return $lo if $hand_dp->($q, $lo, $D, $cd) < $target;
+        for (1 .. 200) {
+            my $mid = 0.5 * ($lo + $hi);
+            if ($hand_dp->($q, $mid, $D, $cd) > $target) { $lo = $mid } else { $hi = $mid }
+            last if $hi - $lo < 1e-9 * $D;
+        }
+        return 0.5 * ($lo + $hi);
+    };
+    my $round = sub { my ($bore, $step) = @_; $step > 0 ? int($bore / $step + 0.5) * $step : $bore };
+    my ($q, $D, $drop, $cd) = (500, 60, 150, 0.7826);
+    my $exact = $hand_size->($q, $drop, $D, $cd);
+    my $bore = $round->($exact, 0.5);
+    my $r = HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => $cd);
+    is('SIZE: the bore before rounding is the bisection, and 0.5 mm is the default step',
+       $r->{ok} && abs($r->{bore_exact} - $exact) < 1e-6 && abs($r->{bore} - $bore) < 1e-9 && $r->{step} == 0.5,
+       $r->{ok} ? "exact $r->{bore_exact} bore $r->{bore}" : $r->{errors}[0][1]);
+    is('   the net loss at that bore is the formula, and the unrounded bore meets the drop',
+       abs($r->{drop} - $hand_dp->($q, $bore, $D, $cd)) < 1e-6 && abs($r->{drop_exact} - $drop) < 1e-4);
+    is('   the ratio times the tapping differential is the net loss',
+       $r->{ratio} > 0 && abs($r->{differential} * $r->{ratio} - $r->{drop}) < 1e-6
+       && abs($r->{beta} - $bore / $D) < 1e-9);
+    my $plain = HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop);
+    my $named = HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => 0.596);
+    is('a blank CD is 0.596', $plain->{cd_default} && abs($plain->{bore} - $named->{bore}) < 1e-9 && !$named->{cd_default});
+    my $hi = HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => $cd);
+    is('a higher CD needs a smaller bore for the same drop', $hi->{bore_exact} < $plain->{bore_exact});
+    is('step 0 does not round',
+       abs(HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => $cd, step => 0)->{bore} - $exact) < 1e-6);
+    is('a step of 1 mm rounds the way an OPP plate does',
+       abs(HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => $cd, step_default => 1)->{bore}
+          - $round->($exact, 1)) < 1e-9);
+    my $dn = HardyCross::PipeData::bore('ASAM', 50);
+    $r = HardyCross::Tools::plate(mode => 'SIZE', type => 'ASAM', size => 50, flow => 500, drop => 100);
+    is('ASAM DN50: the pipe bore is the database\'s', $r->{ok} && $r->{pipedia} == $dn, $r->{pipedia});
+    my $uu = HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D / 25.4, flow => $q / 60, drop => $drop / 100,
+                                      cd => $cd, units => { FLOW => 'LPS', PRESSURE => 'BAR', SIZE => 'IN' });
+    is('the same plate typed in L/s, bar and inches',
+       $uu->{ok} && abs($uu->{bore} - $bore) < 1e-6 && abs($uu->{q} - $q) < 1e-6 && abs($uu->{target} - $drop) < 1e-6);
+    my $min = $hand_dp->($q, 0.9995 * $D, $D, 0.596);
+    is('a drop smaller than the largest bore can give is said so',
+       HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $min / 2)->{limit} eq 'WIDE');
+    my $max = $hand_dp->($q, 0.001 * $D, $D, 0.596);
+    is('a drop larger than a very small bore gives is said so',
+       HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $max * 2)->{limit} eq 'TIGHT');
+    my $ofd = HardyCross::Tools::plate(mode => 'DROP', type => 'BORE', size => $D, flow => $q, bore => 38.5, cd => 0.596);
+    is('DROP: 38.5 mm in a 60 mm pipe at 500 L/min is the formula\'s net loss',
+       $ofd->{ok} && abs($ofd->{drop} - $hand_dp->($q, 38.5, $D, 0.596)) < 1e-6
+       && abs($ofd->{velocity} - ($q / 60000) / ($PI * (38.5 / 1000) ** 2 / 4)) < 1e-9);
+    is('CD 1 is allowed', HardyCross::Tools::plate(mode => 'DROP', type => 'BORE', size => $D, flow => $q, bore => 30, cd => 1)->{ok});
+    refused('CD above 1', HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => 1.2),
+            'CD', qr/NOT MORE THAN 1/);
+    refused('CD of 0', HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, cd => 0),
+            'CD', qr/MORE THAN 0/);
+    refused('a plate bore as large as the pipe',
+            HardyCross::Tools::plate(mode => 'DROP', type => 'BORE', size => $D, flow => $q, bore => $D),
+            'BORE', qr/SMALLER THAN THE PIPE/);
+    refused('SIZE with no drop', HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => ''),
+            'DROP', qr/DROP IS NEEDED/);
+    refused('a negative bore step',
+            HardyCross::Tools::plate(mode => 'SIZE', type => 'BORE', size => $D, flow => $q, drop => $drop, step => -1),
+            'STEP', qr/CANNOT BE NEGATIVE/);
+}
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);

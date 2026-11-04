@@ -18,11 +18,24 @@ number changes; example 04's MAXITER raised from 20000 to 30000, because the
 2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
 changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).  Open as an experiment, not a release: a drawn
-network (`phcp_flow.pl`, `HardyCross/Flow.pm`) on branch
-`cursor/flow-canvas-c398`.  It saves ordinary `.phc`.  The text editor and
-the engine are unchanged.  The window has been run on Linux under Xvfb; it
-has not been run on Windows, and `build_windows.bat` does not package it.
+(`release_notes/v1.2.0.md`).  A second window, `phcp_sheet.pl`, is a
+spreadsheet on the same engine: SYSTEM, NODES, SUPPLIES and PRESSURE
+DEVICES, with the existing PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs.
+The text editor is not changed.  `HardyCross/Sheet.pm` holds the grids and
+has no Tk in it.  Open: the isometric drawing (`phcp_isometric.pl`, a fork
+of the text editor; `phcp_editor.pl` is unchanged).  The network is drawn on
+a 30-degree grid and written as `.phc`.  A pipe is two clicks, or a known
+length, size, fittings and C with the click choosing the direction.  No
+solved number changes.  Written for Perl 5.44; the same source runs on the
+5.38 and 5.42 the tests and the Windows build use.  Also open, as an
+experiment rather than a release: a drawn network (`phcp_flow.pl`,
+`HardyCross/Flow.pm`).  It saves ordinary `.phc`.  The text editor and the
+engine are unchanged.  The window has been run on Linux under Xvfb; it has
+not been run on Windows, and `build_windows.bat` does not package it.  Also
+open: a pyRevit extension for Revit 2022 to 2027 (`revit/`,
+`revit/REVIT.md`).  It walks a model and calls the engine; it changes no
+engine file and no solved number.  The walk and the `.phc` it writes are
+checked by `tools/test_revit.py`.  It has not been run inside Revit.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -529,4 +542,9 @@ with Tk 804.036.  Not run on Windows.
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
-- [x] Experiment - a drawn network (`phcp_flow.pl`): ordinary `.phc`, the text editor and the engine unchanged.  Run on Linux (Tk 804.036, the window under Xvfb).  Not run on Windows.  Branch `cursor/flow-canvas-c398`
+- [x] Spreadsheet window: `phcp_sheet.pl` and `HardyCross/Sheet.pm`, a second front end.  The text editor, `phcp_editor.pl`, is unchanged
+- [x] Isometric drawing: `phcp_isometric.pl` forks the text editor (the editor file is unchanged), draws the network on a 30-degree grid and writes the `.phc`. A pipe is two clicks, or a known length, size, fittings and C with the click choosing the direction. `tools/test_isometric.pl`, `tools/test_isometric_window.pl`
+- [x] Experiment - a drawn network (`phcp_flow.pl`): ordinary `.phc`, the text editor and the engine unchanged.  Run on Linux (Tk 804.036, the window under Xvfb).  Not run on Windows.
+- [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
+- [x] Revit: outlets, devices (booster, loss, reducing valve, orifice, ratio valve), renumber copies, colour key, select failures, pipe tags, apply a suggested DN. No engine change.
+- [ ] Revit extension run inside Revit 2022 to 2027

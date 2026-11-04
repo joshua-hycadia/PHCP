@@ -307,6 +307,21 @@ sub build_validation {
     fill_validation();
 }
 
+# restyle_validation -- the VALIDATION cells keep the colours they were built
+# with.  A theme change has to build them again, or the table stays white
+# on a dark window.  The other tables are rebuilt by fill_results.
+sub restyle_validation {
+    return unless $vtable;
+    my $h = $vtable->{hlist};
+    my $st = styles($h, wrap => 620);
+    $vtable->{styles} = $st;
+    my @heads = ('WHERE', 'FIELD', 'WHAT IS WRONG', 'WHY');
+    for my $i (0 .. 3) {
+        $h->header('configure', $i, -text => $heads[$i], -style => $st->{headw}, -headerbackground => $C{panel});
+    }
+    fill_validation();
+}
+
 # fill_validation -- the VALIDATION table from the last VALIDATE.
 sub fill_validation {
     return unless $vtable;
