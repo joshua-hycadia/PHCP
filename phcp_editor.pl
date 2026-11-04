@@ -90,38 +90,37 @@ use File::Spec;
 #------------------------------------------------------------------------------
 # Colours.
 #
-# The light window is white and matte: white paper, a very light grey for
-# panels, one-pixel grey rules in place of bevels.  Blue and black are the
-# highlight colours - command words, the current field, the active tab, the
-# CALCULATE button, the selection - and red marks what is wrong.  Every
-# colour is named once here.  Dark mode is the same roles in a dark palette.
-# %C is the palette on screen.  The light hexes are the ones the window has
-# always used; dark mode does not redraw the light window in new colours.
+# The same flat palette as the spreadsheet: white paper, a grey band for the
+# toolbar and the headings, one blue, and a soft shadow under a bar.  Blue
+# marks a command word, the current field, the active tab and CALCULATE; red
+# marks what is wrong.  Every colour is named once here.  Dark mode is the
+# same roles in the spreadsheet's dark palette.  %C is the palette on screen.
 # EDITOR_THEME remembers the choice.  The spreadsheet uses SHEET_THEME, so
 # the two windows do not follow each other.
 #------------------------------------------------------------------------------
 our %THEME_LIGHT = (
     paper      => '#FFFFFF',     # editor, tables, form fields
-    panel      => '#F6F7F9',     # toolbar, status bar, table headings
-    line       => '#DDE1E6',     # one-pixel rules and field outlines
-    hover      => '#EEF1F5',     # a button or heading under the pointer
-    ink        => '#111111',     # text
-    muted      => '#6B7280',     # labels, inactive tabs, comments
-    faint      => '#A3AAB4',     # line numbers, disabled text
-    accent     => '#1F5FBF',     # the highlight blue
-    accent_dk  => '#184C99',     # the highlight blue, pressed
-    accent_bg  => '#E8F0FC',     # a pale blue behind a highlight
-    select     => '#D3E3FA',     # selection
-    curline    => '#F5F8FD',     # the cursor's line
-    number     => '#0B4F9C',     # numbers in the editor
-    error      => '#C62828',     # what is wrong
-    error_bg   => '#FDEEEE',     # behind a line in error
-    fault_bg   => '#F9D4D4',     # behind the field validation found at fault
+    panel      => '#F4F6F9',     # toolbar, status bar, headings, line numbers
+    line       => '#E2E6EE',     # hairlines and field outlines
+    hover      => '#E8F0FA',     # a button or a row under the pointer
+    ink        => '#1C1F24',     # text
+    muted      => '#5C6570',     # labels, inactive tabs, comments
+    faint      => '#8A929E',     # line numbers, disabled text
+    accent     => '#1967D2',     # the highlight blue
+    accent_dk  => '#1558B0',     # the highlight blue, pressed
+    accent_bg  => '#E8F0FE',     # a pale blue behind a highlight
+    select     => '#D3E3FD',     # selection
+    curline    => '#EEF2F7',     # the cursor's line
+    number     => '#185ABC',     # numbers in the editor
+    error      => '#C5221F',     # what is wrong
+    error_bg   => '#FCE8E6',     # behind a line in error
+    fault_bg   => '#F6D4D2',     # behind the field validation found at fault
     warn       => '#8A5A00',     # a warning
-    proposal   => '#9AA5B4',     # the greyed proposed line
+    proposal   => '#9AA0A6',     # the greyed proposed line
     sash       => '#E4E7EB',     # the dividers between panes, wide enough to grab
-    scroll     => '#CDD2D9',     # the scrollbar thumb
-    scroll_on  => '#B4BBC5',     # the scrollbar thumb under the pointer
+    scroll     => '#C5CDD8',     # the scrollbar thumb
+    scroll_on  => '#A8B2C0',     # the scrollbar thumb under the pointer
+    shadow     => '#D5DBE3',     # the soft edge under a bar
 );
 our %THEME_DARK = (
     paper      => '#1F232B',
@@ -145,6 +144,7 @@ our %THEME_DARK = (
     sash       => '#2A303A',
     scroll     => '#555E6E',
     scroll_on  => '#6A7486',
+    shadow     => '#14171C',
 );
 our $theme = 'light';
 our %C = %THEME_LIGHT;
@@ -157,17 +157,21 @@ our $view_menu;           # the VIEW menu, so its label can follow the palette
 # left_ptr there; Windows calls the same pointer "arrow".
 our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 
-# Fonts are chosen when the window is built, from what the machine has:
-# Consolas and Segoe UI on Windows, DejaVu on Linux.
+# Fonts are chosen when the window is built, the same way the spreadsheet
+# chooses them: Inter for the chrome and JetBrains Mono for the model, when
+# the machine has them.  Otherwise Segoe UI and Consolas on Windows, DejaVu
+# on a plain Linux install.
 our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S, $UI_S_N);
 sub pick_fonts {
     my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
-    my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
-    my ($ui)   = grep { $have{ lc $_ } } 'Segoe UI', 'DejaVu Sans', 'Liberation Sans', 'Helvetica Neue', 'Arial';
+    my ($mono) = grep { $have{ lc $_ } } 'JetBrains Mono', 'Cascadia Mono', 'Consolas',
+        'Roboto Mono', 'Source Code Pro', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
+    my ($ui) = grep { $have{ lc $_ } } 'Inter', 'Segoe UI', 'Roboto', 'Source Sans 3',
+        'Noto Sans', 'Cantarell', 'Liberation Sans', 'DejaVu Sans', 'Helvetica Neue', 'Arial';
     $mono //= 'Courier';
     $ui   //= 'Helvetica';
     ($MONO, $MONO_B, $MONO_I) = ([ $mono, 10 ], [ $mono, 10, 'bold' ], [ $mono, 10, 'italic' ]);
-    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ], [ $ui, 8 ]);
+    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 10 ], [ $ui, 10, 'bold' ], [ $ui, 9, 'bold' ], [ $ui, 9 ]);
 }
 
 #------------------------------------------------------------------------------
@@ -237,6 +241,9 @@ sub rule {
 }
 
 # flat_button -- a flat button.  The primary one (CALCULATE) is solid blue.
+# A filled button has no second edge: the outline is the same blue as the
+# face.  The others sit on the grey bar as a white chip with a hairline,
+# the same chips as the spreadsheet's toolbar.
 sub flat_button {
     my ($parent, $text, $cmd, %o) = @_;
     my $p = $o{primary};
@@ -246,7 +253,7 @@ sub flat_button {
         -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
         -activebackground => $p ? $C{accent_dk} : $C{hover},
         -activeforeground => $p ? '#FFFFFF' : $C{ink},
-        -disabledforeground => $C{faint}, -padx => px(14), -pady => px(5), -cursor => 'hand2');
+        -disabledforeground => $C{faint}, -padx => px(16), -pady => px(6), -cursor => 'hand2');
 }
 
 #------------------------------------------------------------------------------
@@ -264,10 +271,14 @@ sub make_tabs {
     for my $n (@$names) {
         my $f = $t->{bar}->Frame(-background => $C{paper})->pack(-side => 'left');
         my $l = $f->Label(-text => $n, -font => $UI_B, -background => $C{paper}, -foreground => $C{muted},
-                          -padx => px(14), -pady => px(7), -cursor => 'hand2')->pack(-side => 'top');
-        my $u = $f->Frame(-height => px(2), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
+                          -padx => px(14), -pady => px(8), -cursor => 'hand2')->pack(-side => 'top');
+        my $u = $f->Frame(-height => px(3), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
         $t->{label}{$n} = [ $l, $u ];
         $l->bind('<ButtonRelease-1>' => sub { select_tab($t, $n) });
+        $l->bind('<Enter>' => sub { $l->configure(-foreground => $C{ink}) });
+        $l->bind('<Leave>' => sub {
+            $l->configure(-foreground => ($t->{current} // '') eq $n ? $C{ink} : $C{muted});
+        });
         $t->{page}{$n} = $body->Frame(-background => $C{paper});
     }
     select_tab($t, $names->[0]);
@@ -592,7 +603,9 @@ sub build_toolbar {
     $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
     $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
     $btn{THEME} = flat_button($in, 'DARK MODE', sub { toggle_theme() })->pack(-side => 'right', -padx => px([0, 8]));
-    rule($mw, 'x', -side => 'top');
+    # A soft edge, not a hard rule: the bar sits a step above the page,
+    # as it does on the spreadsheet.
+    $mw->Frame(-background => $C{shadow}, -height => 1)->pack(-side => 'top', -fill => 'x');
 }
 
 #------------------------------------------------------------------------------
@@ -608,7 +621,7 @@ sub build_network {
 
     # The status bar, under the editor.
     my $sb = $left->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
-    rule($sb, 'x', -side => 'top');
+    $sb->Frame(-background => $C{shadow}, -height => 1)->pack(-side => 'top', -fill => 'x');
     $statusbar = $sb->Text(-height => 1, -wrap => 'none', -font => $MONO, -background => $C{panel},
         -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(14), -pady => px(6),
         -state => 'disabled', -cursor => $POINTER, -takefocus => 0)->pack(-fill => 'x');
@@ -654,7 +667,7 @@ sub build_network {
     # The three lists.
     for my $name (qw(ERRORS WARNINGS NODES)) {
         my $f = $right->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
-        $list_head{$name} = $f->Label(-text => $name, -font => $UI_S, -anchor => 'w', -background => $C{paper},
+        $list_head{$name} = $f->Label(-text => $name, -font => $UI_S, -anchor => 'w', -background => $C{panel},
             -foreground => $C{muted}, -padx => px(14), -pady => px(8))->pack(-side => 'top', -fill => 'x');
         $list{$name} = $f->Listbox(-height => 5, -font => $MONO, -background => $C{paper},
             -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
@@ -1010,7 +1023,11 @@ sub state_text { return $pill->cget(-text) }
 #==============================================================================
 sub build_strip {
     my $parent = shift;
-    $strip = $parent->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(8), -pady => px(6));
+    # The commands sit on the same grey band as the toolbar, edge to edge,
+    # with a soft edge under them.  A command is blue; the pointer washes
+    # it pale blue.
+    my $band = $parent->Frame(-background => $C{panel})->pack(-side => 'top', -fill => 'x');
+    $strip = $band->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(8), -pady => px(6));
     my @groups = @HardyCross::Phc::COMMAND_GROUPS[1 .. $#HardyCross::Phc::COMMAND_GROUPS];
     my $first = 1;
     for my $group (@groups) {
@@ -1018,15 +1035,15 @@ sub build_strip {
             unless $first;
         $first = 0;
         for my $cmd (@$group) {
-            my $l = $strip->Label(-text => $cmd, -font => $MONO_B, -background => $C{paper},
+            my $l = $strip->Label(-text => $cmd, -font => $MONO_B, -background => $C{panel},
                                   -foreground => $C{accent}, -padx => px(6), -pady => px(3), -cursor => 'hand2')
                           ->pack(-side => 'left');
             $l->bind('<Enter>' => sub { $l->configure(-background => $C{accent_bg}) });
-            $l->bind('<Leave>' => sub { $l->configure(-background => $C{paper}) });
+            $l->bind('<Leave>' => sub { $l->configure(-background => $C{panel}) });
             $l->bind('<ButtonRelease-1>' => sub { start_command($cmd) });
         }
     }
-    rule($parent, 'x', -side => 'top');
+    $parent->Frame(-background => $C{shadow}, -height => 1)->pack(-side => 'top', -fill => 'x');
 }
 
 # start_command -- begin a line with a command, ready for its first field.

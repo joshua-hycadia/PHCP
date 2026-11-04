@@ -106,9 +106,26 @@ my ($model_i) = grep { $menubar->entrycget($_, -label) eq 'MODEL' } @casc;
 my $mm = $menubar->entrycget($model_i, -menu);
 my @mi = map { $mm->entrycget($_, -label) } grep { $mm->type($_) eq 'command' } 0 .. $mm->index('end');
 is('MODEL: VALIDATE, then CALCULATE', "@mi" eq 'VALIDATE CALCULATE', "@mi");
-is('white paper and black ink in the editor',
-   lc $main::ed->cget(-background) eq '#ffffff' && lc $main::ed->cget(-foreground) eq '#111111');
+is('white paper and the spreadsheet ink in the editor',
+   lc $main::ed->cget(-background) eq '#ffffff' && lc $main::ed->cget(-foreground) eq '#1c1f24');
 is('the window itself is white, not blue', lc $main::mw->cget(-background) eq '#ffffff');
+{
+    my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
+    # cget(-font) is a font object.  fontActual names the face it resolved to.
+    my $mono = lc $main::mw->fontActual($main::ed->cget(-font), '-family');
+    my $ui = lc $main::mw->fontActual($main::btn{NEW}->cget(-font), '-family');
+    my $bar = $main::btn{NEW}->parent->parent;
+    my @edge = grep { eval { $_->isa('Tk::Frame') && ($_->cget(-height) // 0) == 1
+        && lc $_->cget(-background) eq '#d5dbe3' } } $main::mw->children;
+    is('the editor wears the spreadsheet look: grey bar, soft edge, Inter and JetBrains Mono',
+       lc $bar->cget(-background) eq '#f4f6f9'
+       && @edge
+       && lc $main::list_head{ERRORS}->cget(-background) eq '#f4f6f9'
+       && lc $main::strip->cget(-background) eq '#f4f6f9'
+       && (!$have{'jetbrains mono'} || $mono =~ /jetbrains mono/)
+       && (!$have{inter} || $ui =~ /inter/),
+       "bar " . $bar->cget(-background) . " edges @edge mono $mono ui $ui");
+}
 {
     my @sizes = sort { $a <=> $b } map { $_->width } grep { $_->isa('Tk::Photo') } $main::mw->imageNames;
     is('the PHCP icon is set, at 16, 32 and 48 pixels', "@sizes" =~ /\b16 32 48\b/, "photos: @sizes");
@@ -879,9 +896,9 @@ print "16. DARK MODE\n";
        $main::theme eq 'light'
        && lc $main::mw->cget('-background') eq $paper
        && lc $main::ed->cget('-background') eq '#ffffff'
-       && lc $main::ed->cget('-foreground') eq '#111111'
-       && lc $main::ed->tagCget('command', '-foreground') eq '#1f5fbf'
-       && lc $sb->cget('-background') eq '#cdd2d9'
+       && lc $main::ed->cget('-foreground') eq '#1c1f24'
+       && lc $main::ed->tagCget('command', '-foreground') eq '#1967d2'
+       && lc $sb->cget('-background') eq '#c5cdd8'
        && $main::btn{THEME}->cget('-text') eq 'DARK MODE'
        && (HardyCross::Settings::get('EDITOR_THEME') // '') eq 'LIGHT');
     # A fresh process, the way the editor is actually opened: the widgets are

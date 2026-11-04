@@ -49,8 +49,8 @@
 # The flat buttons, tabs and colours below belong to this window: a white
 # sheet, a grey band for the toolbar and the column headings, a shadow
 # under the bar, and a stripe on alternate rows.  Inter and JetBrains Mono
-# are used when the machine has them.  The editor is not opened and is
-# not edited.
+# are used when the machine has them, the same faces and the same palette
+# as the text editor.  This file does not open the editor.
 #==============================================================================
 use strict;
 use warnings;
@@ -80,10 +80,10 @@ use HardyCross::Window::Database;
 use HardyCross::Window::Results;
 
 #------------------------------------------------------------------------------
-# Colours and type.  The sheet has its own flat palette: a white surface, a
-# grey header band, one blue, and a shadow line under the toolbar.  It is not
-# the editor's palette, and the editor is not changed by it.  DARK MODE swaps
-# in the second palette.  %C is the one on screen.
+# Colours and type.  The same flat palette as the text editor: a white
+# surface, a grey header band, one blue, and a shadow line under the toolbar.
+# DARK MODE swaps in the second palette.  %C is the one on screen.  Each
+# window remembers its own choice.
 # The two hashes stay as they were defined, so a toggle can map every colour
 # a widget was given back to the other palette.  scroll is the scrollbar
 # thumb.  shadow is the soft edge under a bar.
@@ -165,8 +165,8 @@ sub dpi_aware {
 
 sub pick_fonts {
     # Inter for the chrome and JetBrains Mono for the grid, when the machine
-    # has them.  Otherwise the same faces the editor would pick: Segoe UI and
-    # Consolas on Windows, DejaVu on a plain Linux install.  The grid stays
+    # has them.  Otherwise Segoe UI and Consolas on Windows, DejaVu on a plain
+    # Linux install: the same list the text editor uses.  The grid stays
     # monospace so a column of figures lines up.
     my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
     my ($mono) = grep { $have{ lc $_ } } 'JetBrains Mono', 'Cascadia Mono', 'Consolas',

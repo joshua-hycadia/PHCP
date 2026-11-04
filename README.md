@@ -372,13 +372,15 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 ```
 
-A white, flat window: one-pixel grey rules instead of bevels, blue and
-black used only to highlight, red for what is wrong.  Monospace for the
-model and the results, a plain sans-serif for the window's own labels, and
-everything in capitals.  VIEW, and DARK MODE on the toolbar, switches the
-whole window to a dark palette.  The choice is remembered as EDITOR_THEME
-in this machine's settings file.  The spreadsheet keeps its own choice,
-SHEET_THEME, and the two windows do not follow each other.
+The same look as the spreadsheet: a white page, a grey toolbar and heading
+band, a shadow under the bar, white chips for the buttons, and one blue.
+Red is what is wrong.  Inter is used for the chrome and JetBrains Mono for
+the model, the command strip and the results when those faces are installed.
+Labels and buttons are in capitals.  VIEW, and DARK MODE on the toolbar,
+switches the whole window to the spreadsheet's dark palette.  The choice is
+remembered as EDITOR_THEME in this machine's settings file.  The spreadsheet
+keeps its own choice, SHEET_THEME, and the two windows do not follow each
+other.
 
 **The editor holds the network only.**  The title, project details, units,
 method and options are set in the PROJECT tab.  The `.phc` file still holds
@@ -470,11 +472,10 @@ second window, the spreadsheet below, is another way in to the same engine.
 A white sheet: a grey toolbar and header band, a shadow under the bar,
 alternate rows a step off white, and the row under the pointer shaded.
 Inter is used for the chrome and JetBrains Mono for the grid when those
-faces are installed.  The same PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE,
-DATABASE and results tabs.  Those tabs are the editor's files under
-`HardyCross/Window/`; this program does not change them, and it does not
-change `phcp_editor.pl`.  What is different is the network: four grids
-instead of the command lines.
+faces are installed, the same faces and the same palette as the text editor.
+The same PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE, DATABASE and results
+tabs.  Those tabs are the files under `HardyCross/Window/`.  What is
+different is the network: four grids instead of the command lines.
 
 | tab | rows |
 |---|---|
