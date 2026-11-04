@@ -7,11 +7,14 @@
 # HardyCross/Isometric.pm -- an isometric drawing of a network.
 #
 # WHAT THIS IS
-#   The other way to enter a calculation.  The NETWORK tab is the model typed
-#   as commands.  The ISOMETRIC tab is the same model drawn: nodes on a
-#   30-degree grid, pipes along the grid axes, the elevation on the vertical
-#   axis.  Drawing writes .phc.  Nothing here solves, sizes or checks; the
-#   reader and the solver do, on the text this writes.
+#   The other way to enter a calculation, used by phcp_isometric.pl.  The
+#   text editor types the model as commands.  This draws the same model:
+#   nodes on a 30-degree grid, pipes along the grid axes, the elevation on
+#   the vertical axis.  A pipe is two clicks, and the length is the grid
+#   distance, or a length (and a size, fittings and C) typed first, and the
+#   click only chooses the direction.  Drawing writes .phc.  Nothing here
+#   solves, sizes or checks; the reader and the solver do, on the text this
+#   writes.
 #
 #   The drawing is a view, not a second model.  A length and an elevation
 #   stay as they were typed until a point is moved; the move then sets them
@@ -448,9 +451,30 @@ sub emit {
 #------------------------------------------------------------------------------
 # The picture.  project and cell_at are inverses: a grid point drawn and
 # picked again is the same point.  hit is what a click lands on.
+#
+# LOCK uses a whole-pixel step on each axis.  A floating cos(30) makes a long
+# pipe's slope drift off the grid's, so the pipe looks bent beside the grid.
+# The same integer step for every pipe on an axis keeps them parallel and
+# straight.  Unlocked, the true 30 degrees is used, and a pipe is the one
+# straight line between its ends even when that line is on no axis.
 #------------------------------------------------------------------------------
+sub _basis {
+    my $view = shift;
+    return unless $view && $view->{lock};
+    my $s = $view->{scale} || 1;
+    my $dx = int($s * $COS30 + 0.5); $dx = 1 if $dx < 1;
+    my $dy = int($s * $SIN30 + 0.5); $dy = 1 if $dy < 1;
+    my $dz = int($s + 0.5);          $dz = 1 if $dz < 1;
+    return ($dx, $dy, $dz);
+}
+
 sub project {
     my ($ix, $iy, $iz, $view) = @_;
+    my ($dx, $dy, $dz) = _basis($view);
+    if ($dx) {
+        return ($view->{ox} + ($ix - $iy) * $dx,
+                $view->{oy} + ($ix + $iy) * $dy - $iz * $dz);
+    }
     my $s = $view->{scale};
     my $sx = $view->{ox} + ($ix - $iy) * $s * $COS30;
     my $sy = $view->{oy} + ($ix + $iy) * $s * $SIN30 - $iz * $s;
@@ -460,10 +484,29 @@ sub project {
 sub cell_at {
     my ($sx, $sy, $view, $iz) = @_;
     $iz = 0 unless defined $iz;
-    my $s = $view->{scale} || 1;
-    my $u = ($sx - $view->{ox}) / ($s * $COS30);
-    my $v = ($sy - $view->{oy} + $iz * $s) / ($s * $SIN30);
+    my ($dx, $dy, $dz) = _basis($view);
+    my ($u, $v);
+    if ($dx) {
+        $u = ($sx - $view->{ox}) / $dx;
+        $v = ($sy - $view->{oy} + $iz * $dz) / $dy;
+    } else {
+        my $s = $view->{scale} || 1;
+        $u = ($sx - $view->{ox}) / ($s * $COS30);
+        $v = ($sy - $view->{oy} + $iz * $s) / ($s * $SIN30);
+    }
     return (iround(($u + $v) / 2), iround(($v - $u) / 2), $iz);
+}
+
+# axis_run -- the corners of a pipe drawn only along the grid axes, X then Y
+# then Z.  A pipe already on one axis is just its two ends.  Each leg changes
+# one coordinate, so each leg is straight on the isometric.
+sub axis_run {
+    my ($ax, $ay, $az, $bx, $by, $bz) = @_;
+    my @p = ([$ax, $ay, $az]);
+    if (abs($bx - $ax) > 1e-9) { $ax = $bx; push @p, [ $ax, $ay, $az ] }
+    if (abs($by - $ay) > 1e-9) { $ay = $by; push @p, [ $ax, $ay, $az ] }
+    if (abs($bz - $az) > 1e-6) { $az = $bz; push @p, [ $ax, $ay, $az ] }
+    return @p;
 }
 
 sub hit {
@@ -483,10 +526,17 @@ sub hit {
     for my $p (@{ $d->{pipes} }, map { { name => $_->{name}, start => $_->{in}, end => $_->{out}, pump => 1 } } @{ $d->{pumps} }) {
         my ($a, $b) = ($d->{nodes}{ $p->{start} }, $d->{nodes}{ $p->{end} });
         next unless $a && $b && defined $a->{ix} && defined $b->{ix};
-        my ($x1, $y1) = project($a->{ix}, $a->{iy}, $a->{iz}, $view);
-        my ($x2, $y2) = project($b->{ix}, $b->{iy}, $b->{iz}, $view);
-        my $dist = seg_dist($sx, $sy, $x1, $y1, $x2, $y2);
-        next if $dist > $pipe_r;
+        my @run = $view->{lock}
+            ? axis_run($a->{ix}, $a->{iy}, $a->{iz}, $b->{ix}, $b->{iy}, $b->{iz})
+            : ([$a->{ix}, $a->{iy}, $a->{iz}], [$b->{ix}, $b->{iy}, $b->{iz}]);
+        my $dist;
+        for my $i (0 .. $#run - 1) {
+            my ($x1, $y1) = project(@{ $run[$i] }, $view);
+            my ($x2, $y2) = project(@{ $run[$i + 1] }, $view);
+            my $d = seg_dist($sx, $sy, $x1, $y1, $x2, $y2);
+            $dist = $d if !defined $dist || $d < $dist;
+        }
+        next unless defined $dist && $dist <= $pipe_r;
         if (!defined $bestd || $dist < $bestd) {
             $bestd = $dist;
             $best = { kind => $p->{pump} ? 'pump' : 'pipe', name => $p->{name} };
@@ -517,6 +567,62 @@ sub snap_axis {
     if ($ax >= $ay && $ax >= $az) { return (iround($ix), $node->{iy}, $node->{iz}) }
     if ($ay >= $ax && $ay >= $az) { return ($node->{ix}, iround($iy), $node->{iz}) }
     return ($node->{ix}, $node->{iy}, $iz);
+}
+
+# steps_for_length -- how many grid steps a typed length is.
+# Blank is undef: the click chooses the cell, and the length follows it.
+# A length that is not a length is undef as well; known_ok says which.
+# Zero stays zero (a device, not a point stacked on its start).  Anything
+# shorter than half a step is still one step, so the two ends do not sit
+# on top of each other; the typed length is what gets stored.
+sub steps_for_length {
+    my ($d, $token) = @_;
+    return undef if !defined $token || $token !~ /\S/;
+    my $m = HardyCross::Phc::length_metres($token, $d->{units}{LENGTH});
+    return undef unless defined $m && $m >= 0;
+    return 0 if $m == 0;
+    my $steps = iround($m / ($d->{grid} || 1));
+    return $steps < 1 ? 1 : $steps;
+}
+
+# cell_along -- $steps from $node, on the one axis the click chose.
+# ($ix, $iy, $iz) is only the direction.  A click with no direction comes
+# back as the node's own cell, and the window asks for a click along an axis.
+sub cell_along {
+    my ($node, $ix, $iy, $iz, $steps) = @_;
+    my ($sx, $sy, $sz) = snap_axis($node, $ix, $iy, $iz);
+    my ($dx, $dy, $dz) = ($sx - $node->{ix}, $sy - $node->{iy}, $sz - $node->{iz});
+    $steps = iround($steps || 0);
+    $steps = 0 if $steps < 0;
+    if (abs($dx) >= 1e-9) {
+        return ($node->{ix} + ($dx > 0 ? $steps : -$steps), $node->{iy}, $node->{iz});
+    }
+    if (abs($dy) >= 1e-9) {
+        return ($node->{ix}, $node->{iy} + ($dy > 0 ? $steps : -$steps), $node->{iz});
+    }
+    if (abs($dz) > 1e-6) {
+        return ($node->{ix}, $node->{iy}, $node->{iz} + ($dz > 0 ? $steps : -$steps));
+    }
+    return ($node->{ix}, $node->{iy}, $node->{iz});
+}
+
+# known_ok -- a length, size and C typed ahead of the click, or a blank.
+# Blank means "use what the click, or the last pipe, would have used".
+sub known_ok {
+    my ($d, $known) = @_;
+    return '' unless $known && ref $known eq 'HASH';
+    if (defined $known->{len} && $known->{len} =~ /\S/) {
+        my $m = HardyCross::Phc::length_metres($known->{len}, $d->{units}{LENGTH});
+        return 'LENGTH IS NOT A LENGTH' unless defined $m;
+        return 'A LENGTH CANNOT BE NEGATIVE' if $m < 0;
+    }
+    if (defined $known->{size} && $known->{size} =~ /\S/) {
+        return 'SIZE IS NOT A NUMBER' unless HardyCross::Parse::is_num($known->{size}) && $known->{size} >= 0;
+    }
+    if (defined $known->{c} && $known->{c} =~ /\S/) {
+        return 'C IS NOT A NUMBER' unless HardyCross::Parse::is_num($known->{c}) && $known->{c} >= 0;
+    }
+    return '';
 }
 
 sub axis_aligned {
@@ -569,17 +675,34 @@ sub add_node {
     return ('', $name);
 }
 
+# $known, when given, is what was typed before the click: len, size, fits, c.
+# A blank field is the ordinary default (the grid distance, the office size,
+# no fittings, the previous pipe's C).  A filled field is stored as typed,
+# including a length that the grid had to round to whole steps.
 sub add_pipe {
-    my ($d, $start, $end) = @_;
+    my ($d, $start, $end, $known) = @_;
     my $err = ends_ok($d, $start, $end);
+    return $err if $err;
+    $err = known_ok($d, $known);
     return $err if $err;
     my ($a, $b) = ($d->{nodes}{$start}, $d->{nodes}{$end});
     return 'A PIPE RUNS ALONG ONE GRID AXIS' unless axis_aligned($a, $b);
+    $known ||= {};
     my $name = fresh_link($d, 'P');
     my $use = @{ $d->{pipes} } ? $d->{pipes}[-1] : { use_type => 'BORE', use_c => '120' };
-    my $p = { name => $name, start => $start, end => $end, size => ($d->{units}{SIZE} eq 'IN' ? '1' : '25'),
-              fits => [], use_type => $use->{use_type}, use_c => $use->{use_c} };
-    $p->{len} = metres_to_token($d, geom_metres($d, $p), 'LENGTH');
+    my $size = $d->{units}{SIZE} eq 'IN' ? '1' : '25';
+    $size = $known->{size} if defined $known->{size} && $known->{size} =~ /\S/;
+    my $fits = (defined $known->{fits} && $known->{fits} =~ /\S/)
+        ? [ grep { length } split /\s+/, $known->{fits} ] : [];
+    my $c = $use->{use_c};
+    $c = $known->{c} if defined $known->{c} && $known->{c} =~ /\S/;
+    my $p = { name => $name, start => $start, end => $end, size => $size,
+              fits => $fits, use_type => $use->{use_type}, use_c => $c };
+    if (defined $known->{len} && $known->{len} =~ /\S/) {
+        $p->{len} = $known->{len};
+    } else {
+        $p->{len} = metres_to_token($d, geom_metres($d, $p), 'LENGTH');
+    }
     push @{ $d->{pipes} }, $p;
     return ('', $name);
 }
@@ -737,6 +860,23 @@ sub set_pipe {
         my $m = HardyCross::Phc::length_metres($value, $d->{units}{LENGTH});
         return 'LENGTH IS NOT A LENGTH' unless defined $m;
         return 'A LENGTH CANNOT BE NEGATIVE' if $m < 0;
+        # An axis pipe's end slides so the picture matches the typed length.
+        # Zero is stored and the end stays: a device is not two stacked points.
+        # retouch would replace the typed token with the grid distance, so the
+        # token is put back after the move.  A length that is not a whole
+        # number of steps stays as typed.
+        my ($a, $b) = ($d->{nodes}{ $p->{start} }, $d->{nodes}{ $p->{end} });
+        if ($m > 0 && $a && $b && axis_aligned($a, $b)) {
+            my $steps = steps_for_length($d, $value);
+            my ($nx, $ny, $nz) = cell_along($a, $b->{ix}, $b->{iy}, $b->{iz}, $steps);
+            my $same = abs($nx - $b->{ix}) < 1e-9 && abs($ny - $b->{iy}) < 1e-9 && abs($nz - $b->{iz}) < 1e-6;
+            unless ($same) {
+                my $at = node_at($d, $nx, $ny, $nz);
+                return 'THAT POINT IS ALREADY USED' if $at && $at ne $p->{end};
+                my $move = move_node($d, $p->{end}, $nx, $ny, $nz);
+                return $move if $move;
+            }
+        }
         $p->{len} = $value;
         return '';
     }
@@ -761,6 +901,13 @@ sub set_pipe {
         if ($value eq '') { $p->{use_c} = undef; return '' }
         return 'C IS NOT A NUMBER' unless HardyCross::Parse::is_num($value) && $value >= 0;
         $p->{use_c} = $value;
+        return '';
+    }
+    if ($field eq 'EQV') {
+        if ($value eq '') { delete $p->{eqv}; return '' }
+        my $m = HardyCross::Phc::length_metres($value, $d->{units}{LENGTH});
+        return 'EQV IS NOT A LENGTH' unless defined $m && $m >= 0;
+        $p->{eqv} = $value;
         return '';
     }
     return 'NO SUCH FIELD';

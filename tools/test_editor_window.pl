@@ -116,8 +116,8 @@ my @strip = main::strip_commands();
 is('the command strip lists the 22 network commands (PUMPDUTY, AREA, SUPPLYGRAPH among them), no settings',
    @strip == 22 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' } @strip) == 2 && $strip[0] eq 'USE' && $strip[-1] eq 'SUPPLYGRAPH' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK, ISOMETRIC, PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK ISOMETRIC PROJECT GRAPH QUICK TOOLS DATABASE'
+is('NETWORK, PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
@@ -578,7 +578,7 @@ print "12. THE GRAPH TAB\n";
     main::select_tab($main::toptabs, 'GRAPH');
     $main::mw->update;
     is('a GRAPH tab, after PROJECT',
-       "@{ $main::toptabs->{names} }" =~ /^NETWORK ISOMETRIC PROJECT GRAPH / && $main::toptabs->{current} eq 'GRAPH');
+       "@{ $main::toptabs->{names} }" =~ /^NETWORK PROJECT GRAPH / && $main::toptabs->{current} eq 'GRAPH');
     main::graph_refresh();
     is('empty: the problems listed, PRINT TO PDF off, nothing drawn but a note',
        $G->{problems}->get(0) =~ /A, THE WATER SUPPLY, NEEDS AT LEAST TWO POINTS/
@@ -780,38 +780,6 @@ print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
     my $r2 = main::calculate();
     is('   the model still counts as validated, and calculates again unchanged',
        $r2->{ok} && main::buffer() eq join("\n", @b), main::buffer());
-}
-
-print "15. THE ISOMETRIC DRAWING\n";
-{
-    main::set_buffer('');
-    main::select_tab($main::toptabs, 'ISOMETRIC');
-    $main::mw->update;
-    main::iso_fit(1);
-    $main::mw->update;
-    is('the ISOMETRIC tab draws a grid', scalar $main::iso_cv->find('withtag', 'grid') > 0);
-    main::iso_set_tool('WATER');
-    my ($x, $y) = main::iso_widget_at(0, 0);
-    $main::iso_cv->focus;
-    $main::mw->update;
-    $main::iso_cv->eventGenerate('<ButtonPress-1>', -x => $x, -y => $y, -button => 1, -when => 'now');
-    $main::mw->update;
-    is('a click on the grid places a water supply in the network',
-       main::buffer() =~ /^WATER\s+W1\b/m && $x > 0 && $y > 0 && $x < $main::iso_cv->width && $y < $main::iso_cv->height,
-       "click $x,$y canvas " . $main::iso_cv->width . 'x' . $main::iso_cv->height . "\n" . main::buffer());
-    main::iso_set_tool('SPRINKLER');
-    main::iso_click_cell(4, 0);
-    main::iso_set_tool('PIPE');
-    main::iso_click_cell(0, 0);
-    main::iso_click_cell(4, 0);
-    my $b = main::buffer();
-    is('a sprinkler and a pipe along the axis are written as commands',
-       $b =~ /^SPRINKLER\s+S1\b/m && $b =~ /^PIPE\s+P1\s+W1\s+S1\s/m && $b =~ m{^//ISO W1 }m, $b);
-    is('the canvas draws the points', scalar $main::iso_cv->find('withtag', 'node') >= 2);
-    main::iso_set_tool('SELECT');
-    main::iso_click_cell(4, 0);
-    main::iso_set_field('K', '115');
-    is('a field on the point is written back', main::buffer() =~ /^SPRINKLER\s+S1\s+\S+\s+\S+\s+115$/m, main::buffer());
 }
 
 $main::mw->destroy;

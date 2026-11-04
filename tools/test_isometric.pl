@@ -106,6 +106,50 @@ print "1. THE GRID\n";
 }
 
 #==============================================================================
+print "1b. LOCKED, THE PIPES ARE STRAIGHT\n";
+#==============================================================================
+{
+    my $v = { ox => 40, oy => 80, scale => 36, lock => 1 };
+    my $bad = 0;
+    for my $ix (-3 .. 3) {
+        for my $iy (-3 .. 3) {
+            for my $iz (-1, 0, 2.5) {
+                my ($x, $y) = HardyCross::Isometric::project($ix, $iy, $iz, $v);
+                my ($a, $b, $c) = HardyCross::Isometric::cell_at($x, $y, $v, $iz);
+                $bad++ if $a != $ix || $b != $iy || abs($c - $iz) > 1e-9;
+            }
+        }
+    }
+    is('a locked point drawn and picked again is the same point', !$bad, "$bad missed");
+    my ($x0, $y0) = HardyCross::Isometric::project(0, 0, 0, $v);
+    my ($x4, $y4) = HardyCross::Isometric::project(4, 0, 0, $v);
+    my ($x9, $y9) = HardyCross::Isometric::project(9, 0, 0, $v);
+    my $s4 = ($y4 - $y0) / ($x4 - $x0);
+    my $s9 = ($y9 - $y0) / ($x9 - $x0);
+    is('two locked pipes on one axis are the same straight slope, in whole pixels',
+       abs($s4 - $s9) < 1e-9 && $x4 != $x0 && abs(($x4 - $x0) - int($x4 - $x0)) < 1e-9
+       && abs(($y4 - $y0) - int($y4 - $y0)) < 1e-9, "slope $s4 $s9 dx " . ($x4 - $x0));
+    my @run = HardyCross::Isometric::axis_run(0, 0, 0, 3, 2, 1);
+    my $legs = 0;
+    for my $i (0 .. $#run - 1) {
+        my ($a, $b) = ($run[$i], $run[$i + 1]);
+        my $changed = (abs($a->[0] - $b->[0]) > 1e-9) + (abs($a->[1] - $b->[1]) > 1e-9) + (abs($a->[2] - $b->[2]) > 1e-6);
+        $legs++ if $changed == 1;
+    }
+    is('a locked pipe that is not on one axis is drawn as straight legs, one axis each',
+       @run == 4 && $legs == 3, scalar(@run) . " points, $legs legs");
+    my $d = draw_of("NODE A 0\nNODE B 0\nPIPE P1 A B 1 25\n");
+    HardyCross::Isometric::move_node($d, 'A', 0, 0, 0);
+    HardyCross::Isometric::move_node($d, 'B', 3, 2, 0);
+    my ($mx, $my) = HardyCross::Isometric::project(1, 0, 0, $v);
+    my $hit = HardyCross::Isometric::hit($d, $mx, $my, $v);
+    is('a click on a locked leg hits the pipe', $hit && $hit->{kind} eq 'pipe' && $hit->{name} eq 'P1',
+       $hit ? "$hit->{kind} $hit->{name}" : 'nothing');
+    my ($cx, $cy) = HardyCross::Isometric::project(1, 1, 0, $v);
+    is('a click off those legs does not hit the pipe', !HardyCross::Isometric::hit($d, $cx, $cy, $v));
+}
+
+#==============================================================================
 print "2. LENGTHS AND THE MODEL'S UNITS\n";
 #==============================================================================
 {
@@ -234,6 +278,49 @@ print "5. THE EXAMPLES, AND A COPY\n";
            !$missing && !$overlap && $twice eq $once && $flow < 0.05 && $press < 0.05,
            $err || "unplaced $missing overlap " . ($overlap || '') . " flow $flow pressure $press");
     }
+}
+
+#==============================================================================
+print "6. CLICK AND CLICK, OR A KNOWN LENGTH\n";
+#==============================================================================
+{
+    my $u = units();
+    my $d = draw_of('', $u);
+    is('a blank length does not choose a step count', !defined HardyCross::Isometric::steps_for_length($d, '  '));
+    is('12 m on a 1 m grid is 12 steps', HardyCross::Isometric::steps_for_length($d, '12') == 12, '');
+    my ($e, $w) = HardyCross::Isometric::add_node($d, 'WATER', 0, 0, 0, '0');
+    my ($e2, $s) = HardyCross::Isometric::add_node($d, 'SPRINKLER', 4, 0, 0, '0');
+    my $n = $d->{nodes}{$w};
+    my ($ix, $iy, $iz) = HardyCross::Isometric::cell_along($n, 3, 1, 0, 12);
+    is('the click chooses the axis and the length chooses the steps', $ix == 12 && $iy == 0 && !$iz, "$ix $iy $iz");
+    ($ix, $iy, $iz) = HardyCross::Isometric::cell_along($n, 1, -4, 0, 12);
+    is('the other click chooses that axis and that sign', !$ix && $iy == -12 && !$iz, "$ix $iy $iz");
+    my ($bad) = HardyCross::Isometric::add_pipe($d, $w, $s, { len => 'no' });
+    is('a length that is not a length is refused', $bad && $bad =~ /NOT A LENGTH/, $bad // '');
+    my ($e3, $p) = HardyCross::Isometric::add_pipe($d, $w, $s, { len => '12', size => '50', fits => '2E 1T', c => '110' });
+    my $pipe = $d->{pipes}[0];
+    is('joining an existing point keeps the typed length and does not move it',
+       !$e3 && $pipe->{len} eq '12' && $pipe->{size} eq '50' && "@{ $pipe->{fits} }" eq '2E 1T'
+       && $pipe->{use_c} eq '110' && $d->{nodes}{$s}{ix} == 4,
+       ($e3 || '') . " len $pipe->{len} ix $d->{nodes}{$s}{ix}");
+    my $err = HardyCross::Isometric::set_pipe($d, $p, 'LENGTH', '7');
+    is('typing a length slides the end along the pipe',
+       !$err && $d->{nodes}{$s}{ix} == 7 && $pipe->{len} eq '7', ($err || '') . " ix $d->{nodes}{$s}{ix} len $pipe->{len}");
+    my ($e4, $block) = HardyCross::Isometric::add_node($d, 'NODE', 9, 0, 0, '0');
+    $err = HardyCross::Isometric::set_pipe($d, $p, 'LENGTH', '9');
+    is('a length that lands on a point is refused, and the pipe stays',
+       $err && $err =~ /ALREADY USED/ && $d->{nodes}{$s}{ix} == 7 && $pipe->{len} eq '7', ($err || '') . " ix $d->{nodes}{$s}{ix}");
+    HardyCross::Isometric::delete_item($d, 'node', $block);
+    my ($e5, $c) = HardyCross::Isometric::add_node($d, 'NODE', 10, 0, 0, '0');
+    my ($e6, $p2) = HardyCross::Isometric::add_pipe($d, $s, $c);
+    $err = HardyCross::Isometric::set_pipe($d, $p, 'LENGTH', '12.4');
+    my ($other) = grep { $_->{name} eq $p2 } @{ $d->{pipes} };
+    is('the end moves to the rounded steps, the typed length stays, the other pipe follows the grid',
+       !$err && !$e5 && !$e6 && $d->{nodes}{$s}{ix} == 12 && $pipe->{len} eq '12.4' && $other && $other->{len} eq '2',
+       ($err || '') . " ix $d->{nodes}{$s}{ix} P1 $pipe->{len} P2 " . ($other ? $other->{len} : ''));
+    $err = HardyCross::Isometric::set_pipe($d, $p, 'LENGTH', '0');
+    is('a zero length is stored and the end stays where it is',
+       !$err && $pipe->{len} eq '0' && $d->{nodes}{$s}{ix} == 12, ($err || '') . " ix $d->{nodes}{$s}{ix}");
 }
 
 print "\n$pass passed, $fail failed\n";

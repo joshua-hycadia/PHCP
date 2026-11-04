@@ -43,20 +43,20 @@ set TKPATCHED=https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/do
 set GUI=yes
 
 echo.
-echo [1/6] Checking Strawberry Perl...
+echo [1/7] Checking Strawberry Perl...
 where perl >nul 2>&1 || (echo ERROR: perl not found. Install Strawberry Perl first. & exit /b 1)
 for /f "tokens=*" %%v in ('perl -e "printf qq{%%vd}, $^V"') do set PERLV=%%v
 for /f "tokens=*" %%g in ('gcc -dumpversion 2^>nul') do set GCCV=%%g
 echo        Perl !PERLV!, GCC !GCCV!
 
 echo.
-echo [2/6] PAR::Packer (the packager)...
+echo [2/7] PAR::Packer (the packager)...
 perl -MPAR::Packer -e1 >nul 2>&1 || call cpanm --notest PAR::Packer
 perl -MPAR::Packer -e1 >nul 2>&1 || (echo ERROR: PAR::Packer is not available. & exit /b 1)
 echo        ok
 
 echo.
-echo [3/6] Tk (needed only for the text editor)...
+echo [3/7] Tk (needed for the text editor and the isometric window)...
 perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     echo        Installing the patched Tk 804.036_001 from the Strawberry Perl project...
@@ -99,7 +99,7 @@ rem The editor also carries the icon file, for its window and taskbar button.
 set EDDATA=%DATA% -a "data/phcp.ico;lib/data/phcp.ico"
 
 echo.
-echo [4/6] Building phcp.exe (command line)...
+echo [4/7] Building phcp.exe (command line)...
 set BUILT=no
 if "!ICON!"=="yes" (
     perl tools\pack_with_icon.pl data\phcp.ico console phcp.exe -I . %MODS% %DATA% phcp.pl && set BUILT=yes
@@ -111,9 +111,9 @@ if "!BUILT!"=="no" (
 )
 
 echo.
-echo [5/6] Building phcp_editor.exe (text editor)...
+echo [5/7] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
-    set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M HardyCross::Isometric -M HardyCross::Window::Isometric -M HardyCross::Window::Project -M HardyCross::Window::Tools -M HardyCross::Window::Graph -M HardyCross::Window::Database -M HardyCross::Window::Results -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
+    set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M HardyCross::Window::Project -M HardyCross::Window::Tools -M HardyCross::Window::Graph -M HardyCross::Window::Database -M HardyCross::Window::Results -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
     set BUILT=no
     if "!ICON!"=="yes" (
         perl tools\pack_with_icon.pl data\phcp.ico gui phcp_editor.exe -I . !EDMODS! %EDDATA% phcp_editor.pl && set BUILT=yes
@@ -128,7 +128,24 @@ if "!GUI!"=="yes" (
 )
 
 echo.
-echo [6/6] Smoke test: solve an example with phcp.exe...
+echo [6/7] Building phcp_isometric.exe (isometric window)...
+if "!GUI!"=="yes" (
+    set ISOMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M HardyCross::Isometric -M HardyCross::Window::Isometric -M HardyCross::Window::Project -M HardyCross::Window::Tools -M HardyCross::Window::Graph -M HardyCross::Window::Database -M HardyCross::Window::Results -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
+    set BUILT=no
+    if "!ICON!"=="yes" (
+        perl tools\pack_with_icon.pl data\phcp.ico gui phcp_isometric.exe -I . !ISOMODS! %EDDATA% phcp_isometric.pl && set BUILT=yes
+        if "!BUILT!"=="no" echo        the icon could not be added - building without it
+    )
+    if "!BUILT!"=="no" (
+        call pp --gui -I . !ISOMODS! %EDDATA% -o phcp_isometric.exe phcp_isometric.pl
+        if errorlevel 1 (echo ERROR: pp failed building phcp_isometric.exe & set GUI=no)
+    )
+) else (
+    echo        SKIPPED - Tk could not be built.
+)
+
+echo.
+echo [7/7] Smoke test: solve an example with phcp.exe...
 phcp.exe examples\05_crosscheck.phc > smoke_test_phc.txt
 findstr /c:"converged yes" smoke_test_phc.txt >nul || (echo ERROR: phcp.exe did not solve the .phc example. See smoke_test_phc.txt & exit /b 1)
 phcp.exe examples\07_pipe_database_demo.phc smoke_test.pdf >nul
@@ -140,7 +157,7 @@ echo        ok - .phc examples solved and converged, PDF report and JSON written
 echo.
 echo ===========================================================================
 if "!GUI!"=="yes" (
-    echo  Built: phcp.exe and phcp_editor.exe
+    echo  Built: phcp.exe, phcp_editor.exe and phcp_isometric.exe
 ) else (
     echo  Built: phcp.exe  ^(command line, working^)
     echo  NOT built: phcp_editor.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!

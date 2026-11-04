@@ -7,11 +7,13 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), a text editor built around it, and a monospace ASCII
-calculation report.  The whole stack is Perl.
+for the model (`.phc`), a text editor built around it, an isometric drawing
+forked from that editor, and a monospace ASCII calculation report.  The whole
+stack is Perl.
 
 ```
-perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
@@ -357,7 +359,7 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
-| NETWORK | ISOMETRIC | PROJECT | GRAPH | QUICK TOOLS | DATABASE  |
+| NETWORK | PROJECT | GRAPH | QUICK TOOLS | DATABASE               |
 |  USE PIPE ... | NODE NC ... | PUMP BP ... | AREA ...  (strip)      |
 |  +----+--------------------------------------+ +---------------+ |
 |  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
@@ -417,14 +419,14 @@ there and selects it.
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
 | QUICK TOOLS tab | velocity, fittings, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
-| ISOMETRIC tab | the network drawn on a 30-degree grid, as another way to enter it.  A click places a supply, a point, an outlet or a pipe, and the drawing writes the `.phc`.  See The isometric drawing |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
 The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
-other tab in a file of its own under `HardyCross/Window/` (ISOMETRIC, PROJECT,
-GRAPH, QUICK TOOLS, DATABASE, and the results tables).
+other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
+QUICK TOOLS, DATABASE, and the results tables).  The isometric drawing is a
+separate program, `phcp_isometric.pl`, forked from this one.
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -445,13 +447,41 @@ tests, and Tk::TableMatrix is no longer needed.
 
 ## The isometric drawing
 
-The ISOMETRIC tab draws the network instead of having it typed.  It is the
-same model as the NETWORK tab: points, pipes, pumps and fixed flows, on a
-30-degree grid with the elevation on the vertical axis.  A click with a tool
-places a supply, a plain point, a sprinkler, a hydrant, a hose reel, a pipe,
-a pump or a fixed flow.  A pipe runs along one grid axis.  SELECT drags a
-point; its pipes then take their length from the grid, in the model's length
-unit.  Until a point is moved, a length or an elevation stays as it was typed.
+`perl phcp_isometric.pl [model.phc]`
+
+A separate program, forked from the text editor.  `phcp_editor.pl` is not
+changed: it still opens on the NETWORK tab, and this program has no NETWORK
+tab.  It loads the editor for the PROJECT tab, the results, the database and
+the file commands, and the network is drawn instead of typed.  Opening a
+file stays on the drawing.
+
+Points, pipes, pumps and fixed flows sit on a 30-degree grid, with the
+elevation on the vertical axis.  A click with a tool places a supply, a plain
+point, a sprinkler, a hydrant, a hose reel, a pipe, a pump or a fixed flow.
+SELECT drags a point.
+
+A pipe is entered either way.  Click a point, then the next point: the length
+is the distance between them.  Or type the length, size, fittings and C in
+KNOWN first: the next click only chooses the direction, and the end is placed
+that many steps along the axis.  A blank length follows the click.  Clicking
+a point that is already there joins it, and does not move it.  The elevation
+of the next point is typed the same way, in ELEVATION.  Return in a pipe's
+length on the right moves that pipe's end along the axis so the picture
+matches the length, and the typed figure is what is stored.
+
+Until a point is moved, a length or an elevation stays as it was typed; a
+move sets the connected lengths from the grid, in the model's length unit.
+
+LOCK, on when the window opens, draws every pipe along the grid axes in whole
+pixels, so a run stays straight and parallel to the grid.  A pipe that is not
+on one axis is drawn as straight legs, one axis at a time.  LOCK off draws
+the one straight line between the two ends, at a true 30 degrees.
+
+The pipe or point that is selected has its properties on the right: name,
+length, size, fittings, equivalent length, pipe type and C, with the unit in
+the label.  Return writes the field.  The two ends are shown and not typed.
+LABELS chooses what is written on the drawing: point names, pipe names,
+length, size, fittings, elevation, devices.  DARK swaps the palette.
 
 The drawing writes the `.phc` the editor already calculates.  Where each
 point sits is a comment the reader ignores:
@@ -471,7 +501,10 @@ point (`PC`, `NC`) is written out as the pipe or point it means, and a
 `CHANGEPIPE` stays applied to the one pipe it names, which is what the reader
 does.  `tools/test_isometric.pl` checks the drawing headless, including that
 every example written back from it solves to the same flows and pressures.
-`tools/test_editor_window.pl` drives the tab.
+`tools/test_isometric_window.pl` drives the window.
+
+The program is written for Perl 5.44.  The source also runs on Perl 5.38 and
+5.42, which is what the tests and the Windows build use.
 
 ## Water supply graph
 

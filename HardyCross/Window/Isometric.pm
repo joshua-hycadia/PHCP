@@ -3,17 +3,19 @@
 # SPDX-License-Identifier: MIT -- see LICENSE.  The MIT licence covers this
 # source code; it does not cover the third-party data in data/.
 #
-# HardyCross/Window/Isometric.pm -- the ISOMETRIC tab of phcp_editor.pl.
+# HardyCross/Window/Isometric.pm -- the drawing window of phcp_isometric.pl.
 #
-# The network drawn, rather than typed.  A click places a point or a pipe;
-# the drawing writes the .phc the NETWORK tab shows, and VALIDATE and
-# CALCULATE run on that text as they do on typed commands.  Positions are
-# //ISO comments, which the reader ignores, so the calculation is the
-# commands.  Every decision -- where a point sits, what a click hits, what
-# text is written -- is HardyCross::Isometric.  This file is the window.
+# A fork of the text editor, not a change to it.  phcp_editor.pl is loaded
+# for the PROJECT tab, the results and the file commands, and this file
+# replaces the NETWORK tab with the drawing.  A pipe is two clicks, or the
+# length, size, fittings and C typed first and one click for the direction.
+# The drawing writes the .phc that VALIDATE and CALCULATE already run.
+# Positions are //ISO comments, which the reader ignores, so the calculation
+# is the commands.  Every decision -- where a point sits, what a click hits,
+# what text is written -- is HardyCross::Isometric.  This file is the window.
 #
 # The window is one program: this file is package main, loaded by
-# phcp_editor.pl, and uses that file's widgets and its editor buffer.
+# phcp_isometric.pl, and uses the editor's widgets and its hidden buffer.
 #==============================================================================
 package main;
 
@@ -22,9 +24,13 @@ use warnings;
 use HardyCross::Isometric;
 use HardyCross::Phc;
 
-our ($UI, $UI_B, $UI_S, $MONO, %C, $mw, $ed, $settings, $toptabs, $POINTER);
+our ($UI, $UI_B, $UI_S, $MONO, %C, $mw, $ed, $gutter, $statusbar, $settings, $toptabs, $POINTER, %checks);
 
 our ($iso_cv, %iso);
+
+# Which captions are drawn.  The same idea as the spreadsheet's column
+# chooser: the picture stays quiet until the one thing you want is switched on.
+my @LABELS = qw(POINTS PIPES LENGTH SIZE FITTINGS ELEVATION DEVICES);
 
 my @TOOLS = (
     [ 'SELECT',    'SELECT',    'SELECT A POINT OR A PIPE, AND DRAG A POINT ALONG THE GRID' ],
@@ -33,7 +39,7 @@ my @TOOLS = (
     [ 'SPRINKLER', 'SPRINKLER', 'CLICK THE GRID TO PLACE A SPRINKLER' ],
     [ 'HYDRANT',   'HYDRANT',   'CLICK THE GRID TO PLACE A HYDRANT' ],
     [ 'HREEL',     'REEL',      'CLICK THE GRID TO PLACE A HOSE REEL' ],
-    [ 'PIPE',      'PIPE',      'CLICK A POINT, THEN THE NEXT POINT ALONG AN AXIS' ],
+    [ 'PIPE',      'PIPE',      'CLICK A POINT, THEN THE NEXT. OR TYPE A KNOWN LENGTH: THE CLICK ONLY CHOOSES THE DIRECTION' ],
     [ 'PUMP',      'PUMP',      'CLICK THE TWO POINTS THE PUMP JOINS' ],
     [ 'FIXEDFLOW', 'FLOW',      'CLICK A POINT TO PUT A FIXED FLOW ON IT' ],
     [ 'DELETE',    'DELETE',    'CLICK A POINT OR A PIPE TO REMOVE IT' ],
@@ -47,6 +53,23 @@ sub build_isometric {
         $iso{tools}{$kind} = flat_button($bar, $label, sub { iso_set_tool($kind) })
             ->pack(-side => 'left', -padx => px([0, 4]));
     }
+    # What the next pipe uses, typed before the click.  A blank length means
+    # the click sets the length.  A length means the click only picks the axis.
+    my $known = $page->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(8), -pady => px([0, 4]));
+    $known->Label(-text => 'KNOWN', -font => $UI_B, -background => $C{paper}, -foreground => $C{ink})
+        ->pack(-side => 'left', -padx => px([0, 8]));
+    $iso{known} = { LENGTH => '', SIZE => '', FITTINGS => '', C => '' };
+    $iso{known_label} = {};
+    my $lu = ($settings && $settings->{units}{LENGTH}) || 'MM';
+    my $su = ($settings && $settings->{units}{SIZE}) || 'MM';
+    iso_known_entry($known, 'LENGTH', "LENGTH $lu", 8);
+    iso_known_entry($known, 'SIZE', "SIZE $su", 6);
+    iso_known_entry($known, 'FITTINGS', 'FITTINGS', 10);
+    iso_known_entry($known, 'C', 'C', 6);
+    $known->Label(-text => 'CLICK AND CLICK, OR TYPE THESE. BLANK LENGTH FOLLOWS THE CLICK.',
+        -font => $UI_S, -background => $C{paper}, -foreground => $C{muted}, -anchor => 'w')
+        ->pack(-side => 'left', -padx => px(8));
+
     my $bar2 = $page->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(8), -pady => px([0, 6]));
     $iso{elev_label} = $bar2->Label(-text => 'ELEVATION', -font => $UI_S, -background => $C{paper},
         -foreground => $C{muted})->pack(-side => 'left');
@@ -63,13 +86,37 @@ sub build_isometric {
     $iso{btn}{FIT}  = flat_button($bar2, 'FIT',      sub { iso_fit(1) })->pack(-side => 'left', -padx => px([0, 4]));
     $iso{btn}{IN}   = flat_button($bar2, 'ZOOM IN',  sub { iso_zoom(1.25) })->pack(-side => 'left', -padx => px(4));
     $iso{btn}{OUT}  = flat_button($bar2, 'ZOOM OUT', sub { iso_zoom(1 / 1.25) })->pack(-side => 'left', -padx => px(4));
+    $iso{lock} = 1;
+    $iso{btn}{LOCK} = flat_button($bar2, 'LOCK', sub { iso_set_lock() })->pack(-side => 'left', -padx => px(4));
+    $iso{btn}{DARK} = flat_button($bar2, 'DARK', sub { iso_apply_theme($iso{theme} eq 'DARK' ? 'LIGHT' : 'DARK') })
+        ->pack(-side => 'left', -padx => px(4));
+    $iso{labels} = { map { $_ => ($_ =~ /^(POINTS|PIPES|DEVICES)\z/ ? 1 : 0) } @LABELS };
+    require Tk::Menubutton;
+    my $labels = $bar2->Menubutton(-text => 'LABELS', -font => $UI_B, -relief => 'flat', -borderwidth => 0,
+        -highlightthickness => 1, -highlightbackground => $C{line}, -highlightcolor => $C{accent},
+        -background => $C{paper}, -foreground => $C{ink}, -activebackground => $C{hover},
+        -activeforeground => $C{ink}, -padx => px(14), -pady => px(5), -direction => 'below');
+    $labels->pack(-side => 'left', -padx => px(4));
+    $iso{label_menu} = $labels->Menu(-tearoff => 0);
+    $labels->configure(-menu => $iso{label_menu});
+    for my $name (@LABELS) {
+        $iso{label_menu}->checkbutton(-label => $name, -variable => \$iso{labels}{$name},
+            -command => sub { iso_redraw() });
+    }
+    $iso{btn}{LABELS} = $labels;
     $iso{status_w} = $bar2->Label(-text => '', -font => $UI, -background => $C{paper}, -foreground => $C{muted},
         -anchor => 'w')->pack(-side => 'left', -padx => px(12), -fill => 'x', -expand => 1);
     rule($page, 'x', -side => 'top');
 
-    # The drawing.  Scrollbars, no divider: the results pane is already one,
-    # and another would be counted with it.
-    my $ef = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
+    # The drawing, and the properties of whatever is selected, on the right.
+    # The spreadsheet kept a figure beside the grid you were editing; this is
+    # that, for one pipe or one point.  No extra divider: the results pane
+    # below is already one.
+    my $body = $page->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
+    $iso{props} = $body->Frame(-background => $C{panel}, -width => px(300))->pack(-side => 'right', -fill => 'y');
+    $iso{props}->packPropagate(0);
+    rule($body, 'y', -side => 'right');
+    my $ef = $body->Frame(-background => $C{paper})->pack(-side => 'left', -fill => 'both', -expand => 1);
     my $vsb = flat_scrollbar($ef, 'vertical')->pack(-side => 'right', -fill => 'y');
     my $hsb = flat_scrollbar($ef, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
     $iso_cv = $ef->Canvas(-background => $C{paper}, -highlightthickness => 0, -borderwidth => 0,
@@ -88,10 +135,10 @@ sub build_isometric {
     $iso_cv->CanvasBind('<Escape>'          => sub { $iso{from} = undef; $iso{drag} = undef; iso_status('CANCELLED'); iso_redraw() });
     $iso_cv->CanvasBind('<Delete>'          => sub { iso_delete_sel() });
 
-    $iso{props} = $page->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
-    rule($iso{props}, 'x', -side => 'top');
+    $iso{theme} = 'LIGHT';
     $iso{tool} = 'SELECT';
     iso_set_tool('SELECT');
+    iso_mark($iso{btn}{LOCK}, 1);
 }
 
 # iso_invalidate -- the text was replaced (a file opened).  The next time the
@@ -129,7 +176,57 @@ sub iso_show {
     }
     my $eu = $settings->{units}{ELEVATION} || 'M';
     $iso{elev_label}->configure(-text => "ELEVATION $eu") if $iso{elev_label};
+    my $lu = $settings->{units}{LENGTH} || 'MM';
+    my $su = $settings->{units}{SIZE} || 'MM';
+    $iso{known_label}{LENGTH}->configure(-text => "LENGTH $lu") if $iso{known_label}{LENGTH};
+    $iso{known_label}{SIZE}->configure(-text => "SIZE $su") if $iso{known_label}{SIZE};
     iso_redraw();
+}
+
+# iso_known_entry -- one figure typed ahead of the next pipe.
+sub iso_known_entry {
+    my ($bar, $key, $label, $width) = @_;
+    $iso{known_label}{$key} = $bar->Label(-text => $label, -font => $UI_S, -background => $C{paper},
+        -foreground => $C{muted})->pack(-side => 'left');
+    my $e = flat_entry($bar, \$iso{known}{$key}, $width);
+    $e->configure(-justify => 'right') if $key ne 'FITTINGS';
+    $e->pack(-side => 'left', -padx => px([4, 10]));
+    $e->bind('<Return>' => sub { iso_known_apply($key) });
+}
+
+# iso_known_apply -- Return in a known field checks it, then the drawing
+# takes the next click.  The field keeps the focus when the figure is wrong.
+sub iso_known_apply {
+    my $key = shift;
+    my $v = $iso{known}{$key};
+    $v = '' unless defined $v;
+    $v =~ s/^\s+|\s+\z//g;
+    $iso{known}{$key} = $v;
+    my $err = $iso{draw} ? HardyCross::Isometric::known_ok($iso{draw}, iso_known_args()) : '';
+    if ($err) { iso_fail($err); return }
+    if ($v eq '') {
+        iso_status($key eq 'LENGTH'
+            ? 'LENGTH CLEARED. THE CLICK SETS THE LENGTH.'
+            : "$key CLEARED. THE NEXT PIPE USES THE USUAL VALUE.");
+    } elsif ($key eq 'LENGTH') {
+        iso_status("LENGTH $v. THE NEXT CLICK CHOOSES THE DIRECTION ONLY.");
+    } else {
+        iso_status("$key $v. THE NEXT PIPE USES IT.");
+    }
+    iso_focus_drawing();
+}
+
+# iso_known_args -- the hash add_pipe reads.  Blank fields stay blank.
+sub iso_known_args {
+    my $k = $iso{known} || {};
+    my %out;
+    for my $pair ([ 'LENGTH', 'len' ], [ 'SIZE', 'size' ], [ 'FITTINGS', 'fits' ], [ 'C', 'c' ]) {
+        my $v = $k->{ $pair->[0] };
+        $v = '' unless defined $v;
+        $v =~ s/^\s+|\s+\z//g;
+        $out{ $pair->[1] } = $v;
+    }
+    return \%out;
 }
 
 sub iso_set_tool {
@@ -137,15 +234,50 @@ sub iso_set_tool {
     $iso{tool} = $kind;
     $iso{from} = undef unless $kind eq 'PIPE' || $kind eq 'PUMP';
     for my $t (@TOOLS) {
-        my $on = $t->[0] eq $kind;
-        $iso{tools}{ $t->[0] }->configure(
-            -background => $on ? $C{accent} : $C{paper},
-            -foreground => $on ? '#FFFFFF' : $C{ink},
-            -highlightbackground => $on ? $C{accent} : $C{line});
+        iso_mark($iso{tools}{ $t->[0] }, $t->[0] eq $kind);
     }
+    iso_mark($iso{btn}{LOCK}, $iso{lock}) if $iso{btn}{LOCK};
+    iso_mark($iso{btn}{DARK}, ($iso{theme} || '') eq 'DARK') if $iso{btn}{DARK};
     my ($hint) = map { $_->[2] } grep { $_->[0] eq $kind } @TOOLS;
     iso_status($hint || '');
     $iso_cv->configure(-cursor => $kind eq 'SELECT' ? $POINTER : 'crosshair') if $iso_cv;
+}
+
+# iso_mark -- a toolbar button drawn as on (solid blue) or off (paper).
+sub iso_mark {
+    my ($w, $on) = @_;
+    return unless $w;
+    $w->configure(
+        -background => $on ? $C{accent} : $C{paper},
+        -foreground => $on ? '#FFFFFF' : $C{ink},
+        -activebackground => $on ? $C{accent_dk} : $C{hover},
+        -activeforeground => $on ? '#FFFFFF' : $C{ink},
+        -highlightbackground => $on ? $C{accent} : $C{line});
+}
+
+# iso_set_lock -- on, pipes are drawn along the grid axes in whole pixels,
+# so a run is straight and parallel to the grid.  Off, a pipe is the one
+# line between its ends.
+sub iso_set_lock {
+    my $on = shift;
+    $iso{lock} = defined $on ? ($on ? 1 : 0) : ($iso{lock} ? 0 : 1);
+    $iso{view}{lock} = $iso{lock} ? 1 : 0 if $iso{view};
+    iso_mark($iso{btn}{LOCK}, $iso{lock});
+    iso_status($iso{lock}
+        ? 'LOCKED. A PIPE RUNS ALONG THE GRID, IN WHOLE PIXELS.'
+        : 'UNLOCKED. A PIPE IS THE STRAIGHT LINE BETWEEN ITS ENDS.');
+    iso_redraw();
+}
+
+sub iso_set_label {
+    my ($name, $on) = @_;
+    $iso{labels}{$name} = $on ? 1 : 0;
+    iso_redraw();
+}
+sub iso_label {
+    my $name = shift;
+    return 0 unless $iso{labels} && $iso{labels}{$name};
+    return 1;
 }
 
 sub iso_status {
@@ -159,6 +291,14 @@ sub iso_fail {
     $iso{status_w}->configure(-text => uc($text), -foreground => $C{error});
 }
 sub iso_status_text { return $iso{status_w} ? $iso{status_w}->cget(-text) : '' }
+
+# Canvas::focus is the canvas item that has the canvas's own focus.  The
+# keyboard focus is the widget's, and a pipe run has to keep that, or the
+# next click is typed into a field instead of drawn.
+sub iso_focus_drawing {
+    return unless $iso_cv;
+    $iso_cv->focusForce;
+}
 
 sub iso_work_iz {
     my $d = $iso{draw} or return 0;
@@ -200,7 +340,7 @@ sub iso_grid_apply {
 sub iso_press {
     my ($sx, $sy) = @_;
     return unless $iso{draw} && $iso{view};
-    $iso_cv->focus if $iso_cv;
+    iso_focus_drawing();
     my $d = $iso{draw};
     my $hit = HardyCross::Isometric::hit($d, $sx, $sy, $iso{view});
     my $tool = $iso{tool};
@@ -214,6 +354,9 @@ sub iso_press {
         }
         iso_props();
         iso_redraw();
+        # The length is the first figure.  A pipe chain must not land here:
+        # focusing the pane would take the next click off the drawing.
+        $iso{entry}{LENGTH}->focus if $hit && $hit->{kind} eq 'pipe' && $iso{entry}{LENGTH};
         iso_status($hit ? "$hit->{kind} $hit->{name}" : 'NOTHING THERE');
         return;
     }
@@ -245,12 +388,17 @@ sub iso_press {
     iso_commit();
 }
 
-# iso_link_click -- the first click chooses the start.  The next click, on a
-# point or on an empty cell along an axis, is the end; an empty cell grows a
-# point there.  The end stays the start, so a run is drawn click by click.
+# iso_link_click -- the first click chooses the start.  The next click is the
+# end: an existing point, or an empty cell.  With no known length the cell is
+# where you clicked, snapped to one axis, and the length is that distance.
+# With a known length the click only chooses the axis, and the end is that
+# many steps along it.  The end stays the start, so a run is click by click.
+# The drawing keeps the focus: the properties pane is not where the next
+# click should go.
 sub iso_link_click {
     my ($sx, $sy, $hit) = @_;
     my $d = $iso{draw};
+    my $known = iso_known_args();
     if (!$iso{from}) {
         if ($hit && $hit->{kind} eq 'node') {
             $iso{from} = $hit->{name};
@@ -261,13 +409,19 @@ sub iso_link_click {
             $iso{from} = $name;
             iso_commit();
         }
-        iso_status("FROM $iso{from}. CLICK THE NEXT POINT ALONG AN AXIS.");
+        iso_status(iso_from_status($known));
         iso_redraw();
+        iso_focus_drawing();
         return;
+    }
+    if ($iso{tool} eq 'PIPE') {
+        my $err = HardyCross::Isometric::known_ok($d, $known);
+        if ($err) { iso_fail($err); return }
     }
     my $a = $d->{nodes}{ $iso{from} } or do { $iso{from} = undef; return };
     my $end;
     if ($hit && $hit->{kind} eq 'node' && $hit->{name} ne $iso{from}) {
+        # An existing point is the end.  It is not moved to suit a typed length.
         my $b = $d->{nodes}{ $hit->{name} };
         unless (HardyCross::Isometric::axis_aligned($a, $b)) {
             iso_fail('A PIPE RUNS ALONG ONE GRID AXIS');
@@ -276,9 +430,19 @@ sub iso_link_click {
         $end = $hit->{name};
     } else {
         my ($ix, $iy) = HardyCross::Isometric::cell_at($sx, $sy, $iso{view}, iso_work_iz());
-        ($ix, $iy, my $iz) = HardyCross::Isometric::snap_axis($a, $ix, $iy, iso_work_iz());
+        my $iz = iso_work_iz();
+        my $len = $iso{tool} eq 'PIPE' ? $known->{len} : '';
+        if (defined $len && $len =~ /\S/) {
+            my $steps = HardyCross::Isometric::steps_for_length($d, $len);
+            # Zero is one step on the drawing so the points do not stack.
+            # The pipe still stores the typed zero.
+            my $n = (defined $steps && $steps > 0) ? $steps : 1;
+            ($ix, $iy, $iz) = HardyCross::Isometric::cell_along($a, $ix, $iy, $iz, $n);
+        } else {
+            ($ix, $iy, $iz) = HardyCross::Isometric::snap_axis($a, $ix, $iy, $iz);
+        }
         if (abs($ix - $a->{ix}) < 1e-9 && abs($iy - $a->{iy}) < 1e-9 && abs($iz - $a->{iz}) < 1e-6) {
-            iso_fail('CLICK A POINT ALONG THE AXIS');
+            iso_fail('CLICK ALONG AN AXIS');
             return;
         }
         $end = HardyCross::Isometric::node_at($d, $ix, $iy, $iz);
@@ -291,13 +455,24 @@ sub iso_link_click {
     }
     my ($err, $name) = $iso{tool} eq 'PUMP'
         ? HardyCross::Isometric::add_pump($d, $iso{from}, $end)
-        : HardyCross::Isometric::add_pipe($d, $iso{from}, $end);
+        : HardyCross::Isometric::add_pipe($d, $iso{from}, $end, $known);
     if ($err) { iso_fail($err); return }
     my $from = $iso{from};
     $iso{from} = $end;
     $iso{sel} = { kind => $iso{tool} eq 'PUMP' ? 'pump' : 'pipe', name => $name };
-    iso_status("$name FROM $from TO $end. CLICK THE NEXT POINT, OR ESC.");
+    my $how = ($iso{tool} eq 'PIPE' && defined $known->{len} && $known->{len} =~ /\S/)
+        ? "LENGTH $known->{len}." : 'LENGTH FROM THE CLICK.';
+    iso_status("$name FROM $from TO $end. $how CLICK THE NEXT, OR ESC.");
     iso_commit();
+    iso_focus_drawing();
+}
+
+sub iso_from_status {
+    my $known = shift;
+    my $len = $known->{len};
+    return "FROM $iso{from}. LENGTH $len. CLICK THE DIRECTION."
+        if $iso{tool} eq 'PIPE' && defined $len && $len =~ /\S/;
+    return "FROM $iso{from}. CLICK THE NEXT POINT. THE LENGTH FOLLOWS THE CLICK.";
 }
 
 sub iso_motion {
@@ -305,7 +480,12 @@ sub iso_motion {
     return unless $iso{drag} && $iso{tool} eq 'SELECT';
     my $n = $iso{draw}{nodes}{ $iso{drag}{name} } or return;
     my ($ix, $iy) = HardyCross::Isometric::cell_at($sx, $sy, $iso{view}, $n->{iz});
-    $iso{ghost} = [ $ix, $iy, $n->{iz} ];
+    if ($iso{lock}) {
+        ($ix, $iy, my $iz) = HardyCross::Isometric::snap_axis($iso{drag}, $ix, $iy, $n->{iz});
+        $iso{ghost} = [ $ix, $iy, $iz ];
+    } else {
+        $iso{ghost} = [ $ix, $iy, $n->{iz} ];
+    }
     iso_redraw();
 }
 
@@ -361,7 +541,7 @@ sub iso_fit {
     my $ch = $iso_cv->height; $ch = 520 if $ch < 40;
     my @n = grep { defined $_->{ix} } map { $iso{draw}{nodes}{$_} } @{ $iso{draw}{node_order} };
     unless (@n) {
-        $iso{view} = { ox => $cw * 0.45, oy => $ch * 0.55, scale => 36 };
+        $iso{view} = { ox => $cw * 0.45, oy => $ch * 0.55, scale => 36, lock => $iso{lock} ? 1 : 0 };
         iso_redraw();
         return;
     }
@@ -383,7 +563,7 @@ sub iso_fit {
     # large enough to click (the cap).  Zoom in when a step is too small.
     $s = 2 if $s < 2;
     $s = 48 if $s > 48;
-    $iso{view} = { ox => 60 - $minx * $s, oy => 60 - $miny * $s, scale => $s };
+    $iso{view} = { ox => 60 - $minx * $s, oy => 60 - $miny * $s, scale => $s, lock => $iso{lock} ? 1 : 0 };
     iso_redraw();
 }
 
@@ -398,6 +578,7 @@ sub iso_zoom {
     $iso{view}{ox} = $cx - ($cx - $iso{view}{ox}) * $s / $old;
     $iso{view}{oy} = $cy - ($cy - $iso{view}{oy}) * $s / $old;
     $iso{view}{scale} = $s;
+    $iso{view}{lock} = $iso{lock} ? 1 : 0;
     iso_redraw();
 }
 
@@ -421,11 +602,14 @@ sub iso_redraw {
         my $sel = $iso{sel} && $iso{sel}{kind} eq 'node' && $iso{sel}{name} eq $name;
         my $from = defined $iso{from} && $iso{from} eq $name;
         iso_node_mark($x, $y, $n->{kind}, $sel || $from);
-        $cv->createText($x, $y - px(14), -text => $name, -font => $UI_S, -fill => $C{ink},
-            -anchor => 's', -tags => [ 'label', "node:$name" ]);
+        my @above;
+        push @above, $name if iso_label('POINTS');
+        push @above, $n->{elev} if iso_label('ELEVATION') && defined $n->{elev} && $n->{elev} ne '';
+        $cv->createText($x, $y - px(14), -text => join(' ', @above), -font => $UI_S, -fill => $C{ink},
+            -anchor => 's', -tags => [ 'label', "node:$name" ]) if @above;
         my @ff = map { $_->{name} } grep { $_->{node} eq $name } @{ $d->{flows} };
         $cv->createText($x, $y + px(14), -text => join(' ', @ff), -font => $UI_S, -fill => $C{muted},
-            -anchor => 'n') if @ff;
+            -anchor => 'n', -tags => [ 'label' ]) if @ff && iso_label('POINTS');
     }
     my @b = $cv->bbox('all');
     if (@b) {
@@ -474,15 +658,49 @@ sub iso_link {
         ($ax, $ay, $aiz) = @{ $iso{ghost} } if $iso{drag}{name} eq $a_name;
         ($bx, $by, $biz) = @{ $iso{ghost} } if $iso{drag}{name} eq $b_name;
     }
-    my ($x1, $y1) = HardyCross::Isometric::project($ax, $ay, $aiz, $v);
-    my ($x2, $y2) = HardyCross::Isometric::project($bx, $by, $biz, $v);
+    my @run = $v->{lock}
+        ? HardyCross::Isometric::axis_run($ax, $ay, $aiz, $bx, $by, $biz)
+        : ([$ax, $ay, $aiz], [$bx, $by, $biz]);
+    return if @run < 2;
+    my @xy;
+    for my $g (@run) { push @xy, HardyCross::Isometric::project(@$g, $v) }
     my $sel = $iso{sel} && $iso{sel}{kind} eq $kind && $iso{sel}{name} eq $name;
-    $iso_cv->createLine($x1, $y1, $x2, $y2, -fill => $sel ? $C{accent} : $C{ink},
-        -width => $sel ? px(3) : px(2), -tags => [ $kind, "$kind:$name" ]);
-    my $label = $name;
-    $label .= ' ' . $rec->{device}{kind} if $rec->{device};
-    $iso_cv->createText(($x1 + $x2) / 2, ($y1 + $y2) / 2 - px(8), -text => $label,
-        -font => $UI_S, -fill => $kind eq 'pump' ? $C{accent} : $C{muted}, -anchor => 's');
+    $iso_cv->createLine(@xy, -fill => $sel ? $C{accent} : $C{ink},
+        -width => $sel ? px(3) : px(2), -tags => [ $kind, "$kind:$name" ], -joinstyle => 'miter');
+    my $caption = iso_link_caption($kind, $name, $rec);
+    return if $caption eq '';
+    my ($lx, $ly) = iso_caption_at(\@xy);
+    $iso_cv->createText($lx, $ly - px(8), -text => $caption,
+        -font => $UI_S, -fill => $kind eq 'pump' ? $C{accent} : $C{muted}, -anchor => 's',
+        -tags => [ 'label', "$kind:$name" ]);
+}
+
+# iso_link_caption -- the words on a pipe, only the ones the LABELS menu has on.
+sub iso_link_caption {
+    my ($kind, $name, $rec) = @_;
+    my @bits;
+    push @bits, $name if iso_label('PIPES');
+    if ($kind eq 'pipe' && $rec) {
+        push @bits, $rec->{len} if iso_label('LENGTH') && defined $rec->{len} && $rec->{len} ne '';
+        push @bits, $rec->{size} if iso_label('SIZE') && defined $rec->{size} && $rec->{size} ne '';
+        my $fits = join ' ', @{ $rec->{fits} || [] };
+        push @bits, $fits if iso_label('FITTINGS') && $fits ne '';
+        push @bits, $rec->{device}{kind} if iso_label('DEVICES') && $rec->{device};
+    }
+    return join ' ', @bits;
+}
+
+# The caption sits on the longest leg, so an elbow does not pile the words
+# on a short riser.
+sub iso_caption_at {
+    my $xy = shift;
+    my ($bx, $by, $best) = ($xy->[0], $xy->[1], -1);
+    for (my $i = 0; $i < @$xy - 2; $i += 2) {
+        my ($x1, $y1, $x2, $y2) = @{$xy}[$i, $i + 1, $i + 2, $i + 3];
+        my $len = ($x2 - $x1) * ($x2 - $x1) + ($y2 - $y1) * ($y2 - $y1);
+        if ($len > $best) { $best = $len; ($bx, $by) = (($x1 + $x2) / 2, ($y1 + $y2) / 2) }
+    }
+    return ($bx, $by);
 }
 
 sub iso_node_mark {
@@ -512,54 +730,96 @@ sub iso_node_mark {
 #------------------------------------------------------------------------------
 # The fields of whatever is selected.  Return in a field writes it back.
 #------------------------------------------------------------------------------
+# The right-hand pane.  Headings are quiet and carry the unit, the way the
+# spreadsheet put the unit in the column heading and kept the figure on its
+# own.  A figure you can type is a paper field; one the drawing derives
+# (the two ends) is only shown.  Return writes the field.
 sub iso_props {
     return unless $iso{props};
     my $f = $iso{props};
     $_->destroy for $f->children;
+    $iso{field} = {};
+    $iso{entry} = {};
+    my $u = $settings && $settings->{units} ? $settings->{units} : {};
+    my $len_u = $u->{LENGTH} || 'M';
+    my $el_u = $u->{ELEVATION} || 'M';
+    my $sz_u = $u->{SIZE} || 'MM';
+    my $pr_u = $u->{PRESSURE} || 'KPA';
+    my $fl_u = $u->{FLOW} || 'LPM';
+    my $head = $f->Label(-text => 'PROPERTIES', -font => $UI_B, -background => $C{panel},
+        -foreground => $C{ink}, -anchor => 'w');
+    $head->pack(-fill => 'x', -padx => px(14), -pady => px([12, 4]));
     my $sel = $iso{sel};
-    my $hint = $f->Label(-text => '', -font => $UI, -background => $C{panel}, -foreground => $C{muted},
-        -anchor => 'w');
     unless ($sel && $iso{draw}) {
-        $hint->configure(-text => 'SELECT A POINT OR A PIPE, OR CHOOSE A TOOL AND CLICK THE GRID.');
-        $hint->pack(-side => 'left', -padx => px(14), -pady => px(8));
+        $f->Label(-text => 'CLICK TWO POINTS, AND THE LENGTH FOLLOWS THE CLICK. OR TYPE A LENGTH, SIZE, FITTINGS AND C ABOVE: THE NEXT CLICK ONLY CHOOSES THE DIRECTION.',
+            -font => $UI, -background => $C{panel},
+            -foreground => $C{muted}, -anchor => 'w', -justify => 'left', -wraplength => px(260))
+            ->pack(-fill => 'x', -padx => px(14), -pady => px(8));
         return;
     }
     my $d = $iso{draw};
-    my @fields;
+    my ($kind, @rows);
     if ($sel->{kind} eq 'node') {
         my $n = $d->{nodes}{ $sel->{name} } or return;
-        @fields = ([ 'NAME', $n->{name}, 10 ], [ 'ELEVATION', $n->{elev}, 8 ]);
-        push @fields, [ 'STATIC', $n->{static}, 8 ] if $n->{kind} eq 'WATER';
-        push @fields, [ 'MINFLOW', $n->{minflow}, 8 ], [ 'K', $n->{k}, 8 ] if $n->{kind} =~ /^(SPRINKLER|HYDRANT|HREEL)\z/;
-        $hint->configure(-text => $n->{kind});
+        $kind = $n->{kind};
+        @rows = (['NAME', $n->{name}], ["ELEVATION  $el_u", $n->{elev}, 'ELEVATION', 1]);
+        push @rows, ["STATIC  $pr_u", $n->{static}, 'STATIC', 1] if $n->{kind} eq 'WATER';
+        push @rows, ["MIN FLOW  $fl_u", $n->{minflow}, 'MINFLOW', 1], ['K', $n->{k}, 'K', 1]
+            if $n->{kind} =~ /^(SPRINKLER|HYDRANT|HREEL)\z/;
     } elsif ($sel->{kind} eq 'pipe') {
         my ($p) = grep { $_->{name} eq $sel->{name} } @{ $d->{pipes} };
         return unless $p;
-        @fields = ([ 'NAME', $p->{name}, 10 ], [ 'LENGTH', $p->{len}, 8 ], [ 'SIZE', $p->{size}, 6 ],
-                   [ 'FITTINGS', join(' ', @{ $p->{fits} || [] }), 16 ],
-                   [ 'TYPE', $p->{use_type}, 8 ], [ 'C', defined $p->{use_c} ? $p->{use_c} : '', 6 ]);
-        $hint->configure(-text => 'PIPE');
+        $kind = 'PIPE';
+        @rows = (
+            ['NAME', $p->{name}],
+            ['FROM', $p->{start}, undef, 0, 1],
+            ['TO', $p->{end}, undef, 0, 1],
+            ["LENGTH  $len_u", $p->{len}, 'LENGTH', 1],
+            ["SIZE  $sz_u", $p->{size}, 'SIZE', 1],
+            ['FITTINGS', join(' ', @{ $p->{fits} || [] }), 'FITTINGS'],
+            ["EQV  $len_u", defined $p->{eqv} ? $p->{eqv} : '', 'EQV', 1],
+            ['TYPE', $p->{use_type}, 'TYPE'],
+            ['C', defined $p->{use_c} ? $p->{use_c} : '', 'C', 1],
+        );
     } elsif ($sel->{kind} eq 'pump') {
         my ($p) = grep { $_->{name} eq $sel->{name} } @{ $d->{pumps} };
         return unless $p;
-        @fields = ([ 'NAME', $p->{name}, 10 ], [ 'CHURN', $p->{churn}, 8 ],
-                   [ 'FLOW', $p->{pairs}[0], 8 ], [ 'PRESSURE', $p->{pairs}[1], 8 ]);
-        $hint->configure(-text => 'PUMP');
+        $kind = 'PUMP';
+        @rows = (
+            ['NAME', $p->{name}],
+            ['FROM', $p->{in}, undef, 0, 1],
+            ['TO', $p->{out}, undef, 0, 1],
+            ["CHURN  $pr_u", $p->{churn}, 'CHURN', 1],
+            ["FLOW  $fl_u", $p->{pairs}[0], 'FLOW', 1],
+            ["PRESSURE  $pr_u", $p->{pairs}[1], 'PRESSURE', 1],
+        );
     }
-    $hint->pack(-side => 'left', -padx => px([14, 8]), -pady => px(8));
-    $iso{field} = {};
-    for my $fd (@fields) {
-        my ($lab, $val, $w) = @$fd;
-        $f->Label(-text => $lab, -font => $UI_S, -background => $C{panel}, -foreground => $C{muted})
-            ->pack(-side => 'left', -padx => px([8, 4]));
-        my $var = $val;
-        $var = '' unless defined $var;
-        $iso{field}{$lab} = $var;
-        my $e = flat_entry($f, \$iso{field}{$lab}, $w);
-        $e->pack(-side => 'left', -pady => px(6));
-        my $field = $lab;
+    $f->Label(-text => $kind, -font => $UI_S, -background => $C{panel}, -foreground => $C{muted}, -anchor => 'w')
+        ->pack(-fill => 'x', -padx => px(14), -pady => px([2, 8]));
+    for my $row (@rows) {
+        my ($label, $val, $key, $numeric, $readonly) = @$row;
+        $key = $label unless defined $key;
+        my $line = $f->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px(3));
+        $line->Label(-text => $label, -font => $UI_S, -background => $C{panel}, -foreground => $C{muted},
+            -anchor => 'w', -width => 16)->pack(-side => 'left');
+        $val = '' unless defined $val;
+        if ($readonly) {
+            $line->Label(-text => $val, -font => $MONO, -background => $C{hover}, -foreground => $C{ink},
+                -anchor => 'e', -padx => px(6), -pady => px(3))->pack(-side => 'right', -fill => 'x', -expand => 1);
+            next;
+        }
+        $iso{field}{$key} = $val;
+        my $e = flat_entry($line, \$iso{field}{$key}, 12);
+        $e->configure(-justify => 'right') if $numeric;
+        $e->pack(-side => 'right', -fill => 'x', -expand => 1);
+        $iso{entry}{$key} = $e;
+        my $field = $key;
         $e->bind('<Return>' => sub { iso_apply_field($field) });
     }
+    $f->Label(-text => 'RETURN WRITES THE FIELD AND MOVES TO THE NEXT. A LENGTH MOVES THE END ALONG THE PIPE.',
+        -font => $UI_S, -background => $C{panel},
+        -foreground => $C{muted}, -anchor => 'w', -justify => 'left', -wraplength => px(260))
+        ->pack(-fill => 'x', -padx => px(14), -pady => px([12, 8]));
 }
 
 sub iso_apply_field {
@@ -572,8 +832,32 @@ sub iso_apply_field {
             : HardyCross::Isometric::set_pipe($iso{draw}, $sel->{name}, $field, $value);
     if ($err) { iso_fail($err); return }
     $sel->{name} = $value if $field eq 'NAME' && defined $value && $value ne '';
-    iso_status('CHANGED');
+    my $next = iso_next_field($sel->{kind}, $field);
+    iso_status($field eq 'LENGTH' && $sel->{kind} eq 'pipe'
+        ? 'LENGTH SET. THE END MOVED ALONG THE PIPE.'
+        : 'CHANGED');
     iso_commit();
+    # The pane has just been built again.  Return walks to the next figure.
+    # A pipe run does not: the next click belongs on the drawing.
+    if ($iso{from}) {
+        iso_focus_drawing();
+    } elsif ($next && $iso{entry}{$next}) {
+        $iso{entry}{$next}->focus;
+        eval { $iso{entry}{$next}->selectionRange(0, 'end') };
+    }
+}
+
+sub iso_next_field {
+    my ($kind, $field) = @_;
+    my @order = $kind eq 'pipe' ? qw(NAME LENGTH SIZE FITTINGS EQV TYPE C)
+              : $kind eq 'pump' ? qw(NAME CHURN FLOW PRESSURE)
+              : qw(NAME ELEVATION STATIC MINFLOW K);
+    my $seen = 0;
+    for my $name (@order) {
+        if ($seen && exists $iso{field}{$name}) { return $name }
+        $seen = 1 if $name eq $field;
+    }
+    return;
 }
 
 # iso_set_field -- the window test types into a field the way Return would.
@@ -581,6 +865,107 @@ sub iso_set_field {
     my ($field, $value) = @_;
     $iso{field}{$field} = $value;
     iso_apply_field($field);
+}
+
+#------------------------------------------------------------------------------
+# Dark mode.  The light palette is whatever the editor built with.  Switching
+# replaces those colours on every widget, then the drawing is painted again
+# from the palette, so a canvas item cannot keep the old ink.
+#------------------------------------------------------------------------------
+my (%LIGHT, %DARK, $palette_ready);
+sub iso_palettes {
+    return if $palette_ready;
+    %LIGHT = %C;
+    %DARK = (
+        %LIGHT,
+        paper     => '#1B1E24',
+        panel     => '#252A33',
+        line      => '#3A4150',
+        hover     => '#323846',
+        ink       => '#E7EAF0',
+        muted     => '#9AA3B5',
+        faint     => '#6E7788',
+        accent    => '#6BA3F0',
+        accent_dk => '#4E86D4',
+        accent_bg => '#243044',
+        select    => '#2C4468',
+        curline   => '#242A34',
+        number    => '#8EB4F0',
+        error     => '#F07178',
+        error_bg  => '#3A2428',
+        fault_bg  => '#4A2C30',
+        warn      => '#E0B15A',
+        proposal  => '#7D8796',
+        sash      => '#32363E',
+    );
+    $palette_ready = 1;
+}
+
+sub iso_apply_theme {
+    my $name = shift || 'LIGHT';
+    $name = $name eq 'DARK' ? 'DARK' : 'LIGHT';
+    iso_palettes();
+    my $from = ($iso{theme} || 'LIGHT') eq 'DARK' ? \%DARK : \%LIGHT;
+    my $to = $name eq 'DARK' ? \%DARK : \%LIGHT;
+    my %map;
+    $map{ uc $from->{$_} } = $to->{$_} for keys %$from;
+    if ($name eq 'DARK') {
+        $map{'#CDD2D9'} = '#4A5160';
+        $map{'#B4BBC5'} = '#6A7384';
+    } else {
+        $map{'#4A5160'} = '#CDD2D9';
+        $map{'#6A7384'} = '#B4BBC5';
+    }
+    $C{$_} = $to->{$_} for keys %$to;
+    iso_paint($mw, \%map) if $mw;
+    $iso{theme} = $name;
+    iso_retint_tags();
+    select_tab($toptabs, $toptabs->{current}) if $toptabs && $toptabs->{current};
+    iso_set_tool($iso{tool} || 'SELECT');
+    for my $c (values %checks) { $c->{draw}->() if $c && $c->{draw} }
+    eval { fill_results(); fill_validation() };
+    iso_props();
+    iso_redraw();
+    iso_status($name eq 'DARK' ? 'DARK' : 'LIGHT');
+}
+
+sub iso_paint {
+    my ($w, $map) = @_;
+    return unless $w;
+    for my $opt (qw(-background -foreground -highlightbackground -highlightcolor
+                    -activebackground -activeforeground -insertbackground
+                    -selectbackground -selectforeground -troughcolor -disabledforeground)) {
+        my $v = eval { $w->cget($opt) };
+        next unless defined $v && $v ne '';
+        next if $opt =~ /foreground/ && uc $v eq '#FFFFFF';
+        my $n = $map->{ uc $v };
+        next unless defined $n && uc $n ne uc $v;
+        eval { $w->configure($opt => $n) };
+    }
+    my @kids = eval { $w->children };
+    iso_paint($_, $map) for @kids;
+}
+
+sub iso_retint_tags {
+    return unless $ed;
+    eval {
+        $ed->tagConfigure('curline', -background => $C{curline});
+        $ed->tagConfigure('command', -foreground => $C{accent});
+        $ed->tagConfigure('keyword', -foreground => $C{accent});
+        $ed->tagConfigure('name',    -foreground => $C{ink});
+        $ed->tagConfigure('ref',     -foreground => $C{ink});
+        $ed->tagConfigure('number',  -foreground => $C{number});
+        $ed->tagConfigure('comment', -foreground => $C{muted});
+        $ed->tagConfigure('error',   -background => $C{error_bg});
+        $ed->tagConfigure('fault',   -background => $C{fault_bg}, -foreground => $C{error});
+        $ed->tagConfigure('proposal', -foreground => $C{proposal});
+        $gutter->tagConfigure('cur', -foreground => $C{ink}) if $gutter;
+        $gutter->tagConfigure('bad', -foreground => $C{error}) if $gutter;
+        $statusbar->tagConfigure('current', -foreground => $C{accent}) if $statusbar;
+        $statusbar->tagConfigure('muted', -foreground => $C{muted}) if $statusbar;
+        $statusbar->tagConfigure('bad', -foreground => $C{error}) if $statusbar;
+        $statusbar->tagConfigure('good', -foreground => $C{accent}) if $statusbar;
+    };
 }
 
 1;

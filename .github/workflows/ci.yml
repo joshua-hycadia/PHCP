@@ -44,6 +44,8 @@ jobs:
           done
       - name: Editor window, under Xvfb
         run: perl tools/test_editor_window.pl
+      - name: Isometric window, under Xvfb
+        run: perl tools/test_isometric_window.pl
       - name: Invariance stress, 60 random networks
         run: perl tools/stress_invariance.pl 60
 
@@ -67,13 +69,14 @@ jobs:
           set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
           perl tools\check_exe_icon.pl phcp.exe data\phcp.ico || exit /b 1
           perl tools\check_exe_icon.pl phcp_editor.exe data\phcp.ico || exit /b 1
+          perl tools\check_exe_icon.pl phcp_isometric.exe data\phcp.ico || exit /b 1
       - name: The icon as Windows shows it
         shell: powershell
         run: |
           Add-Type -AssemblyName System.Drawing
           $want = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path data\phcp.ico).Path).ToBitmap()
           $bad = 0
-          foreach ($exe in 'phcp.exe', 'phcp_editor.exe') {
+          foreach ($exe in 'phcp.exe', 'phcp_editor.exe', 'phcp_isometric.exe') {
             $got = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path $exe).Path).ToBitmap()
             $diff = 0
             for ($x = 0; $x -lt $got.Width; $x++) { for ($y = 0; $y -lt $got.Height; $y++) {
@@ -97,6 +100,7 @@ jobs:
           path: |
             phcp.exe
             phcp_editor.exe
+            phcp_isometric.exe
             tk_build.log
           if-no-files-found: warn
 
