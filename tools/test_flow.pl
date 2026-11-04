@@ -82,6 +82,16 @@ for my $path (sort glob "$EX/*.phc") {
         my $err = $@;
         $err = $err->{msg} if ref $err;
         is('   the 1000-node grid is a model again', $net && @{ $doc->{nodes} } >= 1000, $err);
+        my ($g00) = grep { $_->{name} eq 'N0_0' } @{ $doc->{nodes} };
+        my ($g49) = grep { $_->{name} eq 'N0_49' } @{ $doc->{nodes} };
+        my ($g190) = grep { $_->{name} eq 'N19_0' } @{ $doc->{nodes} };
+        my ($gstub) = grep { $_->{name} eq 'N0_0S' } @{ $doc->{nodes} };
+        is('   the grid keeps a row on one line',
+           $g00 && $g49 && $g49->{y} == $g00->{y} && $g49->{x} == $g00->{x} + 49 * 240);
+        is('   the grid keeps a column on one line',
+           $g00 && $g190 && $g190->{x} == $g00->{x} && $g190->{y} == $g00->{y} + 19 * 150);
+        is('   the extra head sits beside the grid',
+           $gstub && $gstub->{x} < $g00->{x} && $gstub->{y} == $g00->{y});
         next;
     }
     my $left = eval { solved($text) };

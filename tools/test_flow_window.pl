@@ -27,7 +27,9 @@ my ($SHOT) = map { $ARGV[$_ + 1] } grep { $ARGV[$_] eq '--shot' } 0 .. $#ARGV;
 unless ($ENV{DISPLAY}) {
     if (!$ENV{PHCP_UNDER_XVFB} && system('which xvfb-run >/dev/null 2>&1') == 0) {
         $ENV{PHCP_UNDER_XVFB} = 1;
-        exec 'xvfb-run', '-a', '-s', '-screen 0 1400x900x24', $^X, $0, @ARGV;
+        # Wider than the window.  A shorter screen squeezes the card and the
+        # title no longer fits the field the test measures.
+        exec 'xvfb-run', '-a', '-s', '-screen 0 1680x1050x24', $^X, $0, @ARGV;
     }
     print "SKIPPED: no X display and no xvfb-run - the flow window was not run\n";
     exit 0;
@@ -146,6 +148,14 @@ is('SAVE writes the drawing', main::file_save($out));
 is('the saved file is .phc the reader accepts',
    eval { require HardyCross::Phc; HardyCross::Phc::read_string(do { local $/; open my $f, '<', $out; <$f> }, '.'); 1 },
    $@ && (ref $@ ? $@->{msg} : $@));
+
+# The thousand-node example is a grid, not a corner of it.  It is not solved.
+is('the large grid opens', main::open_path('examples/04_grid1000.phc', 1));
+$main::mw->update;
+is('the large grid is shown as the mesh', $main::zoom < 0.4, $main::zoom);
+is('the mesh draws every block', $main::canvas->find('withtag', 'node') >= 1000);
+my @mesh_names = $main::canvas->find('withtag', 'name');
+is('the mesh leaves the names off', @mesh_names == 0);
 
 if ($SHOT) {
     main::open_path('examples/02_full_network.phc', 1);

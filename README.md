@@ -480,8 +480,8 @@ block does not: a position is only a comment.
 | place | choose a block on the left, then click the page |
 | connect | drag from a port on one block to another.  With PIPE or PUMP chosen, that is the connection; with SELECT, a drag from a port is a pipe |
 | move | drag a block.  A click that barely moves snaps back |
-| pan, zoom | the middle button or the right button pans; the wheel zooms.  FIT keeps the blocks large enough to read and scrolls a long main |
-| arrange | lays the supplies to the left and the rest by how far the water travels |
+| pan, zoom | the middle button or the right button pans; the wheel zooms.  FIT keeps the blocks large enough to read and scrolls a long main.  A network that fits on neither axis at that size is shown whole, as the mesh, with the words left off |
+| arrange | lays the supplies to the left and the rest by how far the water travels.  A filled grid named `N{row}_{column}` is laid out as that grid; a stub beside it stays beside it |
 | card | the file's title, method and units, or the block or pipe that is selected.  Each value sits under its label, in a flat field or a flat menu, and the card scrolls.  A fixed flow is edited on its junction |
 | results | after a calculation that converges, the pressure on each block and the flow on each pipe, in the file's units.  The page shows the amount; the solver's sign is only the direction along the pipe |
 | files | NEW, OPEN, SAVE.  Any file but a `.phc` is refused.  Saving rewrites the file in a fixed order |
@@ -512,7 +512,8 @@ file it writes calculates, is `HardyCross/Flow.pm`, which has no Tk in it.
 `tools/test_flow.pl` checks that without a display: every example written
 back solves to the same flows and pressures, and a copy with a changed pipe
 solves as the original does.  The 1000-node grid is read back and not
-solved.  `tools/test_flow_window.pl` drives the window under a virtual
+solved.  Opened in the window it is laid out as its 20 by 50 grid and drawn
+as the mesh, so the page is the grid rather than a corner of it.  `tools/test_flow_window.pl` drives the window under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither).  Both have been run on Linux with Tk
 804.036.  The window has not been run on Windows, and `build_windows.bat`
@@ -1125,8 +1126,8 @@ others on the page, and the report says which check to make.
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
-| drawn network, headless (`tools/test_flow.pl`) | 92 / 92 |
-| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 31 / 31 |
+| drawn network, headless (`tools/test_flow.pl`) | 95 / 95 |
+| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 35 / 35 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |

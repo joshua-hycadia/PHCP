@@ -571,6 +571,9 @@ sub layout {
     my ($doc, $force) = @_;
     my @nodes = @{ $doc->{nodes} };
     return $doc unless @nodes;
+    # A complete N{row}_{column} array is already a grid.  Depth from the
+    # supply would lay the same mesh out on diagonals.
+    return $doc if _layout_grid($doc, $force);
     my %adj;
     for my $e (@{ $doc->{edges} }) {
         push @{ $adj{ $e->{from} } }, $e->{to};
@@ -624,6 +627,57 @@ sub layout {
         }
     }
     return $doc;
+}
+
+# _layout_grid -- place N0_0, N0_1, N1_0, ... in the rows and columns their
+# names give.  Only when those names fill a rectangle, so an ordinary branch
+# is left to the depth layout.  A stub that is not named that way (the grid's
+# extra head on the corner) is set beside the block it joins, and does not
+# pull the mesh onto a diagonal.
+sub _layout_grid {
+    my ($doc, $force) = @_;
+    my @nodes = @{ $doc->{nodes} };
+    return 0 if @nodes < 4;
+    my (%cell, $maxr, $maxc, @extra);
+    for my $n (@nodes) {
+        if (($n->{name} // '') =~ /^N(\d+)_(\d+)\z/) {
+            my ($r, $c) = ($1 + 0, $2 + 0);
+            return 0 if $cell{"$r,$c"};
+            $cell{"$r,$c"} = $n;
+            $maxr = $r if !defined $maxr || $r > $maxr;
+            $maxc = $c if !defined $maxc || $c > $maxc;
+        } else {
+            push @extra, $n;
+        }
+    }
+    my $cells = keys %cell;
+    return 0 if $cells < 4;
+    return 0 unless $cells == ($maxr + 1) * ($maxc + 1);
+    # A handful of stubs may sit on the rectangle.  A drawing that is mostly
+    # other names is not this grid.
+    return 0 if @extra > $cells * 0.05;
+    for my $key (keys %cell) {
+        my ($r, $c) = split /,/, $key;
+        my $n = $cell{$key};
+        next unless $force || !defined $n->{x} || !defined $n->{y};
+        $n->{x} = 48 + $c * 240;
+        $n->{y} = 48 + $r * 150;
+    }
+    for my $n (@extra) {
+        next unless $force || !defined $n->{x} || !defined $n->{y};
+        my ($x, $y) = (48 - 240, 48);
+        for my $e (@{ $doc->{edges} }) {
+            my $oid = $e->{from} eq $n->{id} ? $e->{to}
+                    : $e->{to} eq $n->{id}   ? $e->{from}
+                    :                          undef;
+            next unless defined $oid;
+            my $o = find($doc, $oid);
+            if ($o && defined $o->{x}) { $x = $o->{x} - 240; $y = $o->{y}; last }
+        }
+        $n->{x} = $x;
+        $n->{y} = $y;
+    }
+    return 1;
 }
 
 sub _bary {

@@ -423,9 +423,34 @@ sub redraw {
         $x0 = $a if $a < $x0; $y0 = $b if $b < $y0;
         $x1 = $c if $c > $x1; $y1 = $d if $d > $y1;
     }
-    $x0 -= 80; $y0 -= 60; $x1 += 480; $y1 += 320;
-    $x1 = $x0 + 1400 if $x1 - $x0 < 1400;
-    $y1 = $y0 + 900 if $y1 - $y0 < 900;
+    if (overview()) {
+        # The mesh is the page.  Pad it into the middle of the window, and
+        # do not add the empty region a small drawing keeps for panning, or
+        # a wide grid sits in the top corner with its last column cut off.
+        my $ww = $canvas->width || 0;
+        my $wh = $canvas->height || 0;
+        # Meeting the edge turns the scrollbar on, and the bar covers the
+        # last column of a grid.
+        $ww -= 4 if $ww > 8;
+        $wh -= 4 if $wh > 8;
+        my ($mw, $mh) = ($x1 - $x0, $y1 - $y0);
+        my ($pl, $pr, $pt, $pb) = (40, 40, 36, 48);
+        if ($ww > $mw) {
+            my $spare = $ww - $mw;
+            $pl = int($spare / 2);
+            $pr = $spare - $pl;
+        }
+        if ($wh > $mh) {
+            my $spare = $wh - $mh;
+            $pt = int($spare / 2);
+            $pb = $spare - $pt;
+        }
+        $x0 -= $pl; $y0 -= $pt; $x1 += $pr; $y1 += $pb;
+    } else {
+        $x0 -= 80; $y0 -= 60; $x1 += 480; $y1 += 320;
+        $x1 = $x0 + 1400 if $x1 - $x0 < 1400;
+        $y1 = $y0 + 900 if $y1 - $y0 < 900;
+    }
     $canvas->configure(-scrollregion => [ $x0, $y0, $x1, $y1 ]);
 
     unless (@{ $doc->{nodes} }) {
@@ -438,11 +463,22 @@ sub redraw {
     draw_gesture() if $gesture && $gesture->{kind} eq 'wire';
 }
 
+# overview -- the block is smaller than its words.  Draw the mesh, not the
+# labels, or a large grid is a field of letters.
+sub overview { $zoom < 0.4 }
+
 sub draw_node {
     my $n = shift;
     my ($x1, $y1, $x2, $y2) = node_rect($n);
     my $on = defined $sel && $sel eq $n->{id};
     my $tag = [ 'node', 'node:' . $n->{id} ];
+    if (overview()) {
+        $canvas->createRectangle($x1, $y1, $x2, $y2,
+            -fill => $KIND_COLOR{ $n->{kind} } || $C{ink},
+            -outline => $on ? $C{accent} : ($KIND_COLOR{ $n->{kind} } || $C{ink}),
+            -width => $on ? 2 : 1, -tags => $tag);
+        return;
+    }
     $canvas->createRectangle($x1, $y1, $x2, $y2,
         -fill => $on ? $C{accent_bg} : $C{paper}, -outline => $on ? $C{accent} : $C{line},
         -width => 1, -tags => $tag);
@@ -510,6 +546,18 @@ sub draw_edge {
     my $a = HardyCross::Flow::find($doc, $e->{from});
     my $b = HardyCross::Flow::find($doc, $e->{to});
     return unless $a && $b && $a->{kind};
+    if (overview()) {
+        my ($ax1, $ay1, $ax2, $ay2) = node_rect($a);
+        my ($bx1, $by1, $bx2, $by2) = node_rect($b);
+        my ($x1, $y1) = (($ax1 + $ax2) / 2, ($ay1 + $ay2) / 2);
+        my ($x2, $y2) = (($bx1 + $bx2) / 2, ($by1 + $by2) / 2);
+        $WIRE{ $e->{id} } = [ $x1, $y1, $x2, $y2 ];
+        my $on = defined $sel && $sel eq $e->{id};
+        $canvas->createLine($x1, $y1, $x2, $y2,
+            -fill => $on ? $C{accent} : $C{pipe}, -width => 1,
+            -tags => [ 'wire', 'wire:' . $e->{id}, $e->{kind} eq 'PUMP' ? 'pump' : 'pipe' ]);
+        return;
+    }
     my ($x1, $y1, $s1) = port_toward_node($a, $b);
     my ($x2, $y2, $s2) = port_toward_node($b, $a);
     my @pts = curve($x1, $y1, $s1, $x2, $y2, $s2);
@@ -776,13 +824,16 @@ sub zoom_by {
     my $cy = $canvas->canvasy($e->y);
     my ($wx, $wy) = ($cx / $zoom, $cy / $zoom);
     my $nz = $zoom * $factor;
-    $nz = 0.35 if $nz < 0.35;
+    # Far enough out for a large grid.  The words are left off below, and the
+    # mesh is what the page shows.  FIT still refuses to shrink a network
+    # that can be read.
+    $nz = 0.04 if $nz < 0.04;
     $nz = 2.5 if $nz > 2.5;
     return if abs($nz - $zoom) < 1e-6;
     $zoom = $nz;
     redraw();
     my ($nx, $ny) = ($wx * $zoom, $wy * $zoom);
-    my ($x1, $y1, $x2, $y2) = split / /, $canvas->cget('-scrollregion');
+    my ($x1, $y1, $x2, $y2) = scroll_bounds();
     my $ww = $canvas->width || 1;
     my $wh = $canvas->height || 1;
     my ($sw, $sh) = ($x2 - $x1, $y2 - $y1);
@@ -805,20 +856,35 @@ sub fit_view {
         $y1 = $b if !defined $y1 || $b > $y1;
     }
     $mw->update;
-    my $cw = ($canvas->width || 800) - 80;
-    my $ch = ($canvas->height || 600) - 80;
+    my $cw = ($canvas->width || 800) - 96;
+    my $ch = ($canvas->height || 600) - 72;
     $cw = 200 if $cw < 200;
     $ch = 200 if $ch < 200;
     my $zw = $cw / (($x1 - $x0) || 1);
     my $zh = $ch / (($y1 - $y0) || 1);
     $zoom = $zw < $zh ? $zw : $zh;
-    # Below 1 the words no longer fit in the blocks, and a long main is
-    # scrolled instead of shrunk.  A short branch may grow a little.
-    $zoom = 1 if $zoom < 1;
-    $zoom = 1.3 if $zoom > 1.3;
+    # A page that fits on neither axis, and only by shrinking past the point
+    # where a block can be read, is shown whole as the mesh.  A long main
+    # still fits on one axis, so it stays large enough to read and scrolls.
+    my $mesh = $zoom < 0.2 && $zw < 1 && $zh < 1;
+    if ($mesh) {
+        $zoom = 0.04 if $zoom < 0.04;
+    } else {
+        $zoom = 1 if $zoom < 1;
+        $zoom = 1.3 if $zoom > 1.3;
+    }
     redraw();
     $canvas->xviewMoveto(0);
     $canvas->yviewMoveto(0);
+}
+
+# scroll_bounds -- the canvas scrollregion as four numbers.  Tk hands it
+# back as a list, and splitting the reference string would drop the view.
+sub scroll_bounds {
+    my $sr = $canvas->cget('-scrollregion');
+    return (0, 0, 0, 0) unless defined $sr && $sr ne '';
+    return @$sr if ref $sr eq 'ARRAY';
+    return split /[,\s]+/, $sr;
 }
 
 sub do_arrange {
