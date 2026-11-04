@@ -27,11 +27,15 @@ of the text editor; `phcp_editor.pl` is unchanged).  The network is drawn on
 a 30-degree grid and written as `.phc`.  A pipe is two clicks, or a known
 length, size, fittings and C with the click choosing the direction.  No
 solved number changes.  Written for Perl 5.44; the same source runs on the
-5.38 and 5.42 the tests and the Windows build use.  Also open: a pyRevit
-extension for Revit 2022 to 2027 (`revit/`, `revit/REVIT.md`).  It walks a
-model and calls the engine; it changes no engine file and no solved number.
-The walk and the `.phc` it writes are checked by `tools/test_revit.py`.  It
-has not been run inside Revit.
+5.38 and 5.42 the tests and the Windows build use.  Also open, as an
+experiment rather than a release: a drawn network (`phcp_flow.pl`,
+`HardyCross/Flow.pm`).  It saves ordinary `.phc`.  The text editor and the
+engine are unchanged.  The window has been run on Linux under Xvfb; it has
+not been run on Windows, and `build_windows.bat` does not package it.  Also
+open: a pyRevit extension for Revit 2022 to 2027 (`revit/`,
+`revit/REVIT.md`).  It walks a model and calls the engine; it changes no
+engine file and no solved number.  The walk and the `.phc` it writes are
+checked by `tools/test_revit.py`.  It has not been run inside Revit.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -463,6 +467,29 @@ proposed).  Default OFF: every example solves exactly as before.
 | `HardyCross/Editor.pm` | VELOCITY PRESSURE in the PROJECT tab; the outlet table and line results on Pn |
 | `tools/test_velocity_pressure.pl`, `tools/baseline/velocity_pressure_off.txt` | a hand-checked range, OFF against results frozen from the earlier solver, ON against OFF on the examples |
 
+## Experiment - a drawn network
+
+The text editor stays as it is.  This is a second program.  The page is the
+network: a supply, a junction or a head is a block, and a pipe or a pump is
+the line between two blocks.  It still saves ordinary `.phc`, and the
+existing reader and solver are the judge.  No second file format.  No engine
+change, and no change to a solved number.
+
+| file | change |
+|---|---|
+| `phcp_flow.pl` | the window: place a block, drag from a port to connect, a card for the file or the selection, VALIDATE then CALCULATE, ARRANGE and FIT.  Flat, like the text editor: one-pixel rules, flat fields and menus, the card scrolls.  DARK switches the page, the card and the blocks; LIGHT switches back.  A filled `N{row}_{column}` grid is drawn as that grid; far enough out, the page is the mesh and the words are left off |
+| `HardyCross/Flow.pm` | the drawing, with no Tk: read and write `.phc`, lay the blocks out, hand the text to the reader and the solver |
+| `tools/test_flow.pl` | every example written back solves the same; copies and a changed pipe; editing |
+| `tools/test_flow_window.pl` | the window under a virtual display |
+
+A position is a `// FLOW x y` comment, which the reader already ignores, so
+moving a block does not change the model VALIDATE last accepted.  `NC`, `PC`
+and `CHANGEPIPE` are expanded on open and written back as ordinary `NODE` and
+`PIPE` lines.  The note at the top of a file is kept; a note between commands
+is not.  Options, design areas and supply graphs are kept and are not edited
+on the card.  Figures are drawn only when the solve converges.  Run on Linux
+with Tk 804.036.  Not run on Windows.
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -517,6 +544,7 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
 - [x] Spreadsheet window: `phcp_sheet.pl` and `HardyCross/Sheet.pm`, a second front end.  The text editor, `phcp_editor.pl`, is unchanged
 - [x] Isometric drawing: `phcp_isometric.pl` forks the text editor (the editor file is unchanged), draws the network on a 30-degree grid and writes the `.phc`. A pipe is two clicks, or a known length, size, fittings and C with the click choosing the direction. `tools/test_isometric.pl`, `tools/test_isometric_window.pl`
+- [x] Experiment - a drawn network (`phcp_flow.pl`): ordinary `.phc`, the text editor and the engine unchanged.  Run on Linux (Tk 804.036, the window under Xvfb).  Not run on Windows.
 - [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
 - [x] Revit: outlets, devices (booster, loss, reducing valve, orifice, ratio valve), renumber copies, colour key, select failures, pipe tags, apply a suggested DN. No engine change.
 - [ ] Revit extension run inside Revit 2022 to 2027

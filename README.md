@@ -8,15 +8,16 @@ Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), windows on that same engine - a text editor, a
-spreadsheet and an isometric drawing - and a monospace ASCII calculation
-report.  The solver, the editor and the report are Perl.  A pyRevit
-extension for Revit 2022 to 2027, in Python, walks a model and calls that
-engine; see Revit.
+spreadsheet, an isometric drawing and a drawn network - and a monospace
+ASCII calculation report.  The solver, the editor and the report are Perl.
+A pyRevit extension for Revit 2022 to 2027, in Python, walks a model and
+calls that engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
 perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
+perl phcp_flow.pl model.phc              # the drawn network (F4 validates, F5 calculates)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
@@ -28,6 +29,8 @@ perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headl
 perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
 perl tools/test_isometric.pl             # verify the isometric drawing, and the .phc it writes
 perl tools/test_isometric_window.pl      # drive the isometric window (uses xvfb-run if no display)
+perl tools/test_flow.pl                  # the drawn network, without a display
+perl tools/test_flow_window.pl           # drive the drawn window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
@@ -41,8 +44,9 @@ python3 tools/test_revit.py              # the Revit extension, without Revit
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
-the editor, the AutoCAD exporter and the Revit extension all read or write
-it, and a file of any other type is refused with the reason.  (The editor's GRAPH tab,
+the editor, the drawn network, the AutoCAD exporter and the Revit extension
+all read or write it, and a file of any other type is refused with the
+reason.  (The editor's GRAPH tab,
 which draws a water supply graph from figures typed in rather than from a
 model, keeps those figures in a `.phg` file of its own - see Water supply
 graph.)
@@ -572,6 +576,80 @@ every example written back from it solves to the same flows and pressures.
 The program is written for Perl 5.44.  The source also runs on Perl 5.38 and
 5.42, which is what the tests and the Windows build use.
 
+## The drawn network
+
+`perl phcp_flow.pl [model.phc]`
+
+A second window, beside the text editor, which is not changed.  The page is
+the network itself.  A water supply, a junction or a head is a block.  A
+line drawn from one block to another is the pipe between them, or a pump
+when that tool is on.  A device sits in the pipe it is given.  A loop is a
+loop: the same block can have more than one pipe.
+
+The file is still ordinary `.phc`.  There is no second format.  CALCULATE
+hands that text to the same reader and the same solver the text editor uses,
+including auto sizing and the governing design area.  VALIDATE (F4) has to
+pass first; any change to the model turns CALCULATE off again.  Moving a
+block does not: a position is only a comment.
+
+```
++------------------------------------------------------------------+
+| NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT | DARK   [ status ] |
++--------+----------------------------------------------+----------+
+| SELECT |                                              |  card    |
+| WATER  |   blocks, and the pipes drawn between them   |          |
+| NODE   |                                              |          |
+| ...    |                                              |          |
++--------+----------------------------------------------+----------+
+| PLACE A BLOCK, THEN DRAG FROM A PORT TO CONNECT                 |
++------------------------------------------------------------------+
+```
+
+| feature | behaviour |
+|---|---|
+| place | choose a block on the left, then click the page |
+| connect | drag from a port on one block to another.  With PIPE or PUMP chosen, that is the connection; with SELECT, a drag from a port is a pipe |
+| move | drag a block.  A click that barely moves snaps back |
+| pan, zoom | the middle button or the right button pans; the wheel zooms.  FIT keeps the blocks large enough to read and scrolls a long main.  A network that fits on neither axis at that size is shown whole, as the mesh, with the words left off |
+| arrange | lays the supplies to the left and the rest by how far the water travels.  A filled grid named `N{row}_{column}` is laid out as that grid; a stub beside it stays beside it |
+| card | the file's title, method and units, or the block or pipe that is selected.  Each value sits under its label, in a flat field or a flat menu, and the card scrolls.  A fixed flow is edited on its junction |
+| results | after a calculation that converges, the pressure on each block and the flow on each pipe, in the file's units.  The page shows the amount; the solver's sign is only the direction along the pipe |
+| files | NEW, OPEN, SAVE.  Any file but a `.phc` is refused.  Saving rewrites the file in a fixed order |
+| dark | DARK switches the page, the card and the blocks.  LIGHT switches back.  The file does not change |
+
+What a save keeps, and what it does not.  The note at the top of a file is
+kept.  A position is written as `// FLOW x y` after the node, which the
+reader already ignores.  `NC`, `PC` and `CHANGEPIPE` are expanded when the
+file is opened and written back as ordinary `NODE` and `PIPE` lines, so a
+copy is a node of its own.  Options, design areas and supply graphs stay in
+the file; the card does not edit them.  A comment between commands is not
+kept.
+
+A new drawing uses metres for length, as the examples do, and
+Hazen-Williams.  The office default for a length with no unit line is
+millimetres; this program does not start there.
+
+The window is drawn the same way as the text editor: a white page, one-pixel
+rules, flat buttons, fields and menus, and blue only for the highlight.
+DARK switches that page, the card and the blocks to a dark drawing, and the
+button then reads LIGHT.  A pipe is drawn light so it stays visible.  The
+file does not change.
+Words on a pipe sit on the paper, so the line does not run through them.
+A long number on a block is shortened; the card keeps the full figure.
+
+The window is `phcp_flow.pl`.  What the drawing contains, and whether the
+file it writes calculates, is `HardyCross/Flow.pm`, which has no Tk in it.
+`tools/test_flow.pl` checks that without a display: every example written
+back solves to the same flows and pressures, and a copy with a changed pipe
+solves as the original does.  The 1000-node grid is read back and not
+solved.  Opened in the window it is laid out as its 20 by 50 grid and drawn
+as the mesh, so the page is the grid rather than a corner of it.  `tools/test_flow_window.pl` drives the window under a virtual
+display (it runs itself under `xvfb-run` when there is no display, and says
+SKIPPED when there is neither).  Both have been run on Linux with Tk
+804.036.  The window has not been run on Windows, and `build_windows.bat`
+does not package it.  It keeps Tk's own icon.  Continuous integration runs
+`test_flow.pl` on Linux and on Windows, and the window suite on Linux only.
+
 ## Water supply graph
 
 The editor's GRAPH tab draws a water supply graph on Q^1.85 paper from figures
@@ -924,7 +1002,7 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, including the Revit extension without Revit, the editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
+| test-linux | every test suite, including the Revit extension without Revit, the editor, spreadsheet, isometric and drawn-network windows under a virtual display, and the invariance stress on 60 networks |
 | build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
 | release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
@@ -1224,6 +1302,8 @@ others on the page, and the report says which check to make.
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
+| drawn network, headless (`tools/test_flow.pl`) | 95 / 95 |
+| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 35 / 35 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |
