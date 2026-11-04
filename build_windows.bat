@@ -1,15 +1,16 @@
 @echo off
 rem ===========================================================================
-rem build_windows.bat -- build phcp.exe and phcp_editor.exe on a Windows PC.
+rem build_windows.bat -- build phcp.exe, phcp_editor.exe and phcp_sheet.exe.
 rem
 rem Copyright (c) 2026 Hycadia Pty Ltd.  SPDX-License-Identifier: MIT
 rem
 rem The command-line program, phcp.exe, needs nothing beyond Strawberry Perl
-rem and is always built.  The text editor, phcp_editor.exe, also needs Tk,
-rem which has to be COMPILED here from source -- and that is the step that can
-rem fail.  So the two are built independently: if Tk will
-rem not build, you still get a working phcp.exe, and the Tk build log is copied
-rem to tk_build.log in this folder so the cause can be read.
+rem and is always built.  The text editor, phcp_editor.exe, and the
+rem spreadsheet, phcp_sheet.exe, also need Tk, which has to be COMPILED here
+rem from source -- and that is the step that can fail.  The windows are built
+rem apart from the command-line program: if Tk will not build, you still get a
+rem working phcp.exe, and the Tk build log is copied to tk_build.log in this
+rem folder so the cause can be read.
 rem
 rem WHY TK NEEDS A PATCHED RELEASE
 rem   Tk 804.036 on CPAN does not compile with recent Strawberry Perl
@@ -43,20 +44,20 @@ set TKPATCHED=https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/do
 set GUI=yes
 
 echo.
-echo [1/6] Checking Strawberry Perl...
+echo [1/7] Checking Strawberry Perl...
 where perl >nul 2>&1 || (echo ERROR: perl not found. Install Strawberry Perl first. & exit /b 1)
 for /f "tokens=*" %%v in ('perl -e "printf qq{%%vd}, $^V"') do set PERLV=%%v
 for /f "tokens=*" %%g in ('gcc -dumpversion 2^>nul') do set GCCV=%%g
 echo        Perl !PERLV!, GCC !GCCV!
 
 echo.
-echo [2/6] PAR::Packer (the packager)...
+echo [2/7] PAR::Packer (the packager)...
 perl -MPAR::Packer -e1 >nul 2>&1 || call cpanm --notest PAR::Packer
 perl -MPAR::Packer -e1 >nul 2>&1 || (echo ERROR: PAR::Packer is not available. & exit /b 1)
 echo        ok
 
 echo.
-echo [3/6] Tk (needed only for the text editor)...
+echo [3/7] Tk (needed for the text editor and the spreadsheet)...
 perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     echo        Installing the patched Tk 804.036_001 from the Strawberry Perl project...
@@ -99,7 +100,7 @@ rem The editor also carries the icon file, for its window and taskbar button.
 set EDDATA=%DATA% -a "data/phcp.ico;lib/data/phcp.ico"
 
 echo.
-echo [4/6] Building phcp.exe (command line)...
+echo [4/7] Building phcp.exe (command line)...
 set BUILT=no
 if "!ICON!"=="yes" (
     perl tools\pack_with_icon.pl data\phcp.ico console phcp.exe -I . %MODS% %DATA% phcp.pl && set BUILT=yes
@@ -111,7 +112,7 @@ if "!BUILT!"=="no" (
 )
 
 echo.
-echo [5/6] Building phcp_editor.exe (text editor)...
+echo [5/7] Building phcp_editor.exe (text editor)...
 if "!GUI!"=="yes" (
     set EDMODS=%MODS% -M HardyCross::Editor -M HardyCross::DbEdit -M HardyCross::Graph -M HardyCross::Tools -M HardyCross::Window::Project -M HardyCross::Window::Tools -M HardyCross::Window::Graph -M HardyCross::Window::Database -M HardyCross::Window::Results -M Tk -M Tk::DirTree -M Tk::TextUndo -M Tk::Panedwindow -M Tk::HList -M Tk::ItemStyle -M Tk::Menubutton -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Text -M Tk::Scrollbar -M Tk::Canvas -M Tk::PNG !DPI!
     set BUILT=no
@@ -128,7 +129,26 @@ if "!GUI!"=="yes" (
 )
 
 echo.
-echo [6/6] Smoke test: solve an example with phcp.exe...
+echo [6/7] Building phcp_sheet.exe (spreadsheet)...
+rem The spreadsheet is the editor's tabs plus HardyCross::Sheet.  It does not
+rem replace phcp_editor.exe.  Same icon, same database, same engine.
+if "!GUI!"=="yes" (
+    set SHEETMODS=!EDMODS! -M HardyCross::Sheet
+    set BUILT=no
+    if "!ICON!"=="yes" (
+        perl tools\pack_with_icon.pl data\phcp.ico gui phcp_sheet.exe -I . !SHEETMODS! %EDDATA% phcp_sheet.pl && set BUILT=yes
+        if "!BUILT!"=="no" echo        the icon could not be added - building without it
+    )
+    if "!BUILT!"=="no" (
+        call pp --gui -I . !SHEETMODS! %EDDATA% -o phcp_sheet.exe phcp_sheet.pl
+        if errorlevel 1 (echo ERROR: pp failed building phcp_sheet.exe & exit /b 1)
+    )
+) else (
+    echo        SKIPPED - Tk could not be built.  See the note at the end.
+)
+
+echo.
+echo [7/7] Smoke test: solve an example with phcp.exe...
 phcp.exe examples\05_crosscheck.phc > smoke_test_phc.txt
 findstr /c:"converged yes" smoke_test_phc.txt >nul || (echo ERROR: phcp.exe did not solve the .phc example. See smoke_test_phc.txt & exit /b 1)
 phcp.exe examples\07_pipe_database_demo.phc smoke_test.pdf >nul
@@ -140,10 +160,10 @@ echo        ok - .phc examples solved and converged, PDF report and JSON written
 echo.
 echo ===========================================================================
 if "!GUI!"=="yes" (
-    echo  Built: phcp.exe and phcp_editor.exe
+    echo  Built: phcp.exe, phcp_editor.exe and phcp_sheet.exe
 ) else (
     echo  Built: phcp.exe  ^(command line, working^)
-    echo  NOT built: phcp_editor.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
+    echo  NOT built: phcp_editor.exe and phcp_sheet.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
     echo  The compiler output is saved in this folder as tk_build.log.
     echo  Send the last 40 lines of it for diagnosis.
 )
