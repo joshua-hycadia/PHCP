@@ -39,9 +39,19 @@ use HardyCross;
 use HardyCross::Editor;
 use HardyCross::FastEntry;
 use HardyCross::Phc;
+use HardyCross::Settings;
 use File::Spec;
+use Scalar::Util qw(refaddr);
 
-our %C = (
+# Two grounds for the same window.  Light is the editor's white.  Dark is for
+# a long entry session.  The choice is FAST_DARK in the machine settings
+# (HardyCross::Settings); it is not part of the model and is never written
+# into the .phc file.  accent_fg is the blue used for text.  In the light
+# ground it is the same blue as the buttons; in the dark ground the buttons
+# stay the darker blue so white lettering on them still reads, and the text
+# blue is lighter.  ghost is an offered value, quieter than ink until it is
+# typed over.
+our %LIGHT = (
     paper     => '#FFFFFF',
     panel     => '#F6F7F9',
     line      => '#DDE1E6',
@@ -49,7 +59,9 @@ our %C = (
     ink       => '#111111',
     muted     => '#6B7280',
     faint     => '#A3AAB4',
+    ghost     => '#5E6874',
     accent    => '#1F5FBF',
+    accent_fg => '#1F5FBF',
     accent_dk => '#184C99',
     accent_bg => '#E8F0FC',
     select    => '#D3E3FA',
@@ -57,7 +69,34 @@ our %C = (
     error_bg  => '#FDEEEE',
     warn      => '#8A5A00',
     sash      => '#E4E7EB',
+    on_accent => '#FFFFFF',
+    scroll    => '#CDD2D9',
+    scroll_on => '#B4BBC5',
 );
+our %DARK = (
+    paper     => '#1B1E23',
+    panel     => '#252A31',
+    line      => '#3C434D',
+    hover     => '#313842',
+    ink       => '#E7E9ED',
+    muted     => '#A7B0BB',
+    faint     => '#8B949E',
+    ghost     => '#8E99A6',
+    accent    => '#1F5FBF',
+    accent_fg => '#9DC2FF',
+    accent_dk => '#184C99',
+    accent_bg => '#1A3354',
+    select    => '#2A466C',
+    error     => '#FF8A90',
+    error_bg  => '#4A2629',
+    warn      => '#E7C27A',
+    sash      => '#2A3038',
+    on_accent => '#FFFFFF',
+    scroll    => '#3E4651',
+    scroll_on => '#55606C',
+);
+our %C = %LIGHT;
+our $DARK = 0;
 
 our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 our ($MONO, $MONO_B, $UI, $UI_B, $UI_S);
@@ -131,15 +170,158 @@ sub set_icon {
     eval { $mw->iconphoto('-default', @img); 1 } or eval { $mw->iconimage($img[-1]) };
 }
 
+#------------------------------------------------------------------------------
+# Appearance.  Widgets are built in whichever ground is already in %C.  Each
+# one is remembered with the role of every colour it carries (paper, ink, ...)
+# so a later switch repaints it.  Roles are names, not hex, because the two
+# grounds share a few hex values: white is both the light paper and the
+# lettering on a blue button, and the light text-blue is the button blue.
+#------------------------------------------------------------------------------
+our @THEMED;
+our %THEMED_SEEN;
+our ($list, $restabs, $mode_key, $msg_text, $msg_bad, $msg_warn);
+our %btn;
+
+sub norm_colour {
+    my $c = lc(shift // '');
+    return $c if $c =~ /^#[0-9a-f]{6}$/;
+    if ($c =~ /^#([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})$/) {
+        return sprintf '#%02x%02x%02x', hex(substr($1, 0, 2)), hex(substr($2, 0, 2)), hex(substr($3, 0, 2));
+    }
+    return $c;
+}
+
+sub pick_role {
+    my ($colour, $opt) = @_;
+    my $c = norm_colour($colour);
+    return undef if $c eq '';
+    my %m;
+    for my $pal (\%LIGHT, \%DARK) {
+        $m{$_} = 1 for grep { norm_colour($pal->{$_}) eq $c } keys %$pal;
+    }
+    return undef unless %m;
+    my $fg = $opt =~ /foreground|insertbackground|highlightcolor|disabledforeground/;
+    if ($fg) {
+        return 'on_accent' if $m{on_accent};
+        return 'accent_fg' if $m{accent_fg};
+    } else {
+        return 'paper' if $m{paper} && $m{on_accent};
+        return 'accent' if $m{accent} && $m{accent_fg};
+    }
+    return (sort keys %m)[0];
+}
+
+sub index_one {
+    my $w = shift or return;
+    return unless eval { Tk::Exists($w) };
+    my $id = refaddr($w) or return;
+    return if $THEMED_SEEN{$id};
+    my %roles;
+    for my $opt (qw(background foreground activebackground activeforeground disabledforeground
+                    highlightbackground highlightcolor insertbackground
+                    selectbackground selectforeground troughcolor)) {
+        my $v = eval { $w->cget("-$opt") };
+        next unless defined $v;
+        my $role = pick_role($v, $opt);
+        $roles{$opt} = $role if $role;
+    }
+    return unless %roles;
+    $THEMED_SEEN{$id} = 1;
+    push @THEMED, [ $w, \%roles ];
+}
+
+sub index_tree {
+    my ($w, $seen) = @_;
+    return unless $w;
+    $seen ||= {};
+    my $id = refaddr($w) or return;
+    return if $seen->{$id}++;
+    index_one($w);
+    index_tree($_, $seen) for eval { $w->children };
+}
+
+# forget_tree -- drop a widget, and everything in it, from the repaint list
+# before it is destroyed.  The row is rebuilt on every command change; keeping
+# the dead widgets would pin them in memory.
+sub forget_tree {
+    my $w = shift or return;
+    forget_tree($_) for eval { $w->children };
+    my $id = refaddr($w) or return;
+    delete $THEMED_SEEN{$id};
+    @THEMED = grep { refaddr($_->[0]) != $id } @THEMED;
+}
+
+sub paint_menu {
+    my $m = shift or return;
+    return unless eval { Tk::Exists($m) && $m->isa('Tk::Menu') };
+    eval {
+        $m->configure(-background => $C{paper}, -foreground => $C{ink},
+            -activebackground => $C{select}, -activeforeground => $C{ink});
+    };
+    my $end = eval { $m->index('end') };
+    return unless defined $end;
+    for my $i (0 .. $end) {
+        my $type = eval { $m->type($i) } // '';
+        paint_menu(eval { $m->entrycget($i, -menu) }) if $type eq 'cascade';
+    }
+}
+
+sub load_appearance {
+    my $v = eval { HardyCross::Settings::get('FAST_DARK') } // '';
+    $DARK = ($v eq '1') ? 1 : 0;
+    %C = $DARK ? %DARK : %LIGHT;
+}
+
+sub save_appearance {
+    eval { HardyCross::Settings::set('FAST_DARK', $DARK ? '1' : undef) };
+}
+
+sub apply_appearance {
+    %C = $DARK ? %DARK : %LIGHT;
+    return unless $mw && eval { Tk::Exists($mw) };
+    $mw->optionAdd('*Background', $C{paper});
+    $mw->optionAdd('*Foreground', $C{ink});
+    $mw->optionAdd('*Menu.background', $C{paper});
+    $mw->optionAdd('*Menu.foreground', $C{ink});
+    $mw->optionAdd('*Menu.activeBackground', $C{select});
+    $mw->optionAdd('*Menu.activeForeground', $C{ink});
+    @THEMED = grep { eval { Tk::Exists($_->[0]) } } @THEMED;
+    for my $item (@THEMED) {
+        my ($w, $roles) = @$item;
+        my %cfg;
+        for my $opt (keys %$roles) {
+            next unless exists $C{ $roles->{$opt} };
+            $cfg{"-$opt"} = $C{ $roles->{$opt} };
+        }
+        eval { $w->configure(%cfg) } if %cfg;
+        paint_menu(eval { $w->cget(-menu) }) if eval { $w->isa('Tk::Menubutton') };
+    }
+    paint_menu(eval { $mw->cget(-menu) });
+    paint_modes();
+    select_tab($restabs, $restabs->{current}) if $restabs && $restabs->{current};
+    paint_fields();
+    fill_list() if $list && eval { Tk::Exists($list) };
+    row_check() if $mode_key;
+    message($msg_text, $msg_bad, $msg_warn);
+    update_actions();
+    $btn{THEME}->configure(-text => $DARK ? 'LIGHT' : 'DARK') if $btn{THEME} && eval { Tk::Exists($btn{THEME}) };
+}
+
+sub toggle_theme {
+    $DARK = $DARK ? 0 : 1;
+    apply_appearance();
+    save_appearance();
+}
+
 #==============================================================================
 # State.  One window, so package variables.  The settings hash is the one
 # HardyCross::Editor joins into the head of the file; the form's own variables
 # are copied into it by sync_settings before any check, save or solve.
 #==============================================================================
-our ($list, $report, $val_list, $pipe_list, $node_list, $out_list);
+our ($report, $val_list, $pipe_list, $node_list, $out_list);
 our ($toolbar_msg, $template_l, $live_l, $hint_l, $keys_l, $use_label);
 our ($field_frame, $details, $details_on);
-our (%btn, %ent, %value, %ghost, %mode_btn, %detail);
+our (%ent, %value, %ghost, %mode_btn, %detail);
 our ($use_type, $use_c, $use_type_ent, $use_c_ent) = ('BORE', '');
 our ($title_var, $method_var) = ('', 'HW');
 our %unit_var;
@@ -151,14 +333,13 @@ our $saved_text = '';
 our $valid_text;
 our $solved;
 our $validation;
-our $mode_key = 'PIPE';
+$mode_key = 'PIPE';
 our $edit_line;
 our $edit_is_use = 0;
 our $loading_line = 0;
 our (%sticky, %sticky_set);
 our (@undo, @redo);
 our $check_job;
-our $restabs;
 our %LABEL = (POINTS => 'FLOW PRESSURE', PIPETYPE => 'PIPE TYPE', MINPRESSURE => 'MIN PRESSURE',
               MINFLOW => 'MIN FLOW', MININLET => 'MIN INLET', FITTINGS => 'FITTINGS');
 
@@ -208,9 +389,9 @@ sub flat_button {
     return $parent->Button(-text => $text, -command => $cmd, -font => $UI_B,
         -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
         -highlightbackground => $p ? $C{accent} : $C{line}, -highlightcolor => $C{accent},
-        -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
+        -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? $C{on_accent} : $C{ink},
         -activebackground => $p ? $C{accent_dk} : $C{hover},
-        -activeforeground => $p ? '#FFFFFF' : $C{ink},
+        -activeforeground => $p ? $C{on_accent} : $C{ink},
         -disabledforeground => $C{faint}, -padx => px(12), -pady => px(4), -cursor => 'hand2');
 }
 
@@ -227,7 +408,7 @@ sub flat_scrollbar {
     my ($parent, $orient) = @_;
     return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
         -elementborderwidth => 0, -width => px(11), -troughcolor => $C{panel},
-        -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
+        -background => $C{scroll}, -activebackground => $C{scroll_on}, -highlightthickness => 0);
 }
 
 sub drop_down {
@@ -300,6 +481,7 @@ sub mono_list {
 #==============================================================================
 sub build_window {
     dpi_aware();
+    load_appearance();
     $mw = MainWindow->new(-background => $C{paper});
     set_icon();
     my $dpi = $mw->winfo('pixels', '1i');
@@ -332,6 +514,8 @@ sub build_window {
     $saved_text = full_text();
     set_title();
     update_actions();
+    index_tree($mw);
+    paint_fields();
     return $mw;
 }
 
@@ -341,21 +525,27 @@ sub build_menus {
     my $file = $bar->Menu(-tearoff => 0);
     my $edit = $bar->Menu(-tearoff => 0);
     my $model = $bar->Menu(-tearoff => 0);
+    my $view = $bar->Menu(-tearoff => 0);
     $bar->add('cascade', -label => 'FILE', -menu => $file);
     $bar->add('cascade', -label => 'EDIT', -menu => $edit);
+    $bar->add('cascade', -label => 'VIEW', -menu => $view);
     $bar->add('cascade', -label => 'MODEL', -menu => $model);
-    $file->add('command', -label => 'NEW', -command => \&file_new);
-    $file->add('command', -label => 'OPEN', -command => \&file_open);
-    $file->add('command', -label => 'SAVE', -command => \&file_save);
+    $file->add('command', -label => 'NEW', -accelerator => 'Ctrl+N', -command => \&file_new);
+    $file->add('command', -label => 'OPEN', -accelerator => 'Ctrl+O', -command => \&file_open);
+    $file->add('command', -label => 'SAVE', -accelerator => 'Ctrl+S', -command => \&file_save);
     $file->add('command', -label => 'SAVE AS', -command => \&file_save_as);
     $file->add('separator');
-    $file->add('command', -label => 'WRITE REPORT', -command => \&file_report);
+    $file->add('command', -label => 'WRITE REPORT', -accelerator => 'Ctrl+R', -command => \&file_report);
     $file->add('separator');
     $file->add('command', -label => 'QUIT', -command => \&file_quit);
-    $edit->add('command', -label => 'UNDO', -command => \&do_undo);
-    $edit->add('command', -label => 'REDO', -command => \&do_redo);
-    $model->add('command', -label => 'VALIDATE', -command => \&do_validate);
-    $model->add('command', -label => 'CALCULATE', -command => \&do_calculate);
+    $edit->add('command', -label => 'UNDO', -accelerator => 'Ctrl+Z', -command => \&do_undo);
+    $edit->add('command', -label => 'REDO', -accelerator => 'Ctrl+Y', -command => \&do_redo);
+    $view->add('checkbutton', -label => 'DARK', -variable => \$DARK, -command => sub {
+        apply_appearance();
+        save_appearance();
+    });
+    $model->add('command', -label => 'VALIDATE', -accelerator => 'F4', -command => \&do_validate);
+    $model->add('command', -label => 'CALCULATE', -accelerator => 'F5', -command => \&do_calculate);
 }
 
 sub build_toolbar {
@@ -371,11 +561,13 @@ sub build_toolbar {
     $btn{REPORT} = flat_button($left, 'WRITE REPORT', \&file_report)->pack(-side => 'left', -padx => px(2));
     $toolbar_msg = $bar->Label(-text => '', -font => $UI, -background => $C{panel}, -foreground => $C{ink},
         -anchor => 'e')->pack(-side => 'right', -padx => px(12));
+    $btn{THEME} = flat_button($bar, $DARK ? 'LIGHT' : 'DARK', \&toggle_theme)
+        ->pack(-side => 'right', -padx => px([2, 4]), -pady => px(6));
 }
 
 sub build_use_bar {
     my $bar = $mw->Frame(-background => $C{paper})->pack(-fill => 'x', -padx => px(8), -pady => px(6));
-    $bar->Label(-text => 'USE', -font => $UI_B, -background => $C{paper}, -foreground => $C{accent})
+    $bar->Label(-text => 'USE', -font => $UI_B, -background => $C{paper}, -foreground => $C{accent_fg})
         ->pack(-side => 'left', -padx => px([0, 6]));
     $bar->Label(-text => 'PIPE TYPE', -font => $UI_S, -background => $C{paper}, -foreground => $C{muted})
         ->pack(-side => 'left');
@@ -482,7 +674,9 @@ sub paint_modes {
         my $on = $k eq $mode_key;
         $mode_btn{$k}->configure(
             -background => $on ? $C{accent_bg} : $C{paper},
-            -foreground => $on ? $C{accent} : $C{ink});
+            -foreground => $on ? $C{accent_fg} : $C{ink},
+            -activebackground => $on ? $C{accent_bg} : $C{hover},
+            -activeforeground => $on ? $C{accent_fg} : $C{ink});
     }
 }
 
@@ -496,8 +690,8 @@ sub build_row {
     $hint_l = $mw->Label(-text => '', -font => $UI_S, -background => $C{paper}, -foreground => $C{muted},
         -anchor => 'w', -justify => 'left', -wraplength => px(1100))
         ->pack(-fill => 'x', -padx => px(8));
-    $keys_l = $mw->Label(-text => 'ALT AND A LETTER SWITCHES COMMAND.  ENTER ADDS THE ROW.  TAB MOVES.  '
-        . "APOSTROPHE COPIES THE FIELD FROM THE LINE ABOVE.  F4 VALIDATE.  F5 CALCULATE.  CTRL+Z UNDO.  CTRL+S SAVE.",
+    $keys_l = $mw->Label(-text => 'ENTER ADDS THE ROW.  TAB MOVES.  APOSTROPHE COPIES THE FIELD ABOVE.  '
+        . 'CTRL+SPACE CHOOSES.  F4 VALIDATE.  F5 CALCULATE.',
         -font => $UI_S, -background => $C{paper}, -foreground => $C{faint}, -anchor => 'w', -justify => 'left',
         -wraplength => px(1100))->pack(-fill => 'x', -padx => px(8), -pady => px([0, 4]));
 }
@@ -592,6 +786,7 @@ sub set_mode {
 
 sub rebuild_fields {
     my ($no_ghosts) = @_;
+    forget_tree($_) for $field_frame->children;
     for my $w ($field_frame->children) { $w->destroy }
     %ent = ();
     %value = ();
@@ -610,6 +805,7 @@ sub rebuild_fields {
         bind_field($e, $k);
     }
     fill_ghosts() unless $no_ghosts;
+    index_tree($field_frame);
     row_check();
 }
 
@@ -626,7 +822,7 @@ sub bind_field {
     $e->bind('<KeyPress-apostrophe>' => sub { $_[0]->break if ditto_field($key) });
     $e->bind('<Control-apostrophe>' => sub { ditto_field($key); $_[0]->break });
     $e->bind('<Control-space>' => sub { pick_for($key); $_[0]->break });
-    $e->bind('<KeyRelease>' => sub { arm_check() });
+    $e->bind('<KeyRelease>' => sub { paint_fields(); arm_check() });
     $e->bind('<FocusIn>' => sub {
         eval { $_[0]->selectionRange(0, 'end') };
         mark_field($key);
@@ -680,6 +876,7 @@ sub set_fields {
         next unless exists $ent{$k};
         $value{$k} = $v{$k};
     }
+    paint_fields();
     arm_check();
 }
 
@@ -701,6 +898,19 @@ sub fill_ghosts {
         $value{$k} = $ghost{$k} // '';
         $ghost{$k} = $value{$k};
     }
+    paint_fields();
+}
+
+# paint_fields -- an offered value is quieter than one that was typed.  While
+# a line is being edited the row holds that line, so nothing on it is an offer.
+sub paint_fields {
+    for my $k (keys %ent) {
+        my $e = $ent{$k} or next;
+        next unless eval { Tk::Exists($e) };
+        my $offered = !$edit_line && defined $ghost{$k} && $ghost{$k} ne ''
+            && ($value{$k} // '') eq $ghost{$k};
+        $e->configure(-foreground => $offered ? $C{ghost} : $C{ink}, -insertbackground => $C{ink});
+    }
 }
 
 sub arm_check {
@@ -718,7 +928,7 @@ sub row_check {
     $template_l->configure(-text => $p->{template} // '');
     if ($p->{status} eq 'ok') {
         my $n = $p->{count} > 1 ? "    $p->{count} LINES" : '';
-        $live_l->configure(-text => "OK$n", -foreground => $C{accent});
+        $live_l->configure(-text => "OK$n", -foreground => $C{accent_fg});
         mark_field(undef);
     } elsif ($p->{status} eq 'incomplete' && !row_dirty() && !$edit_line) {
         $live_l->configure(-text => '', -foreground => $C{muted});
@@ -727,6 +937,7 @@ sub row_check {
         $live_l->configure(-text => $p->{message}, -foreground => $p->{status} eq 'error' ? $C{error} : $C{warn});
         mark_field($p->{field});
     }
+    paint_fields();
 }
 
 sub ditto_field {
@@ -879,6 +1090,7 @@ sub load_line {
     $list->see($n - 1);
     message("EDITING LINE $n");
     row_check();
+    paint_fields();
     focus_first();
 }
 
@@ -1075,9 +1287,12 @@ sub delete_selected {
 
 sub message {
     my ($text, $bad, $warn) = @_;
-    return unless $toolbar_msg;
-    my $colour = $bad ? $C{error} : $warn ? $C{warn} : $C{ink};
-    $toolbar_msg->configure(-text => $text // '', -foreground => $colour);
+    $msg_text = $text // '';
+    $msg_bad = $bad ? 1 : 0;
+    $msg_warn = $warn ? 1 : 0;
+    return unless $toolbar_msg && eval { Tk::Exists($toolbar_msg) };
+    my $colour = $msg_bad ? $C{error} : $msg_warn ? $C{warn} : $C{ink};
+    $toolbar_msg->configure(-text => $msg_text, -foreground => $colour);
 }
 
 sub set_title {
@@ -1095,9 +1310,19 @@ sub invalidate {
 }
 
 sub update_actions {
-    return unless $btn{CALCULATE};
+    return unless $btn{CALCULATE} && eval { Tk::Exists($btn{CALCULATE}) };
     my $on = defined $valid_text && $valid_text eq full_text();
-    $btn{CALCULATE}->configure(-state => $on ? 'normal' : 'disabled');
+    # A disabled Calculate stays on the toolbar ground.  The blue is reserved
+    # for the moment it will actually run, so the eye can find it.
+    $btn{CALCULATE}->configure(
+        -state => $on ? 'normal' : 'disabled',
+        -background => $on ? $C{accent} : $C{panel},
+        -foreground => $on ? $C{on_accent} : $C{faint},
+        -activebackground => $on ? $C{accent_dk} : $C{hover},
+        -activeforeground => $on ? $C{on_accent} : $C{faint},
+        -highlightbackground => $on ? $C{accent} : $C{line},
+        -disabledforeground => $C{faint},
+    );
 }
 
 #==============================================================================

@@ -477,6 +477,12 @@ because a run usually keeps them.
 | validate, calculate | F4, then F5, the same rule as the editor: Calculate only on the text that just passed Validate.  The pipes, nodes, outlets and the report are shown underneath.  Ctrl+R writes the report |
 | a whole line | LINE (Alt+I) takes one line as it will stand in the file, including a comment.  A setting typed there is refused: settings belong in the bar |
 
+A value the row is offering, which Enter would accept, is drawn quieter than
+a value that was typed.  DARK, on the toolbar and under VIEW, switches to a
+dark ground for a long session.  The choice is kept on this machine
+(`FAST_DARK` in the settings file, the same file as the database folder) and
+is not written into the model.  The text editor does not read it.
+
 The letters are P pipe, N node, S sprinkler, H hydrant, R hose reel, W water,
 F fixed flow, M pump, and the rest on the buttons.  Alt+U goes to the pipe
 type.
@@ -1098,7 +1104,7 @@ others on the page, and the report says which check to make.
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
 | fast entry logic, headless | 109 / 109 |
-| fast entry window, under Xvfb | 35 / 35 |
+| fast entry window, under Xvfb | 45 / 45 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |

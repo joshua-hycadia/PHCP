@@ -39,6 +39,11 @@ unless (eval { require Tk; 1 }) {
 }
 
 chdir "$FindBin::Bin/..";
+my $TMP = tempdir(CLEANUP => 1);
+# The ground is a machine setting.  Point it at an empty file so a developer's
+# own dark choice does not change what this test sees, and so the test does
+# not write that choice back.
+$ENV{PHCP_SETTINGS} = "$TMP/settings.ini";
 $main::PHCP_FAST_LOAD_ONLY = 1;
 require "./phcp_fast.pl";
 
@@ -49,8 +54,7 @@ sub is {
     print "      $why\n" if !$ok && defined $why;
     $ok ? $pass++ : $fail++;
 }
-sub slurp { my $p = shift; open my $f, '<', $p or die "$p: $!\n"; local $/; <$f> }
-my $TMP = tempdir(CLEANUP => 1);
+sub slurp { my $p = shift; open my $f, '<', $p or return ''; local $/; <$f> }
 
 sub key {
     my ($w, $sym) = @_;
@@ -71,7 +75,7 @@ is('the window is white', lc $main::mw->cget(-background) eq '#ffffff');
 is('flat buttons', !grep { $main::btn{$_}->cget(-relief) ne 'flat' } keys %main::btn);
 my $menubar = $main::mw->cget(-menu);
 my @menus = map { $menubar->entrycget($_, -label) } grep { $menubar->type($_) eq 'cascade' } 0 .. $menubar->index('end');
-is('menus FILE EDIT MODEL', "@menus" eq 'FILE EDIT MODEL', "@menus");
+is('menus FILE EDIT VIEW MODEL', "@menus" eq 'FILE EDIT VIEW MODEL', "@menus");
 is('CALCULATE starts unavailable', $main::btn{CALCULATE}->cget(-state) eq 'disabled');
 is('PIPE is the command on show', $main::mode_key eq 'PIPE' && $main::ent{NAME});
 is('the hint tells how a run is written', $main::hint_l->cget(-text) =~ /P1-P12/ && $main::hint_l->cget(-text) =~ /P1X12/);
@@ -80,6 +84,20 @@ is('the hint tells how a run is written', $main::hint_l->cget(-text) =~ /P1-P12/
     is('the PHCP icon is set, at 16, 32 and 48', "@sizes" =~ /\b16 32 48\b/, "photos: @sizes");
 }
 is('a new file is not modified', !main::modified());
+
+# Dark is a ground for this window, remembered on the machine, absent from the file.
+main::toggle_theme();
+$main::mw->update;
+is('dark mode uses the dark ground', lc $main::mw->cget(-background) eq '#1b1e23', $main::mw->cget(-background));
+is('the entry follows the dark ground', lc($main::ent{NAME}->cget(-background) // '') eq '#1b1e23', $main::ent{NAME}->cget(-background));
+is('the network list follows', lc($main::list->cget(-background) // '') eq '#1b1e23', $main::list->cget(-background));
+is('the toolbar button offers the way back', $main::btn{THEME}->cget(-text) eq 'LIGHT', $main::btn{THEME}->cget(-text));
+is('dark is remembered on this machine', slurp($ENV{PHCP_SETTINGS}) =~ /^FAST_DARK=1$/m);
+is('dark is not written into the model', main::full_text() !~ /FAST_DARK|DARK/);
+main::toggle_theme();
+$main::mw->update;
+is('light mode returns to white', lc $main::mw->cget(-background) eq '#ffffff', $main::mw->cget(-background));
+is('light removes the machine setting', slurp($ENV{PHCP_SETTINGS}) !~ /^FAST_DARK=/m);
 
 #==============================================================================
 print "2. A ROW, FROM THE FIELDS AND FROM KEYS\n";
@@ -93,6 +111,15 @@ main::set_fields(NAME => 'N1', ELEVATION => '0');
 my $r = main::commit_row();
 is('enter adds the node', $r->{ok} && $main::list->size == 1 && $main::list->get(0) =~ /NODE\s+N1 0/, $r->{message});
 is('the file is now modified', main::modified());
+is('the offered elevation is drawn quieter than typed text',
+    lc($main::ent{ELEVATION}->cget(-foreground) // '') eq lc $main::C{ghost}
+    && ($main::value{ELEVATION} // '') eq '0',
+    "fg=" . ($main::ent{ELEVATION}->cget(-foreground) // '') . " val=$main::value{ELEVATION}");
+main::set_fields(ELEVATION => '3');
+is('typing over an offer uses the normal ink',
+    lc($main::ent{ELEVATION}->cget(-foreground) // '') eq lc $main::C{ink},
+    $main::ent{ELEVATION}->cget(-foreground));
+main::set_fields(ELEVATION => '0');
 
 # The next node is offered.  Accept it with the Return key, after typing only
 # a name over the proposal, the way a run of similar nodes is entered.
