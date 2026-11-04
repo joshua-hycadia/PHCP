@@ -5,9 +5,11 @@ merged.  Open for review: the editor fixes from the Windows run, the drawn
 supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
 PR 5 (the JSON interface).  Also open: the 300-model benchmark against other
 calculation programs (`comparison/`), which adds files only and changes no
-solved number; and the orifice plate fix, in which a CD given on `OPP` or `OFD`
+solved number; the orifice plate fix, in which a CD given on `OPP` or `OFD`
 now scales the plate's differential as 1/CD^2 (engine change, approved
-4 November 2026; results move only where a CD is given).
+4 November 2026; results move only where a CD is given); and the icon fix:
+the PHCP icon on the editor's window on Windows and on both `.exe` files,
+which v1.0.0 lacked, with CI reading it back out of the built programs.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -342,6 +344,8 @@ Hazen-Williams and Darcy-Weisbach, and a K-factor converter from US to metric.
 |---|---|
 | `.github/workflows/ci.yml` | new: every test suite on Linux; the Windows build and the display-free suites on Windows; on a release, the two programs attached |
 | `tools/pack_with_icon.pl`, `build_windows.bat` | the icon on the `.exe` files, set on a copy of the packager's loader; the plain build if that fails |
+| `tools/pack_with_icon.pl`, `tools/check_exe_icon.pl`, `build_windows.bat`, `ci.yml` (icon fix) | the loader's icon written by Windows' resource functions instead of Win32::Exe, whose writer left the packager's icon in place; each built `.exe` read back and its icon compared with `data/phcp.ico`, in the build and in CI |
+| `phcp_editor.pl`, `build_windows.bat` (icon fix) | on Windows the window icon set with `wm iconbitmap` from `data/phcp.ico`, packed into `phcp_editor.exe`; Tk 8.4 has no `wm iconphoto`, and `wm iconimage` there left Tk's icon showing |
 | `release_notes/` | the notes for each release, read by the release job |
 | `phcp_viewer.pl` | removed: the editor's results tables do what it did |
 | `phcp_editor.pl`, `HardyCross/Window/*.pm` | the editor split one file to a tab (PROJECT, GRAPH, QUICK TOOLS, DATABASE, results), all in package main; moved, not changed |
@@ -472,3 +476,4 @@ without SIZE 0 solves and reports exactly as before.
 - [x] v1.1 - auto pipe sizing: SIZE 0 sized for the smallest pipes or least volume, with a margin under the supply; //AS comments (engine files Phc, Report, Json)
 - [x] v1.1 - sizing trials (SIZING_TRIALS, default 5) and a COMPUTING indicator while a calculation runs
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
+- [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI

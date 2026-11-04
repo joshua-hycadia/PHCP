@@ -334,9 +334,18 @@ sub flat_scrollbar {
 #
 # A blue tile with a two-loop pipe network and a red sprinkler at the far
 # node.  The same picture is data/phcp.ico, which build_windows.bat gives the
-# .exe files.  Held here as PNG data at 16, 32 and 48 pixels so the window
-# needs no file to find; Tk picks the size the system asks for.  Without
-# Tk::PNG the window simply keeps the Tk icon.
+# .exe files.
+#
+# Two routes, because Perl/Tk is Tk 8.4:
+#   Windows  wm iconbitmap with the .ico file.  Tk 8.4 has no wm iconphoto,
+#            and wm iconimage on Windows changes neither the title bar nor
+#            the taskbar, so a picture alone leaves Tk's own icon showing.
+#            iconbitmap hands Windows the icon itself, every size in the
+#            file, for both.  -default gives it to the dialogs as well.
+#   others   the PNG data below, at 16, 32 and 48 pixels, so the window needs
+#            no file to find; Tk picks the size the system asks for.
+# Without the .ico (Windows) or Tk::PNG (elsewhere) the window simply keeps
+# the Tk icon.
 #==============================================================================
 my %ICON_PNG = (
     16 => join('', qw(
@@ -412,10 +421,25 @@ my %ICON_PNG = (
     )),
 );
 sub set_icon {
+    if ($^O eq 'MSWin32' and my $ico = icon_file()) {
+        return if eval { $mw->iconbitmap('-default', $ico); 1 }
+               or eval { $mw->iconbitmap($ico); 1 };
+    }
     return unless eval { require Tk::PNG; 1 };
     my @img = map { $mw->Photo(-format => 'png', -data => $ICON_PNG{$_}) }
               sort { $b <=> $a } keys %ICON_PNG;
     eval { $mw->iconphoto('-default', @img); 1 } or eval { $mw->iconimage($img[-1]) };
+}
+
+# icon_file -- data/phcp.ico, wherever this copy of the editor keeps it:
+# beside the script when run from the source folder, or inside a packaged
+# .exe, which unpacks it to PAR_TEMP/inc/lib/data (build_windows.bat adds it
+# there).  Undef if neither exists.
+sub icon_file {
+    my @try = (File::Spec->catfile($FindBin::Bin, 'data', 'phcp.ico'));
+    push @try, File::Spec->catfile($ENV{PAR_TEMP}, 'inc', 'lib', 'data', 'phcp.ico') if $ENV{PAR_TEMP};
+    my ($ico) = grep { -f } @try;
+    return $ico;
 }
 
 

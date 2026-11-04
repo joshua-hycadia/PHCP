@@ -97,6 +97,14 @@ perl tools/test_manual.pl           # docs/PHC_REFERENCE.md against the program
 CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no
 display on Windows, on every pull request.
 
+After a Windows build, and on every CI build, the icon is read back out of
+each program:
+
+```
+perl tools/check_exe_icon.pl phcp.exe          # its icon against data/phcp.ico
+perl tools/check_exe_icon.pl phcp_editor.exe
+```
+
 Add the new suites from `PLAN.md` to this list as they are written.
 No CPAN modules beyond Tk and PAR::Packer (for the
 Windows build); everything else is core Perl.
