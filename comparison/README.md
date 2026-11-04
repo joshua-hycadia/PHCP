@@ -1,6 +1,7 @@
 # PHCP against other calculation programs - 300-model benchmark
 
 Run 4 November 2026 on PHCP 1.0.0 (`phcp.exe --json`, release v1.0.0).
+Round 2, the same networks with fittings and devices, is in [ROUND2.md](ROUND2.md).
 
 PHCP and five other programs were each given the same 300 generated sprinkler
 networks: 100 trees, 100 looped-main systems and 100 grids, from 4 to 240
