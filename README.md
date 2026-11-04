@@ -7,14 +7,16 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), two windows on that same engine - a text editor and a
-spreadsheet - and a monospace ASCII calculation report.  The solver, the
-editor and the report are Perl.  A pyRevit extension for Revit 2022 to 2027,
-in Python, walks a model and calls that engine; see Revit.
+for the model (`.phc`), windows on that same engine - a text editor, a
+spreadsheet and an isometric drawing - and a monospace ASCII calculation
+report.  The solver, the editor and the report are Perl.  A pyRevit
+extension for Revit 2022 to 2027, in Python, walks a model and calls that
+engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
 perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
+perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
@@ -24,6 +26,8 @@ perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
 perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headless
 perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
+perl tools/test_isometric.pl             # verify the isometric drawing, and the .phc it writes
+perl tools/test_isometric_window.pl      # drive the isometric window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
@@ -435,7 +439,8 @@ there and selects it.
 
 The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
 other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
-QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).
+QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).  The isometric
+drawing is a separate program, `phcp_isometric.pl`, forked from this one.
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -504,6 +509,68 @@ The grids themselves are `HardyCross/Sheet.pm`, which has no Tk in it.
 again, and checks the solved pipe flows and node pressures against the file
 as it was.  `tools/test_sheet_window.pl` drives the window the way the
 editor's window test does.
+
+## The isometric drawing
+
+`perl phcp_isometric.pl [model.phc]`
+
+A separate program, forked from the text editor.  `phcp_editor.pl` is not
+changed: it still opens on the NETWORK tab, and this program has no NETWORK
+tab.  It loads the editor for the PROJECT tab, the results, the database and
+the file commands, and the network is drawn instead of typed.  Opening a
+file stays on the drawing.
+
+Points, pipes, pumps and fixed flows sit on a 30-degree grid, with the
+elevation on the vertical axis.  A click with a tool places a supply, a plain
+point, a sprinkler, a hydrant, a hose reel, a pipe, a pump or a fixed flow.
+SELECT drags a point.
+
+A pipe is entered either way.  Click a point, then the next point: the length
+is the distance between them.  Or type the length, size, fittings and C in
+KNOWN first: the next click only chooses the direction, and the end is placed
+that many steps along the axis.  A blank length follows the click.  Clicking
+a point that is already there joins it, and does not move it.  The elevation
+of the next point is typed the same way, in ELEVATION.  Return in a pipe's
+length on the right moves that pipe's end along the axis so the picture
+matches the length, and the typed figure is what is stored.
+
+Until a point is moved, a length or an elevation stays as it was typed; a
+move sets the connected lengths from the grid, in the model's length unit.
+
+LOCK, on when the window opens, draws every pipe along the grid axes in whole
+pixels, so a run stays straight and parallel to the grid.  A pipe that is not
+on one axis is drawn as straight legs, one axis at a time.  LOCK off draws
+the one straight line between the two ends, at a true 30 degrees.
+
+The pipe or point that is selected has its properties on the right: name,
+length, size, fittings, equivalent length, pipe type and C, with the unit in
+the label.  Return writes the field.  The two ends are shown and not typed.
+LABELS chooses what is written on the drawing: point names, pipe names,
+length, size, fittings, elevation, devices.  DARK, at the top right, swaps
+the palette of the whole window, including the results tables.
+
+The drawing writes the `.phc` the editor already calculates.  Where each
+point sits is a comment the reader ignores:
+
+```
+//ISO GRID 1
+//ISO N1 0 0 0
+//ISO N2 6 0 4.5
+```
+
+`GRID` is the metres of one step.  The three numbers are the two plan steps
+and the vertical.  A file with no such lines is laid out from its pipes and
+its elevations.  FIT scales that layout into the canvas, including a long run.
+VALIDATE and CALCULATE are unchanged, and run on the text.
+AREA, PUMPDUTY, SUPPLYGRAPH and any other comment are kept.  A copied pipe or
+point (`PC`, `NC`) is written out as the pipe or point it means, and a
+`CHANGEPIPE` stays applied to the one pipe it names, which is what the reader
+does.  `tools/test_isometric.pl` checks the drawing headless, including that
+every example written back from it solves to the same flows and pressures.
+`tools/test_isometric_window.pl` drives the window.
+
+The program is written for Perl 5.44.  The source also runs on Perl 5.38 and
+5.42, which is what the tests and the Windows build use.
 
 ## Water supply graph
 
@@ -795,7 +862,7 @@ not evidence; this is.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe` and `phcp_sheet.exe`
+`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
 on a Windows PC with Strawberry Perl installed: it fetches Tk and PAR::Packer
 from CPAN, packages the programs with the pipe and fitting database inside,
 and runs a smoke test on the `.phc` examples.
@@ -857,8 +924,8 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, including the Revit extension without Revit, the editor window and the spreadsheet window under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe` and `phcp_sheet.exe` kept as the run's downloads |
+| test-linux | every test suite, including the Revit extension without Revit, the editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
 | release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
