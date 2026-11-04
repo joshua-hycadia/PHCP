@@ -17,7 +17,7 @@
 # given a different meaning under the same number; new fields may be added.
 #
 #   interface      1
-#   program        "PHCP 1.0.0"
+#   program        "PHCP 1.1.0"
 #   model          the model file's name, or "-" for standard input
 #   status         "converged", "not_converged" or "error"
 #   converged      true / false
