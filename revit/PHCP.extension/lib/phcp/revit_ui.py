@@ -82,10 +82,12 @@ def ask_form(title, rows):
     for key, label, default, multiline in rows:
         lab = forms.Label()
         lab.Text = label
+        # A long label is two lines.  One line clips the figures a device needs.
+        tall = len(label) > 78
         lab.Location = drawing.Point(12, y)
-        lab.Size = drawing.Size(460, 16)
+        lab.Size = drawing.Size(460, 32 if tall else 16)
         form.Controls.Add(lab)
-        y += 18
+        y += 34 if tall else 18
         box = forms.TextBox()
         box.Location = drawing.Point(12, y)
         box.Size = drawing.Size(460, 90 if multiline else 22)

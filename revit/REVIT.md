@@ -27,7 +27,8 @@ extension.
 ## First use, on a model
 
 1. **PARAMETERS** - creates the shared parameters and binds them.  Run this
-   once on each model.  The other buttons refuse to run until it has.
+   once on each model, and again after an update that adds parameters.
+   The other buttons refuse to run until it has.
 2. **ENGINE** - choose `phcp.exe` (or `phcp.pl`).  The path is remembered in
    `%APPDATA%\PHCP\revit.ini` on this machine, or `~/.config/PHCP/revit.ini`.
    `PHCP_EXE` overrides it.  That file is not the Perl program's
@@ -48,18 +49,23 @@ extension.
 | FITTING MAP | Project rules that turn a family name into a fitting code. |
 | SUPPLY | One selected element becomes the water supply. |
 | AREA | The design-area name on the selected outlets. Blank clears it. |
-| PIPES | Pipe type, DN, C and fittings on the selection. |
+| OUTLETS | Role, K, minimum flow and pressure, drop and elevation on the selection. |
+| PIPES | Pipe type, DN, C, fittings and a length override on the selection. |
+| DEVICE | A booster, a loss curve, a reducing valve, an orifice plate or a ratio valve. |
 | OVERRIDE | Equivalent length and a fixed pressure loss on the selection. |
+| RENUMBER | New ids for copied elements. The original keeps its name. |
 | INFO | The PHCP data on the selected element. |
 | CHECK | Walk the network and list the problems. Errors are selected. |
 | EXPORT | Walk, then write a `.phc`. Nothing is solved. |
 | CALCULATE | Walk, solve, write the report, and put the results on the elements. |
 | SUGGEST | Ask the engine which DN it would use. The modelled size stays. |
+| APPLY | Copy that DN onto PHCP DN. The Revit diameter is not changed. |
 | VELOCITY | Colour the view by velocity, against the limit. |
 | FLOW | Colour the view by flow. |
 | ABILITY | Colour the view by whether an outlet can flow. |
-| TAG NODES | Text notes of the node names, in the active view. |
-| CLEAR | Colour and tags, the written results, or both. |
+| SELECT | Select the outlets that fail, or the pipes over the velocity limit. |
+| TAG NODES | Text notes of the node names, the pipe names, or both. |
+| CLEAR | Colour, tags and the colour key, the written results, or both. |
 
 CHECK, EXPORT, CALCULATE, SUGGEST and the colour and tag buttons ask which
 pipes to walk:
@@ -98,6 +104,9 @@ On an element:
 | PHCP Length | Length override, m, for a riser drawn short. |
 | PHCP Equivalent Length | Extra equivalent length, on top of the fittings. 0 clears it. |
 | PHCP Pressure Loss | A loss that does not vary with flow, kPa. 0 clears it. |
+| PHCP Device | BP, BFP, PRV, OPP, OFD or PRA. A pipe holds one, at its start. |
+| PHCP Device Data | The device's figures. See Devices. |
+| PHCP Pump Duty | Flow and pressure of a booster's rated duty. |
 | PHCP Static | Supply pressure at zero flow, kPa. |
 | PHCP Curve | Test points: flow, pressure, flow, pressure. L/min and kPa. |
 | PHCP K | K-factor, L/min per square root of kPa. |
@@ -141,6 +150,24 @@ Select one element and run **SUPPLY**.
 A static pressure is required.  A curve is optional: pairs of flow and
 pressure, in L/min and kPa, after the static pressure.  An elevation, if
 given, overrides the height of that end.
+
+## Outlets
+
+**OUTLETS** sets the selection in one step.  Blank leaves a field as it is.
+
+| field | parameter |
+|---|---|
+| SPRINKLER, HYDRANT, HREEL or FIXEDFLOW | PHCP Role |
+| K | PHCP K. 0 shuts the outlet. |
+| minimum flow, L/min | PHCP Min Flow |
+| minimum pressure, kPa | PHCP Min Pressure |
+| fixed flow, L/min | PHCP Set Flow |
+| drop size, mm, and drop type | PHCP Drop DN, PHCP Drop Type |
+| elevation, m | PHCP Elevation |
+
+A row of heads at one level is an elevation on the selection.  A riser drawn
+as a short line is a length override on **PIPES**: the metres to use instead
+of the drawn length.  CLEAR on that field removes the override.
 
 ## An area
 
@@ -221,9 +248,9 @@ are the elements with those PHCP IDs.  Plain junctions are N2, N3, ... in
 pipe order.  The first junction after a supply is not N1: the supply took
 the first number and then renamed it.  Pipe and outlet ids are stored and
 stay.  Node names can change when the network changes.  **TAG NODES** places
-a text note 200 mm to the side of each node and replaces the notes from the
-last run.  A 3D view and a schedule cannot hold a text note; open a plan or
-a section.
+a text note 200 mm to the side of each node, a pipe name 200 mm off the
+middle of the pipe, or both, and replaces the notes from the last run.  A
+3D view and a schedule cannot hold a text note; open a plan or a section.
 
 ## Overrides
 
@@ -235,10 +262,42 @@ a section.
 
 Blank leaves the value.  0 clears it.
 
+## Devices
+
+**DEVICE** puts one device in each selected pipe, at the start of the pipe.
+NONE clears it.  A fixed pressure loss and a device on the same pipe are
+refused: a pipe holds one.
+
+| device | figures | written as |
+|---|---|---|
+| BP | churn pressure, then flow and pressure pairs. Duty, optional: flow and pressure | `BP`, and `PUMPDUTY` when a duty is set |
+| BFP | flow and loss, in pairs. One pair is a fixed loss, so its flow is 0 | `BFP` |
+| PRV | the same pairs. `0 50` is 50 kPa at any flow | `PRV` |
+| OPP | the drop wanted, kPa, and a discharge coefficient if you have one | `OPP` |
+| OFD | the plate's bore, mm, and a discharge coefficient if you have one | `OFD` |
+| PRA | the ratio, such as `3:1`, then a minimum inlet and a band if you have them | `PRA` |
+
+A discharge coefficient is more than 0 and not more than 1.  A ratio is more
+than 1.  The report checks a booster's curve against its duty: at the duty,
+at shut-off (AS 2941-2013, at most 140 % of the duty pressure), and at 150 %
+flow for information.
+
+## Copies
+
+Copying a pipe or a head copies its PHCP ID.  **CHECK** reports the duplicate
+and stops.  **RENUMBER** gives the copies the next free name with the same
+letters.  The element with the lower Revit id keeps the name, which is the
+one that was there before the copy.  Selected copies, or every copy in the
+model.
+
 ## Colour
 
 Colour is a view override.  It is not a pass or fail rule, and it does not
-change the model.  CLEAR removes only the overrides and tags PHCP placed.
+change the model.  Each colouring also places the key as a text note inside
+the crop of the view.  CLEAR removes the overrides, the tags and that key.
+
+**SELECT**, after a calculation, selects the outlets that fail, or the pipes
+over the velocity limit.
 
 **VELOCITY**, as fractions of the limit (6 m/s unless PROJECT sets another):
 
@@ -270,6 +329,9 @@ with no PHCP Pass yet is not treated as a failure: calculate first.
 **SUGGEST** asks the engine to size pipes (size 0 in the model it is handed).
 The Revit diameter is not changed.  The DN the engine chooses is written to
 PHCP Suggested DN, and the dialog lists each one, for example `P3  40 -> 50`.
+**APPLY** copies that DN onto PHCP DN, on the selection or on every pipe that
+has a suggestion, so the next calculation uses it.  The Revit diameter is
+still not changed.  A suggestion of 0 is not a size and is not copied.
 
 - **OVER THE VELOCITY LIMIT** solves once, writes the results back, and
   sizes the pipes faster than the limit.
@@ -318,9 +380,9 @@ database's diameters into its source.
 
 ## Not yet run inside Revit
 
-The walk, the `.phc` it writes, the fitting codes, the colours and the size
-suggestions are checked by `python3 tools/test_revit.py`, with no Revit
-present.  That test builds the same network as
+The walk, the `.phc` it writes, the fitting codes, the devices, the colours
+and the size suggestions are checked by `python3 tools/test_revit.py`, with
+no Revit present.  That test builds the same network as
 `examples/08_autocad_export_format.phc`, solves it with `phcp.pl`, and
 compares the flows and pressures with
 `tools/baseline/08_autocad_export_format.expected`.  It also checks that

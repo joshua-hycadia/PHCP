@@ -11,10 +11,14 @@ import traceback
 
 import phcp.revit_host as host
 from phcp.fittings import parse_rules
-from phcp.model import Issue, parse_curve, walk, write_phc, zero_pipe_sizes
+from phcp.model import (
+    Issue, note_positions, parse_curve, parse_device, parse_duty,
+    renumber_copies, walk, write_phc, zero_pipe_sizes,
+)
 from phcp.parameters import DEFAULT_VELOCITY_LIMIT
 from phcp.results import (
-    colour_ability, colour_flow, colour_velocity, element_results,
+    colour_ability, colour_flow, colour_velocity, dns_to_apply,
+    element_results, failing_ids, fast_ids, legend_note,
     pipes_over_velocity, suggestions, summary_text,
 )
 from phcp.revit_ui import ask_choice, ask_form, open_exe, save_phc, tell
@@ -136,7 +140,7 @@ def _solve(text, report=None):
 
 
 def _legend(legend):
-    return "\n".join("%s  %s" % ("#%02X%02X%02X" % rgb, label) for rgb, label in legend)
+    return legend_note(legend)
 
 
 # ---------------------------------------------------------------- setup
@@ -327,6 +331,7 @@ def pipe_markup():
             ("dn", "DN, MM. 0 ASKS PHCP TO SIZE THE PIPE. BLANK LEAVES IT.", "", False),
             ("c", "C, OR ROUGHNESS IN MM UNDER DW. BLANK LEAVES IT.", "", False),
             ("fit", "FITTINGS, SUCH AS 2E T GV. BLANK LEAVES THEM. NONE CLEARS THEM.", "", False),
+            ("length", "LENGTH OVERRIDE, M, FOR A RISER DRAWN SHORT. BLANK LEAVES IT. CLEAR REMOVES IT.", "", False),
         ])
         if not got:
             return
@@ -344,9 +349,118 @@ def pipe_markup():
             numbers["PHCP DN"] = float(got["dn"])
         if got["c"]:
             numbers["PHCP C"] = float(got["c"])
+        if got["length"].upper() == "CLEAR":
+            host.clear_params(doc, ids, ["PHCP Length"])
+        elif got["length"]:
+            numbers["PHCP Length"] = float(got["length"])
         if numbers:
             host.set_numbers(doc, ids, numbers)
         tell("Pipe data set on %d elements." % len(ids))
+    _guard(go)
+
+
+_ROLES = ("SPRINKLER", "HYDRANT", "HREEL", "FIXEDFLOW")
+
+
+def outlets():
+    def go():
+        doc, uidoc = host._doc()
+        if not _need_parameters(doc):
+            return
+        ids = _ids_or_tell(uidoc)
+        if not ids:
+            return
+        got = ask_form("PHCP OUTLETS", [
+            ("role", "ROLE: SPRINKLER, HYDRANT, HREEL OR FIXEDFLOW. BLANK LEAVES IT.", "", False),
+            ("k", "K, L/MIN PER SQUARE ROOT OF KPA. BLANK LEAVES IT. 0 SHUTS THE OUTLET.", "", False),
+            ("flow", "MINIMUM FLOW, L/MIN. BLANK LEAVES IT.", "", False),
+            ("pressure", "MINIMUM PRESSURE, KPA. BLANK LEAVES IT.", "", False),
+            ("setflow", "FIXED FLOW, L/MIN. BLANK LEAVES IT.", "", False),
+            ("drop", "DROP DN, MM. BLANK LEAVES IT.", "", False),
+            ("dtype", "DROP TYPE. BLANK LEAVES IT. ASAM IF A DROP HAS NONE.", "", False),
+            ("elev", "ELEVATION, M. BLANK LEAVES IT. SET THIS FOR A ROW OF HEADS AT ONE LEVEL.", "", False),
+        ])
+        if not got:
+            return
+        role = got["role"].upper()
+        if role and role not in _ROLES:
+            tell("The role is SPRINKLER, HYDRANT, HREEL or FIXEDFLOW.")
+            return
+        texts = {}
+        if role:
+            texts["PHCP Role"] = role
+        if got["dtype"]:
+            texts["PHCP Drop Type"] = got["dtype"]
+        if texts:
+            host.set_texts(doc, ids, texts)
+        numbers = {}
+        for key, name, label in (
+            ("k", "PHCP K", "K"),
+            ("flow", "PHCP Min Flow", "minimum flow"),
+            ("pressure", "PHCP Min Pressure", "minimum pressure"),
+            ("setflow", "PHCP Set Flow", "fixed flow"),
+            ("drop", "PHCP Drop DN", "drop size"),
+            ("elev", "PHCP Elevation", "elevation"),
+        ):
+            if got[key]:
+                numbers[name] = _number(got[key], label)
+        if numbers:
+            host.set_numbers(doc, ids, numbers)
+        if not texts and not numbers:
+            tell("Nothing to change.")
+            return
+        tell("Outlet data set on %d elements." % len(ids))
+    _guard(go)
+
+
+_DEVICE_KINDS = ("BP", "BFP", "PRV", "OPP", "OFD", "PRA")
+
+
+def device():
+    def go():
+        doc, uidoc = host._doc()
+        if not _need_parameters(doc):
+            return
+        ids = _ids_or_tell(uidoc)
+        if not ids:
+            return
+        got = ask_form("PHCP DEVICE", [
+            ("kind", "DEVICE: BP, BFP, PRV, OPP, OFD OR PRA. BLANK LEAVES IT. NONE CLEARS THE DEVICE, ITS FIGURES AND ANY DUTY.", "", False),
+            ("data", "FIGURES. BP: CHURN THEN FLOW PRESSURE. BFP AND PRV: FLOW LOSS. OPP: DROP. OFD: BORE. PRA: RATIO, SUCH AS 3:1. BLANK LEAVES THEM. NONE CLEARS THEM.", "", False),
+            ("duty", "PUMP DUTY, FLOW THEN PRESSURE, FOR A BOOSTER. BLANK LEAVES IT. NONE CLEARS IT.", "", False),
+        ])
+        if not got:
+            return
+        kind = got["kind"].upper()
+        if kind == "NONE":
+            host.clear_params(doc, ids, ["PHCP Device", "PHCP Device Data", "PHCP Pump Duty"])
+            tell("Device cleared on %d elements." % len(ids))
+            return
+        if kind and kind not in _DEVICE_KINDS:
+            tell("The device is BP, BFP, PRV, OPP, OFD or PRA.")
+            return
+        data = got["data"]
+        if kind and data and data.upper() != "NONE":
+            parse_device(kind, data)
+        duty = got["duty"]
+        if duty and duty.upper() != "NONE":
+            parse_duty(duty)
+        texts = {}
+        if kind:
+            texts["PHCP Device"] = kind
+        if data.upper() == "NONE":
+            texts["PHCP Device Data"] = None
+        elif data:
+            texts["PHCP Device Data"] = data
+        if duty.upper() == "NONE":
+            texts["PHCP Pump Duty"] = None
+        elif duty:
+            texts["PHCP Pump Duty"] = duty
+        if not texts:
+            tell("Nothing to change.")
+            return
+        host.set_texts(doc, ids, texts)
+        tell("Device set on %d elements. A pipe holds one device, at its start." % len(ids))
     _guard(go)
 
 
@@ -526,7 +640,14 @@ def _colour(mode):
         colours, legend = colour_ability(outlets, pipes)
     view = uidoc.ActiveView
     host.colour_elements(doc, view, colours, legend)
-    tell("Coloured %d elements in this view.\n\n%s" % (len(colours), _legend(legend)))
+    note = _legend(legend)
+    try:
+        host.place_legend(doc, view, note)
+    except host.RevitHostError as err:
+        tell("Coloured %d elements. The legend was not placed.\n%s\n\n%s" % (
+            len(colours), err, note))
+        return
+    tell("Coloured %d elements in this view.\n\n%s" % (len(colours), note))
 
 
 def colour_by_velocity():
@@ -543,6 +664,10 @@ def colour_by_ability():
 
 def tag_nodes():
     def go():
+        choice = ask_choice("PHCP TAGS", "Tag what? Running this again replaces the tags.", [
+            "NODES", "PIPES", "NODES AND PIPES"])
+        if not choice:
+            return
         prepared = _prepare(need_ok=False)
         if not prepared:
             return
@@ -551,8 +676,94 @@ def tag_nodes():
             _show(walked)
             host.select_ids(uidoc, _error_ids(walked))
             return
-        placed = host.tag_nodes(doc, uidoc.ActiveView, walked.nodes)
-        tell("Tagged %d nodes. Running this again replaces the tags." % placed)
+        nodes = walked.nodes if choice != "PIPES" else []
+        pipes = walked.pipes if choice != "NODES" else []
+        notes = note_positions(nodes, pipes)
+        placed = host.place_notes(doc, uidoc.ActiveView, notes)
+        tell("Tagged %d. Running this again replaces the tags." % placed)
+    _guard(go)
+
+
+def select_results():
+    def go():
+        choice = ask_choice("PHCP SELECT", "Select what the last calculation found?", [
+            "FAILING OUTLETS", "PIPES OVER THE VELOCITY LIMIT"])
+        if not choice:
+            return
+        prepared = _prepare(need_ok=False)
+        if not prepared:
+            return
+        doc, uidoc, walked = prepared
+        speeds, _flows, outlets, _pipes = host.read_result_numbers(doc, walked)
+        limit = walked.project.velocity_limit or DEFAULT_VELOCITY_LIMIT
+        if choice == "FAILING OUTLETS":
+            ids = failing_ids(outlets)
+            empty = "No outlet fails. Calculate first if the results are not on the model yet."
+        else:
+            ids = fast_ids(speeds, limit)
+            empty = "No pipe is over %.3g m/s." % limit
+        if not ids:
+            tell(empty)
+            return
+        host.select_ids(uidoc, ids)
+        tell("Selected %d." % len(ids))
+    _guard(go)
+
+
+def apply_size():
+    def go():
+        doc, uidoc = host._doc()
+        if not _need_parameters(doc):
+            return
+        choice = ask_choice(
+            "PHCP APPLY",
+            "Copy suggested sizes onto PHCP DN? The Revit diameter is not changed.",
+            ["SELECTED PIPES", "EVERY SUGGESTED SIZE"])
+        if not choice:
+            return
+        if choice == "SELECTED PIPES":
+            ids = _ids_or_tell(uidoc)
+            if not ids:
+                return
+        else:
+            ids = None
+        found = host.suggested_map(doc, ids)
+        chosen = dns_to_apply(found)
+        if not chosen:
+            tell("Nothing to apply. Suggest a size first.")
+            return
+        host.apply_values(doc, {rid: {"PHCP DN": dn} for rid, dn in chosen.items()})
+        tell("PHCP DN set on %d pipes. The Revit diameter was not changed." % len(chosen))
+    _guard(go)
+
+
+def renumber():
+    def go():
+        doc, uidoc = host._doc()
+        if not _need_parameters(doc):
+            return
+        choice = ask_choice(
+            "PHCP RENUMBER",
+            "Which copies get a new id? The original keeps its name.",
+            ["SELECTED COPIES", "EVERY COPY IN THE MODEL"])
+        if not choice:
+            return
+        selected = host.selection_ids(uidoc)
+        if choice == "SELECTED COPIES" and not selected:
+            tell("Select the copies first.")
+            return
+        records = host.phcp_names(doc)
+        changes = renumber_copies(records, None if choice != "SELECTED COPIES" else selected)
+        if not changes:
+            tell("No copied id to renumber. The original, the element with the lower id, keeps its name.")
+            return
+        host.write_names(doc, changes)
+        lines = ["%s  %s" % (param, name) for _rid, param, name in changes]
+        shown = "\n".join(lines[:40])
+        if len(lines) > 40:
+            shown += "\n... %d more are in the pyRevit output." % (len(lines) - 40)
+        print("\n".join("%s %s -> %s" % row for row in changes))
+        tell("%d copies were given new ids. The originals were left.\n\n%s" % (len(changes), shown))
     _guard(go)
 
 

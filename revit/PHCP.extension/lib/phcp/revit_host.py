@@ -682,6 +682,9 @@ def _pipe_from(el, sizes):
         eqv_m=read_number(el, "PHCP Equivalent Length", "length"),
         loss_kpa=read_number(el, "PHCP Pressure Loss", "pressure"),
         length_override_m=read_number(el, "PHCP Length", "length"),
+        device=read_text(el, "PHCP Device"),
+        device_data=read_text(el, "PHCP Device Data"),
+        duty_text=read_text(el, "PHCP Pump Duty"),
     )
 
 
@@ -927,6 +930,72 @@ def set_numbers(doc, ids, values):
                 _set(el, name, value)
 
 
+def clear_params(doc, ids, names):
+    """Clear parameters.  Used when the designer types CLEAR or NONE."""
+    DB = _db()
+    with _transaction(doc, "PHCP clear"):
+        for rid in ids:
+            el = doc.GetElement(make_id(rid))
+            if el is None:
+                continue
+            for name in names:
+                found = el.LookupParameter(name)
+                if found is None or found.IsReadOnly:
+                    continue
+                try:
+                    found.ClearValue()
+                except Exception:
+                    if found.StorageType == DB.StorageType.String:
+                        found.Set("")
+
+
+def phcp_names(doc):
+    """Every stored PHCP name: (revit id, name, parameter).
+
+    PHCP ID and PHCP Supply ID are one list of names, so a copy of either
+    is a duplicate.  On one element, PHCP ID is listed first.
+    """
+    DB = _db()
+    rows = []
+    for el in DB.FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements():
+        rid = element_int(el.Id)
+        for param in ("PHCP ID", "PHCP Supply ID"):
+            text = read_text(el, param)
+            if text:
+                rows.append((rid, text, param))
+    return rows
+
+
+def write_names(doc, rows):
+    """rows are (revit id, parameter, new name)."""
+    with _transaction(doc, "PHCP renumber"):
+        for rid, param, name in rows:
+            el = doc.GetElement(make_id(rid))
+            if el is None:
+                continue
+            _set(el, param, name)
+    return len(rows)
+
+
+def suggested_map(doc, ids):
+    """{revit id: suggested DN} for the ids, or for every element when ids is None."""
+    DB = _db()
+    if ids is None:
+        elements = DB.FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
+    else:
+        elements = []
+        for rid in ids:
+            el = doc.GetElement(make_id(rid))
+            if el is not None:
+                elements.append(el)
+    found = {}
+    for el in elements:
+        dn = read_number(el, "PHCP Suggested DN", "number")
+        if dn is not None:
+            found[element_int(el.Id)] = dn
+    return found
+
+
 def set_project(doc, values):
     """values: {parameter name: text or number or bool}."""
     info = doc.ProjectInformation
@@ -1086,37 +1155,86 @@ def clear_colours(doc, view):
     return len(ids)
 
 
-def tag_nodes(doc, view, nodes):
-    """Text notes at the nodes, replacing the notes PHCP placed last time.
+def place_notes(doc, view, notes, mark="tag"):
+    """Text notes, replacing the notes PHCP placed last time with this mark.
 
-    A plan or a section holds a text note.  A 3D view and a schedule do not;
-    the caller hears about that and the notes are simply not placed.
+    notes are (x, y, z, text) in millimetres.  A plan or a section holds a
+    text note.  A 3D view and a schedule do not; the caller hears about that
+    and the notes are simply not placed.
     """
     DB = _db()
-    with _transaction(doc, "PHCP node tags"):
-        _delete_tags(doc, view)
+    with _transaction(doc, "PHCP notes"):
+        _delete_marked(doc, view, mark)
         note_type = _text_type(doc)
         if note_type is None:
-            raise RevitHostError("The model has no text note type to tag nodes with.")
+            raise RevitHostError("The model has no text note type.")
         options = DB.TextNoteOptions(note_type.Id)
         placed = 0
-        for node in nodes:
-            if not node.name:
+        for x, y, z, text in notes:
+            if not text:
                 continue
-            # 200 mm to the side, so the name is not drawn on top of the node.
             point = DB.XYZ(
-                _from((node.x + 200.0), _units().Millimeters),
-                _from(node.y, _units().Millimeters),
-                _from(node.z, _units().Millimeters),
+                _from(x, _units().Millimeters),
+                _from(y, _units().Millimeters),
+                _from(z, _units().Millimeters),
             )
-            try:
-                note = DB.TextNote.Create(doc, view.Id, point, node.name, options)
-            except Exception as err:
-                raise RevitHostError(
-                    "This view cannot hold node tags.  Open a plan or a section. (%s)" % err)
-            _set_mark(note, "tag")
+            note = _create_note(doc, view, point, text, options)
+            _set_mark(note, mark)
             placed += 1
     return placed
+
+
+def place_legend(doc, view, text):
+    """The colour key, inside the crop of the view, replacing the last one.
+
+    Colouring again writes a new key.  CLEAR removes it with the tags.
+    """
+    DB = _db()
+    with _transaction(doc, "PHCP legend"):
+        _delete_marked(doc, view, "legend")
+        note_type = _text_type(doc)
+        if note_type is None:
+            raise RevitHostError("The model has no text note type for the legend.")
+        options = DB.TextNoteOptions(note_type.Id)
+        note = _create_note(doc, view, _legend_origin(view), text, options)
+        _set_mark(note, "legend")
+    return 1
+
+
+def _create_note(doc, view, point, text, options):
+    DB = _db()
+    # A width keeps one band on one line.  The short form is the fallback
+    # where that overload is not on this Revit.
+    width = _from(2500.0, _units().Millimeters)
+    try:
+        return DB.TextNote.Create(doc, view.Id, point, width, text, options)
+    except TypeError:
+        pass
+    except Exception as err:
+        # The width form can fail for a reason that is not the signature.
+        # Try the short form before telling the designer the view cannot.
+        try:
+            return DB.TextNote.Create(doc, view.Id, point, text, options)
+        except Exception:
+            raise RevitHostError(
+                "This view cannot hold text.  Open a plan or a section. (%s)" % err)
+    try:
+        return DB.TextNote.Create(doc, view.Id, point, text, options)
+    except Exception as err:
+        raise RevitHostError(
+            "This view cannot hold text.  Open a plan or a section. (%s)" % err)
+
+
+def _legend_origin(view):
+    """A point inside the crop, so the key sits on the sheet."""
+    DB = _db()
+    try:
+        box = view.CropBox
+        nudge = _from(500.0, _units().Millimeters)
+        corner = DB.XYZ(box.Min.X + nudge, box.Min.Y + nudge, box.Min.Z)
+        return box.Transform.OfPoint(corner)
+    except Exception:
+        return DB.XYZ(0, 0, 0)
 
 
 def _text_type(doc):
@@ -1125,17 +1243,19 @@ def _text_type(doc):
     return found[0] if found else None
 
 
-def _delete_tags(doc, view):
+def _delete_marked(doc, view, mark):
     DB = _db()
     notes = DB.FilteredElementCollector(doc, view.Id).OfClass(DB.TextNote).ToElements()
     for note in list(notes):
-        if _mark_of(note) == "tag":
+        if _mark_of(note) == mark:
             doc.Delete(note.Id)
 
 
 def clear_tags(doc, view):
+    """Tags and the colour key.  Notes the designer typed are left."""
     with _transaction(doc, "PHCP clear tags"):
-        _delete_tags(doc, view)
+        _delete_marked(doc, view, "tag")
+        _delete_marked(doc, view, "legend")
 
 
 def read_result_numbers(doc, walked):
