@@ -87,6 +87,8 @@ perl tools/stress_resolver.pl       # fitting resolver
 perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
 perl tools/test_editor.pl           # the editor's logic, headless
 perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
+perl tools/test_sheet.pl            # the spreadsheet's grids, headless
+perl tools/test_sheet_window.pl     # the spreadsheet window (re-runs under xvfb-run)
 perl tools/test_dbedit.pl           # database editing and the team folder, headless
 perl tools/test_graph.pl            # the Q^1.85 water supply graph, and SUPPLYGRAPH in a report
 perl tools/test_tools.pl            # the QUICK TOOLS calculators
@@ -104,6 +106,7 @@ each program:
 ```
 perl tools/check_exe_icon.pl phcp.exe          # its icon against data/phcp.ico
 perl tools/check_exe_icon.pl phcp_editor.exe
+perl tools/check_exe_icon.pl phcp_sheet.exe
 ```
 
 Add the new suites from `PLAN.md` to this list as they are written.

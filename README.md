@@ -7,11 +7,12 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), a text editor built around it, and a monospace ASCII
-calculation report.  The whole stack is Perl.
+for the model (`.phc`), two windows on that same engine - a text editor and a
+spreadsheet - and a monospace ASCII calculation report.  The whole stack is Perl.
 
 ```
-perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
@@ -19,6 +20,8 @@ perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculat
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
+perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headless
+perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
@@ -439,8 +442,51 @@ Linux with Tk 804.036.  The window has been run on Windows 11
 the suites that need no display on Windows; the window suite runs on Linux
 only.
 
-The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
-tests, and Tk::TableMatrix is no longer needed.
+The earlier spreadsheet, `phcp_gui.pl`, is retired with its tests, and
+Tk::TableMatrix is no longer needed.  The text editor is unchanged.  A
+second window, the spreadsheet below, is another way in to the same engine.
+
+## The spreadsheet window
+
+`perl phcp_sheet.pl [model.phc]`
+
+```
++------------------------------------------------------------------+
+| NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
++------------------------------------------------------------------+
+| SYSTEM | NODES | SUPPLIES | PRESSURE DEVICES | PROJECT | GRAPH   |
+|        | QUICK TOOLS | DATABASE                                    |
+|  ROW | PIPE | FROM NODE | TO NODE | LENGTH | TYPE | DIAM | FITTINGS |
+|   1  |  1   | 2         | 101     | 7000   | ASAM | 100  | 2E T     |
++------------------------------------------------------------------+
+| VALIDATION | PIPES | NODES | OUTLETS | REPORT                     |
++------------------------------------------------------------------+
+```
+
+The same white, flat window, and the same PROJECT, GRAPH, QUICK TOOLS,
+DATABASE and results tabs.  Those tabs are the editor's files under
+`HardyCross/Window/`; this program does not change them, and it does not
+change `phcp_editor.pl`.  What is different is the network: four grids
+instead of the command lines.
+
+| tab | rows |
+|---|---|
+| SYSTEM | one row a pipe: the pipe number, the node it leaves, the node it arrives at, the length, the pipe type, the C or roughness, the diameter, the fitting string, and an equivalent length |
+| NODES | filled from those node numbers, in the order they first appear.  A blank type is a node, and the word is not written in the cell.  Elevation, fixed flow, minimum flow, minimum pressure and K |
+| SUPPLIES | a row when a node's type is SUPPLY: the static pressure and the flow/pressure points.  The elevation stays on the node |
+| PRESSURE DEVICES | one table each for PUMP, BP, BFP, PRV, OPP, OFD and PRA, with the columns that device needs.  Choosing the type on a node adds the row; a device already in a file is listed too |
+
+A file saved here is ordinary `.phc`.  `phcp.pl` and the text editor read it.
+VALIDATE and CALCULATE call `HardyCross/Editor.pm`, the same checks and the
+same solve, so the sheet cannot call a model good that the solve would
+refuse, and it cannot solve a different way.  A click on a problem in
+VALIDATION goes to the cell.
+
+The grids themselves are `HardyCross/Sheet.pm`, which has no Tk in it.
+`tools/test_sheet.pl` reads every example into the grids, writes `.phc`
+again, and checks the solved pipe flows and node pressures against the file
+as it was.  `tools/test_sheet_window.pl` drives the window the way the
+editor's window test does.
 
 ## Water supply graph
 
@@ -710,10 +756,10 @@ not evidence; this is.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe` and `phcp_editor.exe` on a Windows PC
-with Strawberry Perl installed: it fetches Tk and PAR::Packer from CPAN,
-packages both programs with the pipe and fitting database inside, and runs a
-smoke test on the `.phc` examples.
+`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe` and `phcp_sheet.exe`
+on a Windows PC with Strawberry Perl installed: it fetches Tk and PAR::Packer
+from CPAN, packages the programs with the pipe and fitting database inside,
+and runs a smoke test on the `.phc` examples.
 
 The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
 with the same module lists: from an empty folder the packaged `phcp` solved
@@ -758,7 +804,7 @@ Up to v1.0.0 the loader's icon was set with Win32::Exe, whose resource writer
 left the table pointing at the packager's own four pictures: the build log
 said the icon was set, but both programs showed the packager's icon in
 Explorer.  `check_exe_icon.pl` is there so that cannot pass unseen again;
-CI runs it on both built programs.
+CI runs it on each built program.
 
 ```
 perl tools/check_exe_icon.pl phcp_editor.exe          compares with data/phcp.ico
@@ -772,9 +818,9 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, the editor window under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of both programs, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
-| release | on a version tag (`v1.1.0`) or a release published on GitHub: both programs attached to the release, with the notes in `release_notes/<tag>.md` |
+| test-linux | every test suite, the editor window and the spreadsheet window under a virtual display, and the invariance stress on 60 networks |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe` and `phcp_sheet.exe` kept as the run's downloads |
+| release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
 then publish a release on GitHub with the new tag `vX.Y.Z` on `main`.  The
