@@ -13,12 +13,12 @@ which v1.0.0 lacked, with CI reading it back out of the built programs.
 Released together as v1.1.0 (`release_notes/v1.1.0.md`).  Since v1.1.0:
 benchmark round 2 (`comparison/ROUND2.md`) - the same networks with fittings,
 and with a BFP, a fixed-drop PRV and an orifice plate; files only, no solved
-number changes.  Open: example 04's MAXITER raised from 20000 to 30000, because
-the 1000-node grid needs 24 820 iterations and `test_phc.pl --full` failed on it
-(example file only, approved 4 November 2026; no other example moves).
-Also open, on `job/velocity-pressure`: `OPTION VELOCITY_PRESSURE` (AS 2118.1
+number changes; example 04's MAXITER raised from 20000 to 30000, because the
+1000-node grid needs 24 820 iterations (example file only, approved 4 November
+2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
-changes no solved number.
+changes no solved number.  Released together as v1.2.0
+(`release_notes/v1.2.0.md`).
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
