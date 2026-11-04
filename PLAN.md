@@ -22,7 +22,11 @@ changes no solved number.  Released together as v1.2.0
 spreadsheet on the same engine: SYSTEM, NODES, SUPPLIES and PRESSURE
 DEVICES, with the existing PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs.
 The text editor is not changed.  `HardyCross/Sheet.pm` holds the grids and
-has no Tk in it.
+has no Tk in it.  Also open: a pyRevit extension for Revit 2022 to 2027
+(`revit/`, `revit/REVIT.md`).  It walks a model and calls the engine; it
+changes no engine file and no solved number.  The walk and the `.phc` it
+writes are checked by `tools/test_revit.py`.  It has not been run inside
+Revit.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -507,3 +511,6 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
 - [x] Spreadsheet window: `phcp_sheet.pl` and `HardyCross/Sheet.pm`, a second front end.  The text editor, `phcp_editor.pl`, is unchanged
+- [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
+- [x] Revit: outlets, devices (booster, loss, reducing valve, orifice, ratio valve), renumber copies, colour key, select failures, pipe tags, apply a suggested DN. No engine change.
+- [ ] Revit extension run inside Revit 2022 to 2027
