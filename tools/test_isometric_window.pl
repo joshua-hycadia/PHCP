@@ -108,10 +108,14 @@ my $paper = lc $main::iso_cv->cget(-background);
 main::iso_apply_theme('DARK');
 $main::mw->update;
 my $dark = lc $main::iso_cv->cget(-background);
+my $cell = lc $main::vtable->{styles}{muted}->cget(-background);
+my $head = lc $main::vtable->{hlist}->header('cget', 0, '-headerbackground');
 is('dark mode repaints the drawing', $dark ne $paper && $dark eq '#1b1e24', "$paper -> $dark");
+is('dark mode repaints the results table', $cell eq '#1b1e24' && $head eq '#252a33', "$cell $head");
 main::iso_apply_theme('LIGHT');
 $main::mw->update;
 is('light mode puts the paper back', lc $main::iso_cv->cget(-background) eq '#ffffff');
+is('light mode puts the results table back', lc $main::vtable->{styles}{muted}->cget(-background) eq '#ffffff');
 
 print "3. CLICK AND CLICK, OR THE KNOWN VALUES\n";
 is('length, size, fittings and C can be typed before the click',

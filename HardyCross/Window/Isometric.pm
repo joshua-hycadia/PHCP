@@ -918,12 +918,21 @@ sub iso_apply_theme {
     }
     $C{$_} = $to->{$_} for keys %$to;
     iso_paint($mw, \%map) if $mw;
+    # The menu bar is not one of the window's children, so the walk misses it.
+    my $menu = eval { $mw->cget('-menu') };
+    iso_paint($menu, \%map) if $menu;
     $iso{theme} = $name;
     iso_retint_tags();
     select_tab($toptabs, $toptabs->{current}) if $toptabs && $toptabs->{current};
     iso_set_tool($iso{tool} || 'SELECT');
     for my $c (values %checks) { $c->{draw}->() if $c && $c->{draw} }
-    eval { fill_results(); fill_validation() };
+    eval { fill_results() };
+    restyle_validation();
+    {
+        no warnings 'once';    # the database and the graph declare these
+        db_fill() if $main::dbv{kind};
+        graph_draw() if $main::gv{canvas} && eval { $main::gv{canvas}->width } > 50 && $main::gv{check};
+    }
     iso_props();
     iso_redraw();
     iso_status($name eq 'DARK' ? 'DARK' : 'LIGHT');

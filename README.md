@@ -481,7 +481,8 @@ The pipe or point that is selected has its properties on the right: name,
 length, size, fittings, equivalent length, pipe type and C, with the unit in
 the label.  Return writes the field.  The two ends are shown and not typed.
 LABELS chooses what is written on the drawing: point names, pipe names,
-length, size, fittings, elevation, devices.  DARK swaps the palette.
+length, size, fittings, elevation, devices.  DARK swaps the palette of the
+whole window, including the results tables.
 
 The drawing writes the `.phc` the editor already calculates.  Where each
 point sits is a comment the reader ignores:
