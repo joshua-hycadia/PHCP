@@ -7,12 +7,15 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), a text editor built around it, an isometric drawing
-forked from that editor, and a monospace ASCII calculation report.  The whole
-stack is Perl.
+for the model (`.phc`), windows on that same engine - a text editor, a
+spreadsheet and an isometric drawing - and a monospace ASCII calculation
+report.  The solver, the editor and the report are Perl.  A pyRevit
+extension for Revit 2022 to 2027, in Python, walks a model and calls that
+engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
 perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
@@ -21,6 +24,10 @@ perl phcp_isometric.pl model.phc         # the same calculation, drawn on an iso
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
+perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headless
+perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
+perl tools/test_isometric.pl             # verify the isometric drawing, and the .phc it writes
+perl tools/test_isometric_window.pl      # drive the isometric window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
@@ -30,11 +37,12 @@ perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
+python3 tools/test_revit.py              # the Revit extension, without Revit
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
-the editor and the AutoCAD exporter all read or write it, and a
-file of any other type is refused with the reason.  (The editor's GRAPH tab,
+the editor, the AutoCAD exporter and the Revit extension all read or write
+it, and a file of any other type is refused with the reason.  (The editor's GRAPH tab,
 which draws a water supply graph from figures typed in rather than from a
 model, keeps those figures in a `.phg` file of its own - see Water supply
 graph.)
@@ -359,7 +367,7 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
-| NETWORK | PROJECT | GRAPH | QUICK TOOLS | DATABASE               |
+| NETWORK | PROJECT | GRAPH | QUICK TOOLS | ORIFICE PLATE | DATABASE |
 |  USE PIPE ... | NODE NC ... | PUMP BP ... | AREA ...  (strip)      |
 |  +----+--------------------------------------+ +---------------+ |
 |  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
@@ -371,10 +379,15 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 ```
 
-A white, flat window: one-pixel grey rules instead of bevels, blue and
-black used only to highlight, red for what is wrong.  Monospace for the
-model and the results, a plain sans-serif for the window's own labels, and
-everything in capitals.
+The same look as the spreadsheet: a white page, a grey toolbar and heading
+band, a shadow under the bar, white chips for the buttons, and one blue.
+Red is what is wrong.  Inter is used for the chrome and JetBrains Mono for
+the model, the command strip and the results when those faces are installed.
+Labels and buttons are in capitals.  VIEW, and DARK MODE on the toolbar,
+switches the whole window to the spreadsheet's dark palette.  The choice is
+remembered as EDITOR_THEME in this machine's settings file.  The spreadsheet
+keeps its own choice, SHEET_THEME, and the two windows do not follow each
+other.
 
 **The editor holds the network only.**  The title, project details, units,
 method and options are set in the PROJECT tab.  The `.phc` file still holds
@@ -418,6 +431,7 @@ there and selects it.
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
 | QUICK TOOLS tab | velocity, fittings, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
+| ORIFICE PLATE tab | the bore that gives a net loss, or the net loss across a bore.  The same sums as `OPP` and `OFD`.  See Orifice plate |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
@@ -425,8 +439,8 @@ there and selects it.
 
 The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
 other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
-QUICK TOOLS, DATABASE, and the results tables).  The isometric drawing is a
-separate program, `phcp_isometric.pl`, forked from this one.
+QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).  The isometric
+drawing is a separate program, `phcp_isometric.pl`, forked from this one.
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -442,8 +456,59 @@ Linux with Tk 804.036.  The window has been run on Windows 11
 the suites that need no display on Windows; the window suite runs on Linux
 only.
 
-The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
-tests, and Tk::TableMatrix is no longer needed.
+The earlier spreadsheet, `phcp_gui.pl`, is retired with its tests, and
+Tk::TableMatrix is no longer needed.  The text editor remains.  A
+second window, the spreadsheet below, is another way in to the same engine.
+
+## The spreadsheet window
+
+`perl phcp_sheet.pl [model.phc]`
+
+```
++------------------------------------------------------------------+
+| NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
++------------------------------------------------------------------+
+| SYSTEM | NODES | SUPPLIES | PRESSURE DEVICES | PROJECT | GRAPH   |
+|        | QUICK TOOLS | ORIFICE PLATE | DATABASE                |
+|  ROW | PIPE | FROM NODE | TO NODE | LENGTH | TYPE | DIAM | FITTINGS |
+|   1  |  1   | 2         | 101     | 7000   | ASAM | 100  | 2E T     |
++------------------------------------------------------------------+
+| VALIDATION | PIPES | NODES | OUTLETS | REPORT                     |
++------------------------------------------------------------------+
+```
+
+A white sheet: a grey toolbar and header band, a shadow under the bar,
+alternate rows a step off white, and the row under the pointer shaded.
+Inter is used for the chrome and JetBrains Mono for the grid when those
+faces are installed, the same faces and the same palette as the text editor.
+The same PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE, DATABASE and results
+tabs.  Those tabs are the files under `HardyCross/Window/`.  What is
+different is the network: four grids instead of the command lines.
+
+| tab | rows |
+|---|---|
+| SYSTEM | one row a pipe: the pipe number, the node it leaves, the node it arrives at, the length, the pipe type, the C or roughness, the diameter, the fitting string, and an equivalent length |
+| NODES | filled from those node numbers, in the order they first appear.  A blank type is a node, and the word is not written in the cell.  Elevation, fixed flow, minimum flow, minimum pressure and K |
+| SUPPLIES | a row when a node's type is SUPPLY: the static pressure and the flow/pressure points.  The elevation stays on the node |
+| PRESSURE DEVICES | one table each for PUMP, BP, BFP, PRV, OPP, OFD and PRA, with the columns that device needs.  Choosing the type on a node adds the row; a device already in a file is listed too |
+
+PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE.  PIPE DIAM is the nominal sizes of that type, in the project's size unit, and 0 is on the list so a pipe can still be asked to size itself.  A bore, or a type the database does not know, is typed.  A blank pipe type inherits the row above it, as a USE line does.  Typing in a list completes a match and shows the others.  The match is the value last kept in that column, or the nearest row that already has one, so a run of the same pipe type and size continues.  Tab keeps it and moves to the next cell.  Down walks the other matches.  Enter keeps a suggestion and moves across; once the value is kept, Enter moves down.
+
+EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  Enter on the last system row adds another row and moves to its pipe cell.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
+
+VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file as SHEET_THEME.  The text editor remembers its own choice as EDITOR_THEME, and the two windows do not follow each other.
+
+A file saved here is ordinary `.phc`.  `phcp.pl` and the text editor read it.
+VALIDATE and CALCULATE call `HardyCross/Editor.pm`, the same checks and the
+same solve, so the sheet cannot call a model good that the solve would
+refuse, and it cannot solve a different way.  A click on a problem in
+VALIDATION goes to the cell.
+
+The grids themselves are `HardyCross/Sheet.pm`, which has no Tk in it.
+`tools/test_sheet.pl` reads every example into the grids, writes `.phc`
+again, and checks the solved pipe flows and node pressures against the file
+as it was.  `tools/test_sheet_window.pl` drives the window the way the
+editor's window test does.
 
 ## The isometric drawing
 
@@ -601,6 +666,28 @@ the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
 Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
 laminar, and the solver's blend of the two between Re 2000 and 4000) - for
 every pipe type and size in the database.
+
+## Orifice plate
+
+ORIFICE PLATE is a tab of both windows.  It answers as it is typed, in the
+PROJECT tab's units, and it does not change the model.
+
+| calculator | give | get |
+|---|---|---|
+| SIZE THE PLATE | a pipe type and size (or BORE and a bore), a flow, and the net loss wanted.  CD blank is 0.596.  Bore step blank is the PROJECT tab's ORIF_STEP, or 0.5 mm | the bore, rounded as an `OPP` plate is rounded, the net loss that rounded bore actually gives, beta, the velocities, the tapping differential and the permanent-loss ratio |
+| DROP ACROSS A PLATE | a pipe, a flow and a plate bore.  CD blank is 0.596 | the net loss, as an `OFD` plate, with the same figures |
+
+The net loss is the solver's own: the tapping differential,
+633.28 (0.596/CD)^2 (Q^2/d^4) (1 - b^4) kPa (Q in L/min, d in mm, b = d/D),
+times the ISO 5167 permanent-loss ratio.  `OPP` finds the bore from that
+loss by bisection and rounds it to the step, and this tab does those two
+steps with the same routines.  A CD must be more than 0 and not more than 1.
+A plate bore that is not smaller than the pipe is refused.  When even a bore
+almost as large as the pipe still drops more than asked, or a very small
+bore does not drop enough, the tab says so.
+
+`HardyCross/Tools.pm` does the work.  `tools/test_tools.pl` checks the bore
+and the loss against that formula written out in the test.
 
 ## The report: cover sheet
 
@@ -775,10 +862,10 @@ not evidence; this is.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe` and `phcp_editor.exe` on a Windows PC
-with Strawberry Perl installed: it fetches Tk and PAR::Packer from CPAN,
-packages both programs with the pipe and fitting database inside, and runs a
-smoke test on the `.phc` examples.
+`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
+on a Windows PC with Strawberry Perl installed: it fetches Tk and PAR::Packer
+from CPAN, packages the programs with the pipe and fitting database inside,
+and runs a smoke test on the `.phc` examples.
 
 The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
 with the same module lists: from an empty folder the packaged `phcp` solved
@@ -823,7 +910,7 @@ Up to v1.0.0 the loader's icon was set with Win32::Exe, whose resource writer
 left the table pointing at the packager's own four pictures: the build log
 said the icon was set, but both programs showed the packager's icon in
 Explorer.  `check_exe_icon.pl` is there so that cannot pass unseen again;
-CI runs it on both built programs.
+CI runs it on each built program.
 
 ```
 perl tools/check_exe_icon.pl phcp_editor.exe          compares with data/phcp.ico
@@ -837,9 +924,9 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, the editor window under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of both programs, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
-| release | on a version tag (`v1.1.0`) or a release published on GitHub: both programs attached to the release, with the notes in `release_notes/<tag>.md` |
+| test-linux | every test suite, including the Revit extension without Revit, the editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
+| release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
 then publish a release on GitHub with the new tag `vX.Y.Z` on `main`.  The
@@ -848,8 +935,8 @@ workflow builds the programs and attaches them; nothing is uploaded by hand.
 ## Calling PHCP from another program
 
 Other programs run `phcp.exe` and read what it prints - a program to call,
-not a library to link (decided 28 October 2026).  AutoCAD does so now (see
-below); Revit could later.
+not a library to link (decided 28 October 2026).  AutoCAD and Revit do so
+now (see below).
 
 ```
 phcp.exe --json model.phc                     results as JSON on standard output
@@ -923,6 +1010,30 @@ the old format.  The routine has not yet been run inside AutoCAD; what can be
 checked without it is, by `tools/check_lisp.pl` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
+
+## Revit
+
+`revit/PHCP.extension` is a pyRevit extension for Revit 2022 to 2027.  It
+walks the pipework, writes a `.phc`, and runs `phcp.exe --json` on it.  See
+`revit/REVIT.md`.  Shared parameters hold the markup (a supply, a design
+area, outlets, pipe type and DN, fitting codes, equivalent length, a fixed
+pressure loss, and one device in a pipe: a booster, a loss curve, a pressure
+reducing valve, an orifice plate or a ratio valve) and the results written
+back.  The join tolerance is how far apart two unconnected ends may be and
+still be one node.  Families map to fitting codes from the pipe and fitting
+database.  The view can be coloured by velocity, by flow, and by whether an
+outlet can flow, with the key placed on the view; nodes and pipes can be
+tagged; the outlets that fail, and the pipes over the velocity limit, can be
+selected.  SUGGEST asks the engine to size pipes (size 0) and stores the DN
+it would use.  APPLY copies that DN onto the pipe's PHCP DN.  The modelled
+diameter is left as drawn.  Copied elements can be given new ids; the
+original keeps its name.  EXPORT writes a `.phc`.  There is no separate
+export file type.
+
+`python3 tools/test_revit.py` checks the walk, the file it writes, and that
+every button calls a command that exists.  It builds the network of example
+08, solves it, and compares the flows and pressures with that example's
+baseline.  The extension has not been run inside Revit.
 
 ## Pump checks and the hose allowance
 

@@ -4,7 +4,7 @@
 # source code; it does not cover the third-party data in data/.
 #
 #==============================================================================
-# HardyCross/Tools.pm -- the editor's QUICK TOOLS: three small calculators.
+# HardyCross/Tools.pm -- the calculators behind QUICK TOOLS and ORIFICE PLATE.
 #
 #   velocity   a pipe type and size, and a flow: the bore and the velocity
 #   kfactor    any two of K, Q and P: the third, from Q = K x sqrt(P)
@@ -14,6 +14,8 @@
 #              Hazen-Williams and by Darcy-Weisbach, side by side
 #   fittings   a pipe type and size, and fittings: their equivalent length
 #              from the database, fitting by fitting
+#   plate      an orifice plate: the bore that gives a net loss (as OPP
+#              sizes one), or the net loss across a bore (as OFD)
 #
 # Each takes the fields as typed (text) and returns either the answer or the
 # problems with the fields, each naming its field, so the tab only draws.
@@ -349,6 +351,117 @@ sub fittings {
                        each => $_->{each}, total => $_->{total}, note => $_->{note} } } @{ $r->{records} };
     my $src = @{ $r->{records} } ? $r->{records}[0]{doc} : '';
     return { ok => 1, total => $r->{total}, rows => \@rows, source => $src, spec => $spec };
+}
+
+#------------------------------------------------------------------------------
+# plate -- an orifice plate, worked the way a model works one.
+#
+#   mode => 'SIZE'   the bore that gives a net loss, as OPP sizes a plate
+#   mode => 'DROP'   the net loss across a bore, as OFD
+#
+# Fields, as typed: type, size (the pipe, as the other calculators), flow,
+# and for SIZE the drop wanted and an optional step; for DROP the plate's
+# bore.  cd blank is 0.596.  It must be more than 0 and not more than 1.
+# step blank is step_default millimetres, or 0.5 mm when that is not given;
+# 0 means do not round.  A step above 0 rounds the way HardyCross::size_orifices
+# rounds an OPP bore: int(bore/step + 0.5) * step, in millimetres.
+#
+# The net loss is HardyCross::orifice_dp and the bore is HardyCross::orifice_size,
+# so a plate here is the plate a model would size or lose across.  That loss
+# is the tapping differential times the ISO 5167 permanent-loss ratio, which
+# is what a network needs; both are returned so the tab can say so.
+#
+# Returns, in L/min, kPa and mm (show() gives them in the units chosen)
+#   { ok => 1, mode, q, pipedia, cd, cd_default, bore, bore_exact, step,
+#     drop, drop_exact, target, beta, velocity, pipe_velocity, ratio,
+#     differential, limit ('' or WIDE or TIGHT), fits }
+#   { ok => 0, errors => [ [field, problem] ] }
+# WIDE: a bore almost the pipe's still drops more than asked.  TIGHT: even a
+# very small bore does not drop this much.  fits is false when the bore that
+# would be used is not smaller than the pipe.
+#------------------------------------------------------------------------------
+sub _plate_ratio {
+    my ($d, $bigd, $cd) = @_;
+    return 0 if $d <= 0 || $bigd <= 0 || $cd <= 0;
+    my $beta = $d / $bigd < 0.99999 ? $d / $bigd : 0.99999;
+    my $b4 = $beta ** 4;
+    my $inside = 1 - $b4 * (1 - $cd * $cd);
+    $inside = 1e-12 if $inside < 1e-12;
+    my $s = sqrt($inside);
+    my $den = $s + $cd * $beta * $beta;
+    return 0 if $den == 0;
+    my $r = ($s - $cd * $beta * $beta) / $den;
+    return $r < 0 ? 0 : $r;
+}
+
+sub plate {
+    my %f = @_;
+    my $mode = uc($f{mode} // 'SIZE');
+    $mode = 'SIZE' unless $mode eq 'DROP';
+    my $u = units_of($f{units});
+    my @err;
+    my ($bigd, $de) = bore_of($f{type}, $f{size}, $u);
+    push @err, $de if $de;
+    my ($q, $qe) = number('FLOW', $f{flow});
+    push @err, [ 'FLOW', $qe ] if $qe;
+    $q *= factor('FLOW', $u->{FLOW}) unless $qe;
+    my $cd = 0.596;
+    my $cd_default = 1;
+    unless (blank($f{cd})) {
+        my ($c, $ce) = number('CD', $f{cd});
+        if ($ce) { push @err, [ 'CD', $ce ] }
+        elsif ($c <= 0 || $c > 1) { push @err, [ 'CD', 'CD MUST BE MORE THAN 0 AND NOT MORE THAN 1' ] }
+        else { ($cd, $cd_default) = ($c, 0) }
+    }
+    my ($target, $bore_given, $step);
+    if ($mode eq 'SIZE') {
+        my ($drop, $dre) = number('DROP', $f{drop});
+        if ($dre) { push @err, [ 'DROP', $dre ] }
+        else { $target = $drop * factor('PRESSURE', $u->{PRESSURE}) }
+        if (blank($f{step})) {
+            $step = defined $f{step_default} ? $f{step_default} : 0.5;
+            push @err, [ 'STEP', 'BORE STEP MUST BE ZERO OR ABOVE' ] if $step < 0;
+        } else {
+            my ($s, $se) = number('BORE STEP', $f{step}, 'nonneg');
+            if ($se) { push @err, [ 'STEP', $se ] }
+            else { $step = $s * factor('SIZE', $u->{SIZE}) }
+        }
+    } else {
+        my ($b, $be) = number('PLATE BORE', $f{bore});
+        if ($be) { push @err, [ 'BORE', $be ] }
+        else { $bore_given = $b * factor('SIZE', $u->{SIZE}) }
+        push @err, [ 'BORE', 'PLATE BORE MUST BE SMALLER THAN THE PIPE BORE' ]
+            if defined $bore_given && defined $bigd && $bore_given >= $bigd;
+    }
+    return { ok => 0, errors => \@err } if @err;
+
+    my ($exact, $limit) = (0, '');
+    if ($mode eq 'SIZE') {
+        my $hi = 0.9995 * $bigd;
+        my $lo = 0.001 * $bigd;
+        if (HardyCross::orifice_dp($q, $hi, $bigd, $cd) > $target) { $limit = 'WIDE' }
+        elsif (HardyCross::orifice_dp($q, $lo, $bigd, $cd) < $target) { $limit = 'TIGHT' }
+        $exact = HardyCross::orifice_size($q, $target, $bigd, $cd);
+        return { ok => 0, errors => [ [ 'DROP', 'THE PLATE CANNOT BE SIZED FOR THIS FLOW AND DROP' ] ] }
+            if $exact <= 0;
+    } else {
+        $exact = $bore_given;
+    }
+    my $bore = $exact;
+    $bore = int($bore / $step + 0.5) * $step if $mode eq 'SIZE' && $step > 0;
+    my $drop = HardyCross::orifice_dp($q, $bore, $bigd, $cd);
+    my $drop_exact = $mode eq 'SIZE' ? HardyCross::orifice_dp($q, $exact, $bigd, $cd) : $drop;
+    my $ratio = _plate_ratio($bore, $bigd, $cd);
+    return {
+        ok => 1, mode => $mode, q => $q, pipedia => $bigd, cd => $cd, cd_default => $cd_default,
+        bore => $bore, bore_exact => $exact, step => ($mode eq 'SIZE' ? $step : 0),
+        drop => $drop, drop_exact => $drop_exact, target => $target,
+        beta => $bigd > 0 ? $bore / $bigd : 0,
+        velocity => HardyCross::pipe_velocity($q, $bore),
+        pipe_velocity => HardyCross::pipe_velocity($q, $bigd),
+        ratio => $ratio, differential => $ratio > 0 ? $drop / $ratio : 0,
+        limit => $limit, fits => $bore > 0 && $bore < $bigd,
+    };
 }
 
 1;
