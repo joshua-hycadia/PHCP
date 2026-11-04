@@ -1,0 +1,9 @@
+title: SHOW
+tooltip: Colour, tags, and what the calculation found.
+layout:
+  - Velocity
+  - Flow
+  - Ability
+  - Select
+  - TagNodes
+  - Clear
