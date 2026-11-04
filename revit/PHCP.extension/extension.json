@@ -1,0 +1,13 @@
+{
+  "builtin": "False",
+  "default_enabled": "True",
+  "type": "extension",
+  "rocket_mode_compatible": "True",
+  "name": "PHCP",
+  "description": "Hydraulic calculations for Revit 2022 to 2027. Walks the pipework and calls the PHCP engine. The file it writes is a .phc model.",
+  "author": "Hycadia Pty Ltd",
+  "author_profile": "",
+  "url": "",
+  "website": "",
+  "image": ""
+}
