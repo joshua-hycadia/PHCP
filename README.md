@@ -481,7 +481,7 @@ instead of the command lines.
 
 PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE.  PIPE DIAM is the nominal sizes of that type, in the project's size unit, and 0 is on the list so a pipe can still be asked to size itself.  A bore, or a type the database does not know, is typed.  A blank pipe type inherits the row above it, as a USE line does.
 
-EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
+EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  Enter on the last system row adds another row and moves to its pipe cell.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
 
 VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file.  The text editor does not use it.
 

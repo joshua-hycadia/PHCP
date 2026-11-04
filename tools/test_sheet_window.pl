@@ -213,6 +213,29 @@ is('clicking it selects the system tab and the diameter cell',
 # undone, so each check starts from that file.
 select_tab($main::toptabs, 'SYSTEM');
 $mw->update;
+grid_cell('SYSTEM', 0, 'from')->focusForce;
+$mw->update;
+enter_down($main::grids{SYSTEM}, 0, 'from');
+$mw->update;
+my $down = $mw->focusCurrent;
+is('enter on a row that is not last moves down that column',
+   $down && $down eq grid_cell('SYSTEM', 1, 'from'));
+my (undef, $rows_before) = grid_spec('SYSTEM');
+my $last = $rows_before - 1;
+grid_cell('SYSTEM', $last, 'length')->focusForce;
+$mw->update;
+enter_down($main::grids{SYSTEM}, $last, 'length');
+$mw->update;
+my (undef, $rows_after) = grid_spec('SYSTEM');
+my $grown = $mw->focusCurrent;
+is('enter on the last system row adds a row and moves to its pipe cell',
+   $rows_after == $rows_before + 1
+   && $grown && $grown eq grid_cell('SYSTEM', $rows_after - 1, 'pipe'),
+   "rows $rows_before -> $rows_after");
+$main::system_pad = $main::BLANKS;
+refresh_grid('SYSTEM');
+$mw->update;
+
 grid_cell('SYSTEM', 0, 'pipe')->focusForce;
 $mw->update;
 edit_insert_row();

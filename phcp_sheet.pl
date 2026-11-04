@@ -371,6 +371,7 @@ our @redo_stack;
 our $restoring = 0;       # true while undo or redo is putting a snapshot back
 our @fault_marks;         # entries whose outline is red after VALIDATE
 our $BLANKS = 8;          # empty SYSTEM rows under the last pipe, to type into
+our $system_pad = $BLANKS; # grows when Enter is pressed on the last of those rows
 our $view_menu;           # the VIEW menu, so its label can follow the palette
 # Find and replace.  The dialog and the menu share these.  $find_pos is the
 # cell last landed on, "grid, row, column", so FIND NEXT moves on from it.
@@ -667,8 +668,10 @@ sub grid_spec {
 sub system_row_count {
     my $last = $#{ $sheet->{pipes} };
     $last-- while $last >= 0 && HardyCross::Sheet::pipe_is_blank($sheet->{pipes}[$last]);
-    my $n = $last + 1 + $BLANKS;
-    return $n < $BLANKS ? $BLANKS : $n;
+    my $pad = $system_pad;
+    $pad = $BLANKS if !defined $pad || $pad < $BLANKS;
+    my $n = $last + 1 + $pad;
+    return $n < $pad ? $pad : $n;
 }
 
 # grid_signature -- columns and row identity.  A new node, or a new pair of
@@ -997,7 +1000,13 @@ sub bind_sheet_cell {
     $w->bind('<FocusIn>'   => sub { show_hint($hint) });
     $w->bind('<Tab>'       => sub { move_focus($g, $r, $col->{key}, 0,  1); Tk->break });
     $w->bind('<Shift-Tab>' => sub { move_focus($g, $r, $col->{key}, 0, -1); Tk->break });
-    $w->bind('<Return>'    => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
+    # Enter may add a row, which rebuilds this grid and frees the cell the
+    # key went to.  That waits until the binding has returned.
+    $w->bind('<Return>' => sub {
+        my ($grid, $row, $colkey) = ($g, $r, $col->{key});
+        $mw->afterIdle(sub { enter_down($grid, $row, $colkey) });
+        Tk->break;
+    });
     $w->bind('<Down>'      => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
     $w->bind('<Up>'        => sub { move_focus($g, $r, $col->{key}, -1, 0); Tk->break });
     $w->bind('<Control-z>' => sub { edit_undo(); Tk->break });
@@ -1207,6 +1216,49 @@ sub grow_if_needed {
     my $sig = grid_signature($id);
     return if $g->{sig} && $g->{sig} eq $sig;
     refresh_grid($id);
+}
+
+# enter_down -- Return.  On any row but the last, move down the same column.
+# On the last SYSTEM row, add one more row and go to its first cell, the
+# pipe number.  Nodes, supplies and devices are filled from the pipes, so
+# Return there does not invent a row of their own.
+sub enter_down {
+    my ($g, $r, $key) = @_;
+    return unless $g;
+    my (undef, $n) = grid_spec($g->{id});
+    if ($g->{id} eq 'SYSTEM' && defined $n && $r == $n - 1) {
+        $system_pad++;
+        refresh_grid('SYSTEM');
+        my (undef, $n2) = grid_spec('SYSTEM');
+        my $nr = $n2 - 1;
+        my $w = $g->{cell}{$nr}{pipe};
+        if ($w && eval { Tk::Exists($w) }) {
+            $w->focusForce;
+            reveal_row($g, $nr);
+        }
+        return;
+    }
+    move_focus($g, $r, $key, 1, 0);
+}
+
+# reveal_row -- scroll so this row is inside the grid.  A row Enter has just
+# added sits under the one that was at the bottom.
+sub reveal_row {
+    my ($g, $r) = @_;
+    my $num = $g->{rownum}{$r} or return;
+    return unless eval { Tk::Exists($num) };
+    $mw->idletasks if $mw;
+    my $y = eval { $num->y };
+    return unless defined $y;
+    my $h = $num->height || px(24);
+    my $vh = $g->{clip}->height || 1;
+    if ($y < $g->{oy}) {
+        $g->{oy} = $y;
+    } elsif ($y + $h > $g->{oy} + $vh) {
+        $g->{oy} = $y + $h - $vh;
+        $g->{oy} = 0 if $g->{oy} < 0;
+    }
+    grid_place($g);
 }
 
 # move_focus -- Tab and Return, as on a sheet: Tab across, Return down.
@@ -1917,6 +1969,7 @@ sub adopt {
     @{$sheet}{qw(pipes nodes devices notes extras seq)} = @{$got}{qw(pipes nodes devices notes extras seq)};
     @undo_stack = ();
     @redo_stack = ();
+    $system_pad = $BLANKS;
     $validation = undef;
     $valid_text = undef;
     $solved = undef;
