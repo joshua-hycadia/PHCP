@@ -1,0 +1,7 @@
+title: SETUP
+tooltip: The engine, the parameters and the project.
+layout:
+  - Engine
+  - Parameters
+  - Project
+  - FittingMap

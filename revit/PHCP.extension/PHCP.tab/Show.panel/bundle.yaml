@@ -1,0 +1,8 @@
+title: SHOW
+tooltip: Colour, node tags, and clearing them.
+layout:
+  - Velocity
+  - Flow
+  - Ability
+  - TagNodes
+  - Clear
