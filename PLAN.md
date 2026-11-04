@@ -18,7 +18,11 @@ number changes; example 04's MAXITER raised from 20000 to 30000, because the
 2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
 changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).
+(`release_notes/v1.2.0.md`).  Also open: a pyRevit extension for Revit
+2022 to 2027 (`revit/`, `revit/REVIT.md`).  It walks a model and calls the
+engine; it changes no engine file and no solved number.  The walk and the
+`.phc` it writes are checked by `tools/test_revit.py`.  It has not been run
+inside Revit.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -502,3 +506,5 @@ proposed).  Default OFF: every example solves exactly as before.
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
+- [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
+- [ ] Revit extension run inside Revit 2022 to 2027

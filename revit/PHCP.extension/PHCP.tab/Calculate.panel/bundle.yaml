@@ -1,0 +1,7 @@
+title: CALCULATE
+tooltip: Walk the network and run PHCP.
+layout:
+  - Check
+  - Export
+  - Calculate
+  - Suggest

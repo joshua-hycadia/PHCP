@@ -8,7 +8,9 @@ Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), a text editor built around it, and a monospace ASCII
-calculation report.  The whole stack is Perl.
+calculation report.  The solver, the editor and the report are Perl.  A
+pyRevit extension for Revit 2022 to 2027, in Python, walks a model and calls
+that engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the editor (F4 validates, F5 calculates, Ctrl+R writes the report)
@@ -28,11 +30,12 @@ perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
+python3 tools/test_revit.py              # the Revit extension, without Revit
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
-the editor and the AutoCAD exporter all read or write it, and a
-file of any other type is refused with the reason.  (The editor's GRAPH tab,
+the editor, the AutoCAD exporter and the Revit extension all read or write
+it, and a file of any other type is refused with the reason.  (The editor's GRAPH tab,
 which draws a water supply graph from figures typed in rather than from a
 model, keeps those figures in a `.phg` file of its own - see Water supply
 graph.)
@@ -772,7 +775,7 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, the editor window under a virtual display, and the invariance stress on 60 networks |
+| test-linux | every test suite, including the Revit extension without Revit, the editor window under a virtual display, and the invariance stress on 60 networks |
 | build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of both programs, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
 | release | on a version tag (`v1.1.0`) or a release published on GitHub: both programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
@@ -783,8 +786,8 @@ workflow builds the programs and attaches them; nothing is uploaded by hand.
 ## Calling PHCP from another program
 
 Other programs run `phcp.exe` and read what it prints - a program to call,
-not a library to link (decided 28 October 2026).  AutoCAD does so now (see
-below); Revit could later.
+not a library to link (decided 28 October 2026).  AutoCAD and Revit do so
+now (see below).
 
 ```
 phcp.exe --json model.phc                     results as JSON on standard output
@@ -858,6 +861,25 @@ the old format.  The routine has not yet been run inside AutoCAD; what can be
 checked without it is, by `tools/check_lisp.pl` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
+
+## Revit
+
+`revit/PHCP.extension` is a pyRevit extension for Revit 2022 to 2027.  It
+walks the pipework, writes a `.phc`, and runs `phcp.exe --json` on it.  See
+`revit/REVIT.md`.  Shared parameters hold the markup (a supply, a design
+area, pipe type and DN, fitting codes, equivalent length and a fixed
+pressure loss) and the results written back.  The join tolerance is how far
+apart two unconnected ends may be and still be one node.  Families map to
+fitting codes from the pipe and fitting database.  The view can be coloured
+by velocity, by flow, and by whether an outlet can flow, and nodes can be
+tagged.  SUGGEST asks the engine to size pipes (size 0) and stores the DN it
+would use; the modelled diameter is left as drawn.  EXPORT writes a `.phc`.
+There is no separate export file type.
+
+`python3 tools/test_revit.py` checks the walk, the file it writes, and that
+every button calls a command that exists.  It builds the network of example
+08, solves it, and compares the flows and pressures with that example's
+baseline.  The extension has not been run inside Revit.
 
 ## Pump checks and the hose allowance
 

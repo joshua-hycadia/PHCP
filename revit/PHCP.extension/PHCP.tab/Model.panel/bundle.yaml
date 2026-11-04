@@ -1,0 +1,8 @@
+title: MODEL
+tooltip: Supply, design areas, pipe data and overrides.
+layout:
+  - Supply
+  - Area
+  - Pipes
+  - Override
+  - Info
