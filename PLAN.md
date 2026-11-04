@@ -464,7 +464,7 @@ change, and no change to a solved number.
 
 | file | change |
 |---|---|
-| `phcp_flow.pl` | the window: place a block, drag from a port to connect, a card for the file or the selection, VALIDATE then CALCULATE, ARRANGE and FIT.  Flat, like the text editor: one-pixel rules, flat fields and menus, the card scrolls |
+| `phcp_flow.pl` | the window: place a block, drag from a port to connect, a card for the file or the selection, VALIDATE then CALCULATE, ARRANGE and FIT.  Flat, like the text editor: one-pixel rules, flat fields and menus, the card scrolls.  DARK switches the page, the card and the blocks; LIGHT switches back |
 | `HardyCross/Flow.pm` | the drawing, with no Tk: read and write `.phc`, lay the blocks out, hand the text to the reader and the solver |
 | `tools/test_flow.pl` | every example written back solves the same; copies and a changed pipe; editing |
 | `tools/test_flow_window.pl` | the window under a virtual display |

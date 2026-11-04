@@ -10,7 +10,7 @@
 #   perl phcp_flow.pl [model.phc]
 #
 #   +------------------------------------------------------------------+
-#   | NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT  [ status ] |
+#   | NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT | DARK  [ status ] |
 #   +--------+----------------------------------------------+----------+
 #   | SELECT |                                              |  card    |
 #   | WATER  |   blocks, and the pipes drawn between them   |          |
@@ -43,32 +43,54 @@ use HardyCross::Parse;
 use HardyCross::PipeData;
 use File::Spec;
 
-our %C = (
-    paper     => '#FFFFFF',
-    panel     => '#F6F7F9',
-    line      => '#DDE1E6',
-    hover     => '#EEF1F5',
-    ink       => '#111111',
-    muted     => '#6B7280',
-    faint     => '#A3AAB4',
-    accent    => '#1F5FBF',
-    accent_dk => '#184C99',
-    accent_bg => '#E8F0FC',
-    select    => '#D3E3FA',
-    pipe      => '#3D4754',
-    error     => '#C62828',
-    error_bg  => '#FDEEEE',
+# Two flat palettes.  Light is the text editor's colours.  Dark is the same
+# drawing with the page dark and the ink light: a pipe that stayed dark grey
+# would vanish, and so would a near-black junction stripe.
+my %LIGHT = (
+    paper => '#FFFFFF', panel => '#F6F7F9', line => '#DDE1E6', hover => '#EEF1F5',
+    ink => '#111111', muted => '#6B7280', faint => '#A3AAB4',
+    accent => '#1F5FBF', accent_dk => '#184C99', accent_bg => '#E8F0FC', select => '#D3E3FA',
+    pipe => '#3D4754', error => '#C62828', error_bg => '#FDEEEE',
+    bar => '#CDD2D9', bar_on => '#B4BBC5', on => '#FFFFFF',
 );
-my %KIND_COLOR = (
+my %DARK = (
+    paper => '#1C1F26', panel => '#14171C', line => '#343B48', hover => '#2A3140',
+    ink => '#E8EAED', muted => '#A0A8B4', faint => '#6E7784',
+    accent => '#3B82F6', accent_dk => '#2563C9', accent_bg => '#1B2C4A', select => '#243656',
+    pipe => '#D5DCE6', error => '#FF8B8B', error_bg => '#3A2224',
+    bar => '#3A4250', bar_on => '#526074', on => '#FFFFFF',
+);
+my %KIND_LIGHT = (
     WATER => '#1F5FBF', NODE => '#374151', SPRINKLER => '#0E7490',
     HYDRANT => '#1B6B3A', HREEL => '#8A5A00',
 );
+my %KIND_DARK = (
+    WATER => '#3B82F6', NODE => '#C5CDD8', SPRINKLER => '#2EC4D6',
+    HYDRANT => '#3DDC7A', HREEL => '#E6B15A',
+);
+our %C;
+my %KIND_COLOR;
+our $DARK = 0;
+
+# use_theme -- copy one palette into the colours the window draws with.
+# Widgets already on screen are repainted by paint_theme, not by this.
+sub use_theme {
+    my $dark = shift;
+    $DARK = $dark ? 1 : 0;
+    %C = $DARK ? %DARK : %LIGHT;
+    %KIND_COLOR = $DARK ? %KIND_DARK : %KIND_LIGHT;
+}
+use_theme(0);
 our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 our ($UI, $UI_B, $UI_S, $MONO);
 our ($BW, $BH) = (172, 86);     # a block, in page units; the view scales it
 
 # The window's state.  One window, so package variables.
-our ($mw, $canvas, $insp, $card, $card_cv, $status_lbl);
+our ($mw, $canvas, $insp, $card, $card_cv, $status_lbl, $hint);
+our ($chrome_bar, $chrome_body, $chrome_pal, $scrolled);
+our (@rule, @scroll);
+our (%toolrow, %toolmark);
+our ($status_text, $status_bad) = ('', 0);
 our ($doc, $path, $saved_text, $valid_text, $sel, $tool, $zoom, $gesture);
 our (%btn, %toolbtn, %FV);
 our @FKEYS;
@@ -118,7 +140,7 @@ sub flat_scrollbar {
     return $parent->Scrollbar(
         -orient => $orient, -relief => 'flat', -borderwidth => 0,
         -elementborderwidth => 0, -width => 11, -troughcolor => $C{panel},
-        -background => '#CDD2D9', -activebackground => '#B4BBC5',
+        -background => $C{bar}, -activebackground => $C{bar_on},
         -highlightthickness => 0,
     );
 }
@@ -150,52 +172,62 @@ sub build_window {
     $gesture = undef;
     $path = undef;
 
-    my $bar = $mw->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 8);
-    flat($bar, 'NEW', \&file_new)->pack(-side => 'left', -padx => [0, 4]);
-    flat($bar, 'OPEN', \&file_open)->pack(-side => 'left', -padx => 4);
-    flat($bar, 'SAVE', \&file_save)->pack(-side => 'left', -padx => 4);
-    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
-    flat($bar, 'VALIDATE  F4', \&do_validate)->pack(-side => 'left', -padx => 4);
-    $btn{CALCULATE} = flat($bar, 'CALCULATE  F5', \&do_calculate);
+    $chrome_bar = $mw->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 8);
+    $btn{NEW} = flat($chrome_bar, 'NEW', \&file_new);
+    $btn{NEW}->pack(-side => 'left', -padx => [0, 4]);
+    $btn{OPEN} = flat($chrome_bar, 'OPEN', \&file_open);
+    $btn{OPEN}->pack(-side => 'left', -padx => 4);
+    $btn{SAVE} = flat($chrome_bar, 'SAVE', \&file_save);
+    $btn{SAVE}->pack(-side => 'left', -padx => 4);
+    push @rule, $chrome_bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
+    $btn{VALIDATE} = flat($chrome_bar, 'VALIDATE  F4', \&do_validate);
+    $btn{VALIDATE}->pack(-side => 'left', -padx => 4);
+    $btn{CALCULATE} = flat($chrome_bar, 'CALCULATE  F5', \&do_calculate);
     $btn{CALCULATE}->pack(-side => 'left', -padx => 4);
-    $bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
-    flat($bar, 'ARRANGE', \&do_arrange)->pack(-side => 'left', -padx => 4);
-    flat($bar, 'FIT', \&fit_view)->pack(-side => 'left', -padx => 4);
-    $status_lbl = $bar->Label(
+    push @rule, $chrome_bar->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y', -padx => 8, -pady => 2);
+    $btn{ARRANGE} = flat($chrome_bar, 'ARRANGE', \&do_arrange);
+    $btn{ARRANGE}->pack(-side => 'left', -padx => 4);
+    $btn{FIT} = flat($chrome_bar, 'FIT', \&fit_view);
+    $btn{FIT}->pack(-side => 'left', -padx => 4);
+    $btn{DARK} = flat($chrome_bar, 'DARK', \&toggle_dark);
+    $btn{DARK}->pack(-side => 'left', -padx => 4);
+    $status_lbl = $chrome_bar->Label(
         -text => '', -anchor => 'e', -font => $UI_B, -bg => $C{panel}, -fg => $C{muted},
         -padx => 10, -pady => 4,
     )->pack(-side => 'right', -padx => 4);
 
-    $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
+    push @rule, $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
 
-    my $body = $mw->Frame(-bg => $C{panel})->pack(-fill => 'both', -expand => 1);
-    my $pal = $body->Frame(-bg => $C{panel}, -width => 156)->pack(-side => 'left', -fill => 'y');
-    $pal->packPropagate(0);
-    $body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
+    $chrome_body = $mw->Frame(-bg => $C{panel})->pack(-fill => 'both', -expand => 1);
+    $chrome_pal = $chrome_body->Frame(-bg => $C{panel}, -width => 156)->pack(-side => 'left', -fill => 'y');
+    $chrome_pal->packPropagate(0);
+    push @rule, $chrome_body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
 
-    my $held = $body->Scrolled('Canvas',
+    $scrolled = $chrome_body->Scrolled('Canvas',
         -scrollbars => 'se', -bg => $C{paper}, -highlightthickness => 0,
         -relief => 'flat', -borderwidth => 0,
         -width => 820, -height => 640, -cursor => $POINTER,
     )->pack(-side => 'left', -fill => 'both', -expand => 1);
-    $canvas = $held->Subwidget('canvas');
+    $canvas = $scrolled->Subwidget('canvas');
     $canvas->configure(-relief => 'flat', -borderwidth => 0, -highlightthickness => 0);
     for my $name (qw(xscrollbar yscrollbar)) {
-        my $sb = $held->Subwidget($name) or next;
+        my $sb = $scrolled->Subwidget($name) or next;
         $sb->configure(
             -relief => 'flat', -borderwidth => 0, -elementborderwidth => 0,
             -width => 11, -troughcolor => $C{panel}, -highlightthickness => 0,
-            -background => '#CDD2D9', -activebackground => '#B4BBC5',
+            -background => $C{bar}, -activebackground => $C{bar_on},
         );
+        push @scroll, $sb;
     }
 
-    $body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
+    push @rule, $chrome_body->Frame(-bg => $C{line}, -width => 1)->pack(-side => 'left', -fill => 'y');
     # Wide enough that a drawing's title fits on one line.  The card scrolls
     # when a pipe's device, or the project lines, run past the window.
-    $insp = $body->Frame(-bg => $C{panel}, -width => 460)->pack(-side => 'left', -fill => 'y');
+    $insp = $chrome_body->Frame(-bg => $C{panel}, -width => 460)->pack(-side => 'left', -fill => 'y');
     $insp->packPropagate(0);
     my $card_sb = flat_scrollbar($insp, 'vertical');
     $card_sb->pack(-side => 'right', -fill => 'y');
+    push @scroll, $card_sb;
     $card_cv = $insp->Canvas(
         -bg => $C{panel}, -highlightthickness => 0, -borderwidth => 0, -relief => 'flat',
         -yscrollcommand => [ $card_sb, 'set' ],
@@ -205,8 +237,8 @@ sub build_window {
     $card_cv->createWindow(0, 0, -window => $card, -anchor => 'nw', -tags => 'cardwin');
     $card_cv->bind('<Configure>' => \&fit_card);
 
-    $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
-    $mw->Label(
+    push @rule, $mw->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x');
+    $hint = $mw->Label(
         -text => 'PLACE A BLOCK, THEN DRAG FROM A PORT TO CONNECT.  F4 VALIDATES, F5 CALCULATES.',
         -anchor => 'w', -font => $UI_S, -bg => $C{panel}, -fg => $C{muted},
     )->pack(-fill => 'x', -padx => 10, -pady => 4);
@@ -215,10 +247,11 @@ sub build_window {
     # PIPE and PUMP sit below a rule: they connect blocks, they are not blocks.
     my %mark = (%KIND_COLOR, SELECT => $C{accent}, PIPE => $C{pipe}, PUMP => $C{accent});
     for my $name ('SELECT', @HardyCross::Flow::BLOCK_KINDS, 'PIPE', 'PUMP') {
-        $pal->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x', -padx => 12, -pady => [8, 6])
+        push @rule, $chrome_pal->Frame(-bg => $C{line}, -height => 1)->pack(-fill => 'x', -padx => 12, -pady => [8, 6])
             if $name eq 'PIPE';
-        my $row = $pal->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 1);
-        $row->Frame(-bg => $mark{$name}, -width => 3)->pack(-side => 'left', -fill => 'y');
+        my $row = $chrome_pal->Frame(-bg => $C{panel})->pack(-fill => 'x', -padx => 8, -pady => 1);
+        $toolrow{$name} = $row;
+        $toolmark{$name} = $row->Frame(-bg => $mark{$name}, -width => 3)->pack(-side => 'left', -fill => 'y');
         my $b = $row->Button(
             -text => $name, -command => sub { set_tool($name) },
             -relief => 'flat', -borderwidth => 0, -highlightthickness => 0,
@@ -269,15 +302,16 @@ sub set_tool {
         my $on = $n eq $tool;
         $toolbtn{$n}->configure(
             -bg => $on ? $C{accent} : $C{panel},
-            -fg => $on ? '#FFFFFF' : $C{ink},
+            -fg => $on ? $C{on} : $C{ink},
             -activebackground => $on ? $C{accent_dk} : $C{hover},
-            -activeforeground => $on ? '#FFFFFF' : $C{ink},
+            -activeforeground => $on ? $C{on} : $C{ink},
         );
     }
 }
 
 sub status {
     my ($msg, $bad) = @_;
+    ($status_text, $status_bad) = ($msg, $bad);
     return unless $status_lbl;
     my ($fg, $bg) = ($C{muted}, $C{panel});
     if ($bad) { ($fg, $bg) = ($C{error}, $C{error_bg}) }
@@ -301,11 +335,63 @@ sub sync_calc {
     my $on = defined $valid_text && $valid_text eq eval { HardyCross::Flow::model_text($doc) };
     $btn{CALCULATE}->configure(
         -bg => $on ? $C{accent} : $C{panel},
-        -fg => $on ? '#FFFFFF' : $C{faint},
+        -fg => $on ? $C{on} : $C{faint},
         -highlightbackground => $on ? $C{accent} : $C{line},
         -activebackground => $on ? $C{accent_dk} : $C{panel},
-        -activeforeground => $on ? '#FFFFFF' : $C{faint},
+        -activeforeground => $on ? $C{on} : $C{faint},
     );
+}
+
+# toggle_dark -- the page, the card and the blocks, together.  The drawing
+# itself does not change.  Commit first so a half-typed value is not lost
+# when the card is built again in the new colours.
+sub toggle_dark {
+    commit_form();
+    use_theme(!$DARK);
+    paint_theme();
+}
+
+sub paint_theme {
+    return unless $mw;
+    $mw->optionAdd('*Menu.background' => $C{paper});
+    $mw->optionAdd('*Menu.foreground' => $C{ink});
+    $mw->optionAdd('*Menu.activeBackground' => $C{select});
+    $mw->optionAdd('*Menu.activeForeground' => $C{ink});
+    $_->configure(-bg => $C{panel}) for grep { $_ } $mw, $chrome_bar, $chrome_body, $chrome_pal, $insp, $card, $card_cv;
+    $_->configure(-bg => $C{line}) for @rule;
+    # The scrolled frame's background is the page.  Setting it after the
+    # canvas would paint the page with the chrome colour.
+    if ($scrolled) {
+        $scrolled->configure(-bg => $C{paper});
+        my $corner = $scrolled->Subwidget('corner');
+        $corner->configure(-bg => $C{panel}) if $corner;
+    }
+    $canvas->configure(-bg => $C{paper}) if $canvas;
+    for my $sb (@scroll) {
+        $sb->configure(
+            -troughcolor => $C{panel}, -background => $C{bar}, -activebackground => $C{bar_on},
+        );
+    }
+    $hint->configure(-bg => $C{panel}, -fg => $C{muted}) if $hint;
+    for my $name (qw(NEW OPEN SAVE VALIDATE ARRANGE FIT DARK)) {
+        my $b = $btn{$name} or next;
+        $b->configure(
+            -bg => $C{paper}, -fg => $C{ink},
+            -highlightbackground => $C{line}, -highlightcolor => $C{accent},
+            -activebackground => $C{hover}, -activeforeground => $C{ink},
+        );
+    }
+    $btn{DARK}->configure(-text => $DARK ? 'LIGHT' : 'DARK') if $btn{DARK};
+    my %mark = (%KIND_COLOR, SELECT => $C{accent}, PIPE => $C{pipe}, PUMP => $C{accent});
+    for my $n (keys %toolrow) {
+        $toolrow{$n}->configure(-bg => $C{panel});
+        $toolmark{$n}->configure(-bg => $mark{$n}) if $toolmark{$n};
+    }
+    set_tool($tool) if $tool;
+    sync_calc();
+    status($status_text, $status_bad);
+    refresh_inspector();
+    redraw();
 }
 
 sub note_edit {

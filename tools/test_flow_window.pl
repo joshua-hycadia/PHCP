@@ -122,6 +122,25 @@ is('the card scrolls as far as its last line',
    $sr[3] >= $main::card->reqheight - 2, "@sr against " . $main::card->reqheight);
 is('a device is named on its pipe', $main::canvas->find('withtag', 'device') >= 1);
 
+# Dark is the same drawing.  The page, the card and a field change together,
+# and the pressures stay on the blocks.  Put the light page back afterwards.
+main::do_validate();
+main::do_calculate();
+$main::mw->update;
+main::toggle_dark();
+$main::mw->update;
+is('DARK turns the page dark', lc($main::canvas->cget('-bg')) eq '#1c1f26');
+is('DARK turns the card dark', lc($main::card->cget('-bg')) eq '#14171c');
+my ($dark_e) = grep { eval { $_->class eq 'Entry' } } walk($main::card);
+is('DARK turns a field dark', $dark_e && lc($dark_e->cget('-bg')) eq '#1c1f26');
+my @dark_results = map { $main::canvas->itemcget($_, '-text') } $main::canvas->find('withtag', 'result');
+is('DARK keeps the pressures and flows', (grep { /KPA|LPM/ } @dark_results) >= 2, join(' | ', @dark_results));
+is('the button offers the way back', $main::btn{DARK}->cget('-text') eq 'LIGHT');
+main::toggle_dark();
+$main::mw->update;
+is('LIGHT restores the white page', lc($main::canvas->cget('-bg')) eq '#ffffff');
+is('LIGHT restores the button', $main::btn{DARK}->cget('-text') eq 'DARK');
+
 my $out = "$TMP/drawn.phc";
 is('SAVE writes the drawing', main::file_save($out));
 is('the saved file is .phc the reader accepts',

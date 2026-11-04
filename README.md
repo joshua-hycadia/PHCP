@@ -464,7 +464,7 @@ block does not: a position is only a comment.
 
 ```
 +------------------------------------------------------------------+
-| NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT  [ status ] |
+| NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT | DARK   [ status ] |
 +--------+----------------------------------------------+----------+
 | SELECT |                                              |  card    |
 | WATER  |   blocks, and the pipes drawn between them   |          |
@@ -485,6 +485,7 @@ block does not: a position is only a comment.
 | card | the file's title, method and units, or the block or pipe that is selected.  Each value sits under its label, in a flat field or a flat menu, and the card scrolls.  A fixed flow is edited on its junction |
 | results | after a calculation that converges, the pressure on each block and the flow on each pipe, in the file's units.  The page shows the amount; the solver's sign is only the direction along the pipe |
 | files | NEW, OPEN, SAVE.  Any file but a `.phc` is refused.  Saving rewrites the file in a fixed order |
+| dark | DARK switches the page, the card and the blocks.  LIGHT switches back.  The file does not change |
 
 What a save keeps, and what it does not.  The note at the top of a file is
 kept.  A position is written as `// FLOW x y` after the node, which the
@@ -500,6 +501,9 @@ millimetres; this program does not start there.
 
 The window is drawn the same way as the text editor: a white page, one-pixel
 rules, flat buttons, fields and menus, and blue only for the highlight.
+DARK switches that page, the card and the blocks to a dark drawing, and the
+button then reads LIGHT.  A pipe is drawn light so it stays visible.  The
+file does not change.
 Words on a pipe sit on the paper, so the line does not run through them.
 A long number on a block is shortened; the card keeps the full figure.
 
@@ -1122,7 +1126,7 @@ others on the page, and the report says which check to make.
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
 | drawn network, headless (`tools/test_flow.pl`) | 92 / 92 |
-| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 24 / 24 |
+| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 31 / 31 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |
