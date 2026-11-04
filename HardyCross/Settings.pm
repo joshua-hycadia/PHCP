@@ -5,11 +5,14 @@
 #
 # Settings.pm -- the few settings that belong to a machine, not to a model.
 #
-# One so far: DATABASE_DIR, a folder holding the pipe and fitting database
-# (pipes.dat).  A team points every machine at one folder on a network drive
-# and they all calculate with the same data; the report prints the path and
-# the SHA-256 of the file read, so each calculation still says exactly which
-# data it used.  Unset, the program uses its own database.
+# DATABASE_DIR is a folder holding the pipe and fitting database (pipes.dat).
+# A team points every machine at one folder on a network drive and they all
+# calculate with the same data; the report prints the path and the SHA-256 of
+# the file read, so each calculation still says exactly which data it used.
+# Unset, the program uses its own database.
+#
+# FAST_DARK is the fast-entry window's ground (1 for dark).  The text editor
+# does not read it.  It is not part of a model.
 #
 # The settings live in a small KEY=VALUE text file:
 #   Windows    %APPDATA%\PHCP\settings.ini
