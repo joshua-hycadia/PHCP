@@ -200,9 +200,9 @@ model whose fixed flow governs, are new.
 node pressures are frozen in `tools/baseline/<example>.expected`, taken from an
 independent description of the same network solved at tight tolerances, and
 `tools/test_phc.pl` requires the example to reproduce them to 1e-4.  Example 04,
-the 1000-node grid, has only its pipe and node names frozen: its solve takes many
-minutes, so it is checked to hold every pipe and node, and solved only with
-`--full`.
+the 1000-node grid, has only its pipe and node names frozen: its solve takes about
+37 minutes (24 820 iterations, `OPTION MAXITER 30000`), so it is checked to hold
+every pipe and node, and solved only with `--full`, which requires it to converge.
 
 **Line checking.**  `HardyCross::Phc::check_line` checks one line as it is
 typed, without Tk, for the text editor: whether it is complete, the command's
@@ -1050,7 +1050,7 @@ fitting strings.
 | 10 x 10 grid, 100 nodes | 0.7 s | 146 |
 | 16 x 16 grid, 256 nodes | 10 s | 600 |
 | 20 x 25 grid, 500 nodes | 86 s | 3441 |
-| 20 x 50 grid, 1000 nodes | over 200 s | - |
+| 20 x 50 grid, 1000 nodes | about 37 min | 24820 |
 | tree, 1000 nodes | 17 s | 2630 |
 | tree, 2000 nodes | over 200 s | - |
 
