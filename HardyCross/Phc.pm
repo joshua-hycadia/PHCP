@@ -60,7 +60,7 @@ use HardyCross::PipeData;
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
                   VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA
-                  SIZING_GOAL SIZING_MARGIN SIZING_TRIALS);
+                  SIZING_GOAL SIZING_MARGIN SIZING_TRIALS VELOCITY_PRESSURE);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
                                     RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
@@ -470,6 +470,13 @@ sub check_field {
             my $g = uc $v;
             return 'SIZING_GOAL IS SMALLEST (THE SMALLEST PIPES) OR VOLUME (THE LEAST WATER IN THE PIPES)'
                 unless $g eq 'SMALLEST' || $g eq 'VOLUME';
+            return $push->($g);
+        }
+        # Whether sprinklers discharge on normal pressure (AS 2118.1 Cl 14.15).
+        if ($o eq 'VELOCITY_PRESSURE') {
+            my $g = uc $v;
+            return 'VELOCITY_PRESSURE IS ON (SPRINKLERS DISCHARGE ON NORMAL PRESSURE) OR OFF (TOTAL PRESSURE)'
+                unless $g eq 'ON' || $g eq 'OFF';
             return $push->($g);
         }
         if ($o eq 'SIZING_TRIALS') {

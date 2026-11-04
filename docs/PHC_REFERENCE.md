@@ -332,6 +332,7 @@ name is an error. A numeric option's value must be a number.
 | `SIZING_MARGIN` | a percentage (`10%`) or a pressure (`50`, PRESSURE unit) | 0 | For pipes given size 0: how far under the supply the sized system must be at the demand point. |
 | `SIZING_TRIALS` | 1 to 50 | 5 | For pipes given size 0: how many trials the sizing search makes, each from a different start. |
 | `FITTING_BASIS` | `CORRECTED` or `STANDARD` | `CORRECTED` | CORRECTED corrects fitting lengths for C and for the installed bore. STANDARD uses the AS 2118.1 values unmodified (the "published Standard alone" election), and the report says so. |
+| `VELOCITY_PRESSURE` | `ON` or `OFF` | `OFF` | ON: in-line sprinklers discharge on the normal pressure, q = K sqrt(Pt - Pv), Pv = rho v^2 / 2 in the pipe bringing the most water into the head's node (AS 2118.1 Clause 14.15, at the designer's discretion). End sprinklers, hydrants, hose reels and fixed flows stay on total pressure. OFF: every outlet on total pressure. The report and the JSON state which (Section 5.5.1). |
 | `VEL_LIMIT` | m/s, above 0 | 6 | Pipes faster than this are listed in the warnings. A setting, not a clause of a Standard, and the report says which. |
 | `HW_CONST` | number | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. |
 | `NU` | m2/s, above 0 | 1.004e-6 | Kinematic viscosity of water, for Darcy-Weisbach. The default is water at 20 C. |
@@ -345,7 +346,32 @@ name is an error. A numeric option's value must be a number.
 OPTION HOSE_ALLOWANCE 500
 OPTION VEL_LIMIT      7.5
 OPTION FITTING_BASIS  STANDARD
+OPTION VELOCITY_PRESSURE ON
 ```
+
+#### 5.5.1 VELOCITY_PRESSURE
+
+AS 2118.1:2017 Clause 14.15 lets the designer include velocity pressures and,
+where they are included, requires them for range pipes and distribution mains
+alike.  It gives no method.  With `OPTION VELOCITY_PRESSURE ON`:
+
+- Only `SPRINKLER` outlets change.  `HYDRANT`, `HREEL` and `FIXEDFLOW` stay on
+  total pressure.
+- A sprinkler with a pipe or device carrying water on beyond its node (an
+  in-line head) discharges on Pn = Pt - Pv.  Pv = rho v^2 / 2, 0.5 v^2 kPa,
+  with v the velocity in the pipe bringing the most water into the node.
+- A sprinkler with nothing carrying water beyond it (an end head: the end of a
+  range, a drop or an armover) discharges on Pt.
+- Every pipe is treated alike, so range pipes and distribution mains are both
+  covered.  No normal pressure is taken at a branch take-off; branches are
+  solved in full.
+- Pv is set from a converged solve and held while the network is solved again,
+  until no Pv moves by more than `TOL_LOOP`.
+
+Friction, elevation and node pressures stay total pressure.  Outlet
+compliance, margins, the governing outlet and the demand point are measured on
+the pressure each outlet discharges on.  The default, `OFF`, gives exactly the
+results PHCP gave before the option existed.
 
 ---
 

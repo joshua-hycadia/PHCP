@@ -362,7 +362,16 @@ sub elem_hf {
         my $kf = $e->{k} > $D_TINY ? $e->{k} : $D_TINY;
         my $dh = 2 * $aq / $kf ** 2;
         $dh = 2 * $Q_TINY / $kf ** 2 if $dh < $D_TINY;
-        return ($sg * ($aq / $kf) ** 2 + $GAMMA_W * $e->{z}, $dh);
+        my $hf = $sg * ($aq / $kf) ** 2 + $GAMMA_W * $e->{z};
+        # With OPTION VELOCITY_PRESSURE ON, a sprinkler discharges on the
+        # normal pressure Pn = Pt - Pv, so the total pressure it needs is
+        # (q/K)^2 + Pv.  Pv is set by the outer loop (velocity_pressures) from
+        # the converged flows and held fixed while the loops balance, like a
+        # ratio valve's drop, so it adds nothing to the derivative.  It is
+        # only ever added when set: with the option OFF no outlet carries a
+        # pv, and the arithmetic is exactly what it always was.
+        $hf += $e->{pv} if $e->{pv};
+        return ($hf, $dh);
     }
     # An ORIFICE_P whose bore has not been sized yet behaves as a fixed drop
     # of the pressure it is required to produce.  It MUST be listed here: it
@@ -912,6 +921,88 @@ sub ratio_warnings {
     return @w;
 }
 
+#------------------------------------------------------------------------------
+# velocity_pressures -- set each sprinkler's velocity pressure from the flows.
+#
+# OPTION VELOCITY_PRESSURE ON (default OFF).  AS 2118.1:2017 Clause 14.15
+# leaves the inclusion of velocity pressures to the designer and, where they
+# are included, requires them for both range pipes and distribution mains.
+# It gives no method, so PHCP's convention is set out here (agreed with the
+# maintainer 4 November 2026):
+#
+#   - SPRINKLER outlets only.  Hydrants, hose reels and fixed flows stay on
+#     total pressure: the clause is in the sprinkler Standard.
+#   - At a flowing sprinkler, q = K sqrt(Pn) with Pn = Pt - Pv, and
+#     Pv = rho v^2 / 2 = 0.5 v^2 kPa (v in m/s, water at 1000 kg/m3) -- the
+#     figure the pipe schedule has always printed.
+#   - v is the velocity in the PIPE carrying flow INTO the node.  Where two
+#     or more pipes feed it (a grid or a loop), the one bringing the most
+#     water.  A node fed only through a device has no pipe velocity, Pv 0.
+#   - An END outlet -- one whose node has no pipe or device carrying water on
+#     beyond it, the end of a range, a drop or an armover -- discharges on
+#     total pressure.  So in practice only in-line heads change.
+#   - It applies across all the pipework at once, range pipes and
+#     distribution mains alike: PHCP does not tag what a pipe is for, and the
+#     clause does not allow one without the other.  There is no Pn at a branch
+#     take-off: every branch is solved in full, in total pressure.
+#
+# Pv depends on a solved flow, so it is set here, on a converged answer, and
+# the network solved again until no Pv moves by more than the loop tolerance
+# -- the same outer loop as the ratio valves.  Flow directions are re-read on
+# every pass, so a head that becomes an end outlet goes back to total pressure.
+#
+# Each sprinkler is left with pv (kPa, 0 for an end outlet), pv_pipe (the id
+# of the pipe whose velocity set it, or undef) and pv_end (true for an end
+# outlet).  Returns true if any pv moved by more than the loop tolerance.
+#------------------------------------------------------------------------------
+sub velocity_pressures {
+    my $net = shift;
+    return 0 unless $net->{opts}{vel_press};
+    my $tol   = $net->{opts}{tol_loop} // 0.01;
+    my $elems = $net->{elems};
+
+    # One pass over the elements: at every node, the pipe bringing the most
+    # water in, and whether anything carries water out.  Outlets themselves
+    # (edges to REF) are not pipework and are skipped.
+    my (%feed, %fq, %out);
+    for my $ei (1 .. $#$elems) {
+        my $e = $elems->[$ei];
+        next if $e->{closed} || $e->{kind} eq 'DISCHARGE';
+        next unless abs($e->{q}) > $Q_TINY;
+        my ($to, $from) = $e->{q} > 0 ? ($e->{n2}, $e->{n1}) : ($e->{n1}, $e->{n2});
+        $out{$from} = 1;
+        if ($e->{kind} eq 'PIPE' && abs($e->{q}) > ($fq{$to} // 0)) {
+            ($feed{$to}, $fq{$to}) = ($e, abs $e->{q});
+        }
+    }
+
+    my $changed = 0;
+    for my $e (@$elems[1 .. $#$elems]) {
+        next unless $e->{kind} eq 'DISCHARGE' && uc($e->{otype} // '') eq 'SPRINKLER';
+        my $v  = $e->{n1};
+        my $f  = $out{$v} ? $feed{$v} : undef;
+        my $pv = $f ? 0.5 * pipe_velocity($fq{$v}, $f->{dia}) ** 2 : 0;
+        $changed = 1 if abs($pv - ($e->{pv} // 0)) > $tol;
+        $e->{pv}      = $pv;
+        $e->{pv_pipe} = $f ? $f->{id} : undef;
+        $e->{pv_end}  = !$out{$v};
+    }
+    return $changed;
+}
+
+# outlet_pressure -- the pressure an outlet discharges on, kPa: its gauge
+# pressure (total pressure, Pt), less its velocity pressure when one is
+# applied (OPTION VELOCITY_PRESSURE ON), so q = K sqrt(outlet_pressure).
+# Works for a fixed-flow record too (no pv).  Everything that checks an outlet
+# against its minimum pressure uses this, so the report, the margins, the
+# demand point and the JSON cannot disagree on the basis.
+sub outlet_pressure {
+    my ($net, $e) = @_;
+    my $p = $net->{nodes}[ $e->{n1} ]{h} - $GAMMA_W * $e->{z};
+    $p -= $e->{pv} if $e->{pv};
+    return $p;
+}
+
 sub solve_model {
     my $net = shift;
     build_tree($net);
@@ -932,7 +1023,8 @@ sub solve_model {
         my $sized  = size_orifices($net);
         my $pumped = pump_status($net);
         my $ratio  = ratio_valves($net);
-        unless ($sized || $pumped || $ratio) { $settled = 1; last }
+        my $vp     = velocity_pressures($net);
+        unless ($sized || $pumped || $ratio || $vp) { $settled = 1; last }
         $ok = solve_network($net,
             maxiter  => $net->{opts}{maxiter},
             tol_flow => $net->{opts}{tol_flow},
@@ -940,6 +1032,9 @@ sub solve_model {
     }
     push @{ $net->{warnings} }, ratio_warnings($net, $settled)
         if grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    push @{ $net->{warnings} }, 'the sprinkler velocity pressures had not settled when the solve '
+                              . 'stopped; the results must be checked'
+        if $net->{opts}{vel_press} && !$settled;
     return $ok;
 }
 
