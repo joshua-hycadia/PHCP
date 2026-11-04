@@ -87,6 +87,8 @@ perl tools/stress_resolver.pl       # fitting resolver
 perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
 perl tools/test_editor.pl           # the editor's logic, headless
 perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
+perl tools/test_fast.pl             # fast entry's logic, headless
+perl tools/test_fast_window.pl      # the fast-entry window (re-runs under xvfb-run)
 perl tools/test_dbedit.pl           # database editing and the team folder, headless
 perl tools/test_graph.pl            # the Q^1.85 water supply graph, and SUPPLYGRAPH in a report
 perl tools/test_tools.pl            # the QUICK TOOLS calculators

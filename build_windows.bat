@@ -1,15 +1,16 @@
 @echo off
 rem ===========================================================================
-rem build_windows.bat -- build phcp.exe and phcp_editor.exe on a Windows PC.
+rem build_windows.bat -- build phcp.exe, phcp_editor.exe and phcp_fast.exe
+rem on a Windows PC.
 rem
 rem Copyright (c) 2026 Hycadia Pty Ltd.  SPDX-License-Identifier: MIT
 rem
 rem The command-line program, phcp.exe, needs nothing beyond Strawberry Perl
-rem and is always built.  The text editor, phcp_editor.exe, also needs Tk,
-rem which has to be COMPILED here from source -- and that is the step that can
-rem fail.  So the two are built independently: if Tk will
-rem not build, you still get a working phcp.exe, and the Tk build log is copied
-rem to tk_build.log in this folder so the cause can be read.
+rem and is always built.  The text editor, phcp_editor.exe, and fast entry,
+rem phcp_fast.exe, also need Tk, which has to be COMPILED here from source --
+rem and that is the step that can fail.  So they are built independently: if
+rem Tk will not build, you still get a working phcp.exe, and the Tk build log
+rem is copied to tk_build.log in this folder so the cause can be read.
 rem
 rem WHY TK NEEDS A PATCHED RELEASE
 rem   Tk 804.036 on CPAN does not compile with recent Strawberry Perl
@@ -56,7 +57,7 @@ perl -MPAR::Packer -e1 >nul 2>&1 || (echo ERROR: PAR::Packer is not available. &
 echo        ok
 
 echo.
-echo [3/6] Tk (needed only for the text editor)...
+echo [3/6] Tk (needed for the text editor and fast entry)...
 perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     echo        Installing the patched Tk 804.036_001 from the Strawberry Perl project...
@@ -123,6 +124,19 @@ if "!GUI!"=="yes" (
         call pp --gui -I . !EDMODS! %EDDATA% -o phcp_editor.exe phcp_editor.pl
         if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
     )
+    if "!GUI!"=="yes" (
+        echo        Building phcp_fast.exe ^(fast entry^)...
+        set FASTMODS=%MODS% -M HardyCross::Editor -M HardyCross::FastEntry -M Tk -M Tk::Panedwindow -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Menubutton -M Tk::Text -M Tk::Scrollbar -M Tk::PNG !DPI!
+        set BUILT=no
+        if "!ICON!"=="yes" (
+            perl tools\pack_with_icon.pl data\phcp.ico gui phcp_fast.exe -I . !FASTMODS! %EDDATA% phcp_fast.pl && set BUILT=yes
+            if "!BUILT!"=="no" echo        the icon could not be added - building without it
+        )
+        if "!BUILT!"=="no" (
+            call pp --gui -I . !FASTMODS! %EDDATA% -o phcp_fast.exe phcp_fast.pl
+            if errorlevel 1 (echo ERROR: pp failed building phcp_fast.exe & exit /b 1)
+        )
+    )
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
 )
@@ -140,7 +154,7 @@ echo        ok - .phc examples solved and converged, PDF report and JSON written
 echo.
 echo ===========================================================================
 if "!GUI!"=="yes" (
-    echo  Built: phcp.exe and phcp_editor.exe
+    echo  Built: phcp.exe, phcp_editor.exe and phcp_fast.exe
 ) else (
     echo  Built: phcp.exe  ^(command line, working^)
     echo  NOT built: phcp_editor.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
