@@ -73,10 +73,17 @@ is('the system grid has a row to type in, and a pipe column',
    grid_cell('SYSTEM', 0, 'pipe') && grid_cell('SYSTEM', 0, 'fittings'));
 
 # Type a pipe the way a keystroke does: the entry holds the text, and the
-# KeyRelease binding is what writes it into the model.
+# KeyRelease binding is what writes it into the model.  A list (pipe type,
+# a nominal diameter, node type) has no entry: choosing is commit_value,
+# which is what the menu's command calls.
 sub type_cell {
     my ($id, $r, $key, $text) = @_;
     my $w = grid_cell($id, $r, $key) or return;
+    if (!$w->isa('Tk::Entry')) {
+        commit_value($id, $r, $key, $text);
+        $mw->update;   # a pipe-type change rebuilds the diameter cell after idle
+        return;
+    }
     $w->focusForce;
     $w->delete(0, 'end');
     $w->insert(0, $text);
@@ -84,11 +91,27 @@ sub type_cell {
     $mw->update;
 }
 
+sub menu_labels {
+    my $w = shift or return;
+    my $m = eval { $w->cget('-menu') } or return;
+    my $end = eval { $m->index('end') };
+    return if !defined $end || $end eq 'none';
+    return map { $m->entrycget($_, '-label') } 0 .. $end;
+}
+
 type_cell('SYSTEM', 0, 'pipe', 'P1');
 type_cell('SYSTEM', 0, 'from', 'A');
 type_cell('SYSTEM', 0, 'to', 'B');
 type_cell('SYSTEM', 0, 'length', '10');
+is('pipe type is a list', grid_cell('SYSTEM', 0, 'type')->isa('Tk::Menubutton'));
+my @types = menu_labels(grid_cell('SYSTEM', 0, 'type'));
+is('the pipe type list is the database, and BORE',
+   (grep { $_ eq 'ASAM' } @types) && (grep { $_ eq 'BORE' } @types));
 type_cell('SYSTEM', 0, 'type', 'ASAM');
+is('a database type makes the diameter a list', grid_cell('SYSTEM', 0, 'diam')->isa('Tk::Menubutton'));
+my @diams = menu_labels(grid_cell('SYSTEM', 0, 'diam'));
+is('that list has 0, so the pipe can be sized, and the nominal size',
+   (grep { $_ eq '0   (SIZE THE PIPE)' } @diams) && (grep { $_ eq '100' } @diams));
 type_cell('SYSTEM', 0, 'diam', '100');
 type_cell('SYSTEM', 0, 'fittings', '2E T GV');
 $mw->update;
@@ -98,6 +121,8 @@ is('typing the pipe\'s ends fills the nodes tab, in that order', join(' ', @node
 is('the node number is shown and is not an entry', grid_text('NODES', 0, 'node') eq 'A'
    && !grid_cell('NODES', 0, 'node')->isa('Tk::Entry'));
 is('a new node\'s type is blank', grid_text('NODES', 0, 'type') eq '');
+is('node type is a list, the same kind of cell as the pipe type',
+   grid_cell('NODES', 0, 'type')->isa('Tk::Menubutton'));
 
 # Choosing PRV is the menu's command: commit_value is what that command calls.
 commit_value('NODES', 1, 'type', 'PRV');
@@ -155,6 +180,10 @@ open_path("$FindBin::Bin/../examples/01_single_branch.phc");
 $mw->update;
 is('opening a .phc file fills the system grid from it', grid_text('SYSTEM', 0, 'pipe') eq 'P1'
    && grid_text('SYSTEM', 0, 'from') eq 'N1' && grid_text('SYSTEM', 0, 'diam') eq '100.0');
+is('a bore is typed, and its pipe type stays a list',
+   grid_cell('SYSTEM', 0, 'diam')->isa('Tk::Entry')
+   && grid_cell('SYSTEM', 0, 'type')->isa('Tk::Menubutton')
+   && grid_text('SYSTEM', 0, 'type') eq 'BORE');
 is('the supply and the sprinkler land on the nodes tab',
    grid_text('NODES', 0, 'type') eq 'SUPPLY' && grid_text('NODES', 1, 'type') eq 'SPRINKLER');
 is('the sprinkler\'s minimum pressure is in MIN P', grid_text('NODES', 1, 'min_p') eq '50');
@@ -180,6 +209,105 @@ is('clicking it selects the system tab and the diameter cell',
    'tab=' . ($main::toptabs->{current} // '') . ' focus=' . ($focused ? $focused->PathName : 'none')
    . ' whats=' . join(' | ', map { $_->{what} } @{ $v->{items} }));
 
+# Rows, fill, find, and the dark palette.  Done on the opened file, then
+# undone, so each check starts from that file.
+select_tab($main::toptabs, 'SYSTEM');
+$mw->update;
+grid_cell('SYSTEM', 0, 'pipe')->focusForce;
+$mw->update;
+edit_insert_row();
+$mw->update;
+is('insert row puts an empty pipe above the one that had the focus',
+   grid_text('SYSTEM', 0, 'pipe') eq '' && grid_text('SYSTEM', 1, 'pipe') eq 'P1');
+grid_cell('SYSTEM', 0, 'length')->focusForce;
+$mw->update;
+edit_delete_row();
+$mw->update;
+is('delete row removes that pipe and the one below moves up', grid_text('SYSTEM', 0, 'pipe') eq 'P1');
+
+my $len = grid_text('SYSTEM', 0, 'length');
+fill_range('SYSTEM', 0, 2, 'length');
+$mw->update;
+is('filling down copies the cell through the rows dragged over',
+   grid_text('SYSTEM', 1, 'length') eq $len && grid_text('SYSTEM', 2, 'length') eq $len, $len);
+edit_undo();
+$mw->update;
+is('undo takes the filled rows back', grid_text('SYSTEM', 1, 'length') eq '' && grid_text('SYSTEM', 0, 'length') eq $len);
+
+grid_cell('SYSTEM', 0, 'pipe')->focusForce;
+$mw->update;
+edit_fill_down();
+$mw->update;
+is('fill down copies the focused cell into the next row', grid_text('SYSTEM', 1, 'pipe') eq 'P1');
+edit_undo();
+$mw->update;
+
+grid_cell('SYSTEM', 0, 'from')->focusForce;
+$mw->update;
+edit_clear_row();
+$mw->update;
+is('clear row blanks the cells that can be typed',
+   grid_text('SYSTEM', 0, 'pipe') eq '' && grid_text('SYSTEM', 0, 'from') eq ''
+   && grid_text('SYSTEM', 0, 'length') eq '');
+edit_undo();
+$mw->update;
+is('undo puts the cleared row back', grid_text('SYSTEM', 0, 'pipe') eq 'P1' && grid_text('SYSTEM', 0, 'from') eq 'N1');
+
+$main::find_what = 'N1';
+$main::find_with = 'N9';
+$main::find_case = 0;
+$main::find_all = 0;
+$main::find_pos = undef;
+select_tab($main::toptabs, 'SYSTEM');
+is('find lands on the cell that contains the text', find_next() && grid_text('SYSTEM', 0, 'from') eq 'N1');
+$mw->update;
+my $found = $mw->focusCurrent;
+is('and that cell is the one selected', $found && $found eq grid_cell('SYSTEM', 0, 'from'),
+   'focus=' . ($found ? $found->PathName : 'none')
+   . ' cell=' . (grid_cell('SYSTEM', 0, 'from') ? grid_cell('SYSTEM', 0, 'from')->PathName : 'none'));
+replace_current();
+$mw->update;
+is('replace writes the new text into that cell', grid_text('SYSTEM', 0, 'from') eq 'N9');
+edit_undo();
+$mw->update;
+
+$main::find_what = 'N';
+$main::find_with = 'Z';
+$main::find_pos = undef;
+my $nrep = replace_all();
+$mw->update;
+is('replace all on this grid rewrites each match, and is one undo',
+   $nrep >= 2 && grid_text('SYSTEM', 0, 'from') =~ /^Z/ && grid_text('SYSTEM', 0, 'to') =~ /^Z/);
+edit_undo();
+$mw->update;
+is('that undo puts both cells back', grid_text('SYSTEM', 0, 'from') eq 'N1' && grid_text('SYSTEM', 0, 'to') eq 'N2');
+
+open_find(1);
+$mw->update;
+is('find and replace opens a box', $main::find_box && Tk::Exists($main::find_box));
+$main::find_box->destroy if $main::find_box;
+$main::find_box = undef;
+
+my $paper = $mw->cget('-background');
+my $head = $main::grids{SYSTEM}{hclip}->cget('-background');
+toggle_theme();
+$mw->update;
+is('dark mode is remembered and repaints the window',
+   $main::theme eq 'dark' && $mw->cget('-background') eq $main::C{paper}
+   && $mw->cget('-background') ne $paper
+   && $main::grids{SYSTEM}{hclip}->cget('-background') eq $main::C{panel}
+   && $main::grids{SYSTEM}{hclip}->cget('-background') ne $head
+   && (btn_text() eq 'LIGHT MODE'));
+is('the choice is written to this machine\'s settings',
+   (HardyCross::Settings::get('SHEET_THEME') // '') eq 'DARK');
+toggle_theme();
+$mw->update;
+is('light mode puts the white window back',
+   $main::theme eq 'light' && $mw->cget('-background') eq $paper
+   && $main::grids{SYSTEM}{hclip}->cget('-background') eq $head);
+
 $mw->destroy;
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);
+
+sub btn_text { return $main::btn{THEME} ? $main::btn{THEME}->cget('-text') : '' }

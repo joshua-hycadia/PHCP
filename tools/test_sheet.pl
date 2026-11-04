@@ -265,5 +265,37 @@ print "5. WHAT EXAMPLE 02 PUTS ON EACH GRID\n";
     is('a size of 0 stays 0, so the pipe is still one to be sized', $sized && $sized->{diam} eq '0');
 }
 
+#==============================================================================
+print "6. PIPE TYPE AND DIAMETER ARE LISTS\n";
+#==============================================================================
+{
+    my @types = HardyCross::Sheet::pipe_type_choices();
+    is('the pipe type list is the database, then BORE',
+       (grep { $_ eq 'ASAM' } @types) && $types[-1] eq 'BORE');
+    my $s = HardyCross::Sheet::new_sheet();
+    my @mm = HardyCross::Sheet::diam_choices($s, 'ASAM');
+    is('a database type lists 0 and its nominal sizes',
+       $mm[0] eq '0' && (grep { $_ eq '100' } @mm) && (grep { $_ eq '20' } @mm));
+    is('BORE is not a list: the bore is typed', !HardyCross::Sheet::diam_choices($s, 'BORE'));
+    is('a blank type is not a list either', !HardyCross::Sheet::diam_choices($s, ''));
+    $s->{settings}{units}{SIZE} = 'IN';
+    my @in = HardyCross::Sheet::diam_choices($s, 'ASAM');
+    is('in inches the list is the inch nominal, and still has 0',
+       $in[0] eq '0' && (grep { $_ eq '4' } @in) && !(grep { $_ eq '100' } @in));
+    $s->{pipes}[0] = HardyCross::Sheet::empty_pipe();
+    $s->{pipes}[0]{type} = 'ASAM';
+    $s->{pipes}[1] = HardyCross::Sheet::empty_pipe();
+    is('a blank pipe type inherits the row above it', HardyCross::Sheet::effective_type($s, 1) eq 'ASAM');
+    $s->{pipes}[1]{type} = 'BORE';
+    is('its own type wins over the one above', HardyCross::Sheet::effective_type($s, 1) eq 'BORE');
+    my @sys = HardyCross::Sheet::system_columns($s);
+    is('the system columns name those two as lists',
+       (grep { $_->{key} eq 'type' && ($_->{kind} // '') eq 'pipetype' } @sys)
+       && (grep { $_->{key} eq 'diam' && ($_->{kind} // '') eq 'diam' } @sys));
+    my @nd = HardyCross::Sheet::node_columns($s);
+    is('node type is a list too',
+       (grep { $_->{key} eq 'type' && ($_->{kind} // '') eq 'type' } @nd));
+}
+
 print "\n$pass passed, $fail failed\n";
 exit($fail ? 1 : 0);

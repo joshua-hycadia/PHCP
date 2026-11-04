@@ -49,6 +49,7 @@ use strict;
 use warnings;
 use HardyCross::Phc;
 use HardyCross::Editor;
+use HardyCross::Tools;
 
 #------------------------------------------------------------------------------
 # The node types.  The first is the default: a node, stored as a blank.
@@ -283,12 +284,61 @@ sub system_columns {
         _col('from',     'FROM NODE',       12, 'THE NODE THE PIPE LEAVES. THE NODES TAB IS FILLED FROM THESE, AND FROM TO NODE.'),
         _col('to',       'TO NODE',         12, 'THE NODE THE PIPE ARRIVES AT.'),
         _col('length',   "LENGTH ($len)",   12, 'THE PIPE LENGTH, IN THE LENGTH UNIT SET IN THE PROJECT TAB.'),
-        _col('type',     'PIPE TYPE',       12, 'A TYPE FROM THE DATABASE, OR BORE WHEN THE DIAMETER IS A BORE. BLANK INHERITS THE PREVIOUS ROW.'),
+        _col('type',     'PIPE TYPE',       12, 'A TYPE FROM THE DATABASE, OR BORE WHEN THE DIAMETER IS A BORE. BLANK INHERITS THE PREVIOUS ROW. CHOOSE IT FROM THE LIST.', kind => 'pipetype'),
         _col('c',        'C / ROUGHNESS',   14, 'THE USE FIGURE: HAZEN-WILLIAMS C, OR ROUGHNESS IN THE SIZE UNIT UNDER DARCY-WEISBACH. BLANK: THE DATABASE\'S, OR 120 FOR A BORE.'),
-        _col('diam',     "PIPE DIAM ($sz)", 14, 'THE NOMINAL SIZE, OR THE BORE WHEN THE TYPE IS BORE. 0 ASKS FOR THE PIPE TO BE SIZED.'),
+        _col('diam',     "PIPE DIAM ($sz)", 14, 'THE NOMINAL SIZE FOR THAT TYPE, IN THE SIZE UNIT. 0 ASKS FOR THE PIPE TO BE SIZED. A BORE IS TYPED, NOT CHOSEN.', kind => 'diam'),
         _col('fittings', 'FITTING STRING',  22, 'FITTINGS AFTER THE SIZE, ONE CODE EACH, A COUNT OPTIONAL: 2E T GV. G, C AND B ARE THE GATE, CHECK AND BUTTERFLY VALVES.'),
         _col('eqv',      "EQV ($len)",      10, 'AN EQUIVALENT LENGTH ADDED TO THE PIPE. THE FITTING STRING IS THE FITTINGS; THIS IS EXTRA.'),
     );
+}
+
+# pipe_type_choices -- the PIPE TYPE list: every type in the database, then
+# BORE.  BORE means the diameter is a bore the user types, not a nominal size.
+# The codes are the ones a USE line already accepts.
+sub pipe_type_choices {
+    return HardyCross::Tools::pipe_types();
+}
+
+# effective_type -- the pipe type a row is using.  A blank cell inherits the
+# nearest row above that names one, the same way a USE line covers the pipes
+# under it until the next USE.  The diameter list is that type's.
+sub effective_type {
+    my ($sheet, $r) = @_;
+    return '' unless $sheet && defined $r;
+    for (my $i = $r; $i >= 0; $i--) {
+        my $p = $sheet->{pipes}[$i] or next;
+        my $t = uc trim($p->{type} // '');
+        return $t if length $t;
+    }
+    return '';
+}
+
+# diam_choices -- the PIPE DIAM list for a type, in the project's SIZE unit.
+# 0 is first, because a size of 0 still asks for the pipe to be sized.
+# An empty list means the diameter is typed: BORE, a blank with nothing
+# above it to inherit, or a type the database does not know.  The text
+# already in the cell is left as it is; this list does not replace it.
+sub diam_choices {
+    my ($sheet, $type) = @_;
+    $type = uc trim($type // '');
+    return () if $type eq '' || $type eq 'BORE';
+    my @dn = HardyCross::Tools::sizes($type);
+    return () unless @dn;
+    my $unit = uc($sheet->{settings}{units}{SIZE} || 'MM');
+    my @out = ('0');
+    if ($unit eq 'IN') {
+        # Nominal inches, not the millimetre DN.  A DN with no inch name is
+        # left off the list: the cell would otherwise write a millimetre
+        # figure into a file whose size unit is inches.
+        my %inch = reverse HardyCross::Phc::inch_sizes();
+        for my $dn (@dn) {
+            next unless exists $inch{$dn};
+            push @out, $inch{$dn};
+        }
+    } else {
+        push @out, map { $_ + 0 } @dn;
+    }
+    return @out;
 }
 
 sub node_columns {
@@ -297,7 +347,7 @@ sub node_columns {
     my ($el, $fl, $pr, $k) = map { $u->{$_} || '' } qw(ELEVATION FLOW PRESSURE KFACTOR);
     return (
         _col('node',       'NODE',              12, 'THE NODE NUMBER, TAKEN FROM THE SYSTEM TAB. IT IS NOT TYPED HERE.', ro => 1),
-        _col('type',       'NODE TYPE',         14, 'BLANK IS A NODE, AND THE WORD IS NOT WRITTEN. SPRINKLER, HYDRANT, HREEL, SUPPLY, OR A PRESSURE DEVICE.', kind => 'type'),
+        _col('type',       'NODE TYPE',         14, 'BLANK IS A NODE, AND THE WORD IS NOT WRITTEN. CHOOSE SPRINKLER, HYDRANT, HREEL, SUPPLY, OR A PRESSURE DEVICE FROM THE LIST.', kind => 'type'),
         _col('elev',       "ELEVATION ($el)",   14, 'THE NODE\'S ELEVATION, IN THE ELEVATION UNIT.'),
         _col('fixed_flow', "FIXED FLOW ($fl)",  16, 'A FLOW THE NODE TAKES WHATEVER THE PRESSURE. BLANK: NONE.'),
         _col('min_flow',   "MIN FLOW ($fl)",    14, 'THE LEAST FLOW AN OUTLET MUST GIVE. FOR A NODE THAT IS NOT AN OUTLET, LEAVE IT BLANK.'),

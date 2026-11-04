@@ -30,6 +30,12 @@
 # SUPPLIES.  A pressure-device type adds a row to that device's table, and
 # each device has only the columns it needs.
 #
+# PIPE TYPE, PIPE DIAM and NODE TYPE are lists.  The pipe types and the
+# nominal sizes come from the database.  BORE, and a type the database does
+# not know, leave the diameter as a cell to type in.  EDIT inserts, deletes
+# and clears rows, copies a cell downwards, and finds and replaces.  VIEW
+# switches the whole window between the light palette and a dark one.
+#
 # PROJECT, GRAPH, QUICK TOOLS and DATABASE are the same tabs as the editor.
 # They live in HardyCross/Window/ and decide nothing for themselves.  The
 # decisions for the grids are HardyCross::Sheet, which has no Tk in it.
@@ -59,6 +65,7 @@ use HardyCross::Sheet;
 use HardyCross::DbEdit;
 use HardyCross::Graph;
 use HardyCross::Tools;
+use HardyCross::Settings;
 # The shared tabs.  Each is package main, as it is for the editor, so the
 # helpers below are the ones it calls.  Nothing in those files is modified.
 use HardyCross::Window::Project;
@@ -68,10 +75,16 @@ use HardyCross::Window::Database;
 use HardyCross::Window::Results;
 
 #------------------------------------------------------------------------------
-# Colours and type.  The same white, flat window as the editor: one blue,
-# black text, red for a fault.
+# Colours and type.  The window opens on the same white, flat palette as the
+# editor: one blue, black text, red for a fault.  DARK MODE (VIEW, and the
+# toolbar) swaps in the second palette.  %C is the palette on screen now.
+# The two hashes stay as they were defined, so a toggle can map every colour
+# a widget was given back to the other palette.  scroll is the scrollbar
+# thumb, which is not one of the editor's named colours.
+# Widgets take a copy of the hex when they are built.  Changing %C does not
+# by itself repaint them; apply_theme walks the window and swaps the hexes.
 #------------------------------------------------------------------------------
-our %C = (
+our %THEME_LIGHT = (
     paper      => '#FFFFFF',
     panel      => '#F6F7F9',
     line       => '#DDE1E6',
@@ -91,7 +104,37 @@ our %C = (
     warn       => '#8A5A00',
     proposal   => '#9AA5B4',
     sash       => '#E4E7EB',
+    scroll     => '#CDD2D9',
+    scroll_on  => '#B4BBC5',
 );
+our %THEME_DARK = (
+    paper      => '#1B1E24',
+    panel      => '#252A32',
+    line       => '#3A4150',
+    hover      => '#313844',
+    ink        => '#E7E9EE',
+    muted      => '#A3ABBA',
+    faint      => '#727B8A',
+    accent     => '#3D7AEC',
+    accent_dk  => '#2F64C4',
+    accent_bg  => '#1A2C4C',
+    select     => '#2A4368',
+    curline    => '#222730',
+    number     => '#9DC4FF',
+    error      => '#FF8B82',
+    error_bg   => '#3C2426',
+    fault_bg   => '#4A2E30',
+    warn       => '#E7B15A',
+    proposal   => '#8E97A6',
+    sash       => '#2C323C',
+    scroll     => '#4C5564',
+    scroll_on  => '#627084',
+);
+our $theme = 'light';
+our %C = %THEME_LIGHT;
+# Closures that redraw a canvas from %C (the check boxes).  apply_theme
+# calls them after the palette has changed, so the tick is drawn again.
+our @theme_draws;
 our $POINTER = $^O eq 'MSWin32' ? 'arrow' : 'left_ptr';
 our ($MONO, $MONO_B, $MONO_I, $UI, $UI_B, $UI_S, $UI_S_N);
 our $SCALE = 1;
@@ -198,6 +241,7 @@ sub check_box {
     };
     $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l, $n;
     $draw->();
+    push @theme_draws, $draw;
     return { frame => $f, draw => $draw, label => $l, count => $n };
 }
 
@@ -242,7 +286,7 @@ sub flat_scrollbar {
     my ($parent, $orient) = @_;
     return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
         -elementborderwidth => 0, -width => px(11), -troughcolor => $C{panel},
-        -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
+        -background => $C{scroll}, -activebackground => $C{scroll_on}, -highlightthickness => 0);
 }
 
 # The wheel scrolls whatever is under the pointer, not whichever widget has
@@ -296,7 +340,7 @@ sub icon_file {
 # unit changed on the PROJECT tab is the unit the file is written with.
 #------------------------------------------------------------------------------
 our ($toptabs, $restabs, $devtabs, $report, $pill, $hint, $statusbar, $vtable);
-our (%btn, %form, %checks, %table, %dbv, %pipe_show, %grids);
+our (%btn, %form, %checks, %table, %dbv, %gv, %pipe_show, %grids);
 our ($hide_pipes, $hide_nodes) = (0, 0);
 our $project_canvas;
 our $path;
@@ -309,6 +353,14 @@ our @redo_stack;
 our $restoring = 0;       # true while undo or redo is putting a snapshot back
 our @fault_marks;         # entries whose outline is red after VALIDATE
 our $BLANKS = 8;          # empty SYSTEM rows under the last pipe, to type into
+our $view_menu;           # the VIEW menu, so its label can follow the palette
+# Find and replace.  The dialog and the menu share these.  $find_pos is the
+# cell last landed on, "grid, row, column", so FIND NEXT moves on from it.
+our ($find_what, $find_with) = ('', '');
+our $find_case = 0;
+our $find_all = 0;
+our $find_pos;
+our $find_box;
 
 #==============================================================================
 # The window.
@@ -364,6 +416,10 @@ sub build_window {
     set_title();
     update_actions();
     update_status();
+    # A palette remembered from last time.  The widgets are built light and
+    # then repainted, so the shared tabs take the dark colours too.
+    my $saved = eval { lc(HardyCross::Settings::get('SHEET_THEME') // '') } // '';
+    apply_theme('dark') if $saved eq 'dark';
     return $mw;
 }
 
@@ -383,8 +439,23 @@ sub build_menus {
     $file->separator;
     $file->command(-label => 'QUIT',            -accelerator => 'CTRL+Q', -command => sub { file_quit() });
     my $edit = $bar->cascade(-label => 'EDIT', -tearoff => 0);
-    $edit->command(-label => 'UNDO', -accelerator => 'CTRL+Z', -command => sub { edit_undo() });
-    $edit->command(-label => 'REDO', -accelerator => 'CTRL+Y', -command => sub { edit_redo() });
+    $edit->command(-label => 'UNDO',       -accelerator => 'CTRL+Z', -command => sub { edit_undo() });
+    $edit->command(-label => 'REDO',       -accelerator => 'CTRL+Y', -command => sub { edit_redo() });
+    $edit->separator;
+    $edit->command(-label => 'INSERT ROW', -accelerator => 'CTRL+INS', -command => sub { edit_insert_row() });
+    $edit->command(-label => 'DELETE ROW', -accelerator => 'CTRL+DEL', -command => sub { edit_delete_row() });
+    $edit->command(-label => 'CLEAR ROW',                             -command => sub { edit_clear_row() });
+    $edit->command(-label => 'FILL DOWN',  -accelerator => 'CTRL+D',  -command => sub { edit_fill_down() });
+    $edit->separator;
+    $edit->command(-label => 'FIND...',    -accelerator => 'CTRL+F',  -command => sub { open_find(0) });
+    $edit->command(-label => 'REPLACE...', -accelerator => 'CTRL+H',  -command => sub { open_find(1) });
+    # cascade() here returns the entry, not the menu, so the menu is made on
+    # its own and the label of DARK MODE can be changed when the palette is.
+    $view_menu = $bar->Menu(-tearoff => 0, -font => $UI, -relief => 'flat', -borderwidth => 0,
+        -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink});
+    $bar->cascade(-label => 'VIEW', -menu => $view_menu);
+    $view_menu->command(-label => 'DARK MODE', -command => sub { toggle_theme() });
     my $model = $bar->cascade(-label => 'MODEL', -tearoff => 0);
     $model->command(-label => 'VALIDATE',  -accelerator => 'F4', -command => sub { validate() });
     $model->command(-label => 'CALCULATE', -accelerator => 'F5', -command => sub { calculate() });
@@ -404,6 +475,7 @@ sub build_toolbar {
     $sep->();
     $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
     $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
+    $btn{THEME} = flat_button($in, 'DARK MODE', sub { toggle_theme() })->pack(-side => 'right', -padx => px([0, 8]));
     rule($mw, 'x');
 }
 
@@ -417,6 +489,11 @@ sub bind_keys {
     $mw->bind('<Control-q>' => sub { file_quit() });
     $mw->bind('<Control-z>' => sub { edit_undo() });
     $mw->bind('<Control-y>' => sub { edit_redo() });
+    $mw->bind('<Control-d>' => sub { edit_fill_down() });
+    $mw->bind('<Control-f>' => sub { open_find(0) });
+    $mw->bind('<Control-h>' => sub { open_find(1) });
+    $mw->bind('<Control-Insert>' => sub { edit_insert_row() });
+    $mw->bind('<Control-Delete>' => sub { edit_delete_row() });
     $mw->protocol('WM_DELETE_WINDOW' => sub { file_quit() });
     bind_wheel();
 }
@@ -433,7 +510,7 @@ sub blurb {
 
 sub build_system {
     my $page = shift;
-    blurb($page, 'EACH ROW IS A PIPE.  THE NODES TAB IS FILLED FROM FROM NODE AND TO NODE, IN THE ORDER THE NUMBERS FIRST APPEAR.');
+    blurb($page, 'EACH ROW IS A PIPE.  PIPE TYPE AND, FOR A DATABASE TYPE, PIPE DIAM ARE LISTS.  DRAG A CELL\'S BOTTOM-RIGHT CORNER TO COPY IT DOWN.  EDIT INSERTS, DELETES, CLEARS, AND FINDS.');
     $grids{SYSTEM} = build_grid($page, 'SYSTEM');
 }
 sub build_nodes {
@@ -585,7 +662,21 @@ sub grid_signature {
     elsif ($id =~ /^DEV:(.+)/) { @id = map { $_->{name} . '|' . ($_->{node} // '') . '|' . ($_->{pipe} // '') }
                                       HardyCross::Sheet::device_rows($sheet, $1) }
     else { @id = 0 .. $n - 1 }
-    return join "\n", (map { $_->{key} } @$cols), '---', @id;
+    # The heading carries the unit, so a change of units on the PROJECT tab
+    # builds the grid again.  On SYSTEM the diameter cell is a list or a
+    # typed cell according to the type that row inherits, so that is part of
+    # the signature too: changing the type rebuilds that cell's choices.
+    my $units = join ',', map { $sheet->{settings}{units}{$_} // '' } qw(LENGTH SIZE ELEVATION FLOW PRESSURE KFACTOR);
+    my @shape = map { $_->{key} . ':' . $_->{head} } @$cols;
+    my @diam;
+    if ($id eq 'SYSTEM') {
+        for my $r (0 .. $n - 1) {
+            my $t = HardyCross::Sheet::effective_type($sheet, $r);
+            my $list = HardyCross::Sheet::diam_choices($sheet, $t) ? 'L' : 'E';
+            push @diam, "$t:$list";
+        }
+    }
+    return join "\n", $units, @shape, '---', @id, '===', @diam;
 }
 
 sub refresh_all {
@@ -624,9 +715,9 @@ sub refresh_grid {
         for my $col (@$cols) {
             my $w = $g->{cell}{$r}{ $col->{key} } or next;
             my $val = cell_get($id, $r, $col->{key});
-            if ($col->{kind} && $col->{kind} eq 'type') {
-                $w->configure(-text => $val);
-            } elsif ($col->{ro}) {
+            # A list and a read-only cell show their text.  An entry the user
+            # is typing in is left alone, so a refresh does not move the cursor.
+            if (!$w->isa('Tk::Entry')) {
                 $w->configure(-text => $val);
             } elsif ($mw->focus && $w eq $mw->focus) {
                 next;
@@ -682,29 +773,34 @@ sub rebuild_grid {
 
 # make_cell -- one cell.  A row number's row is $r.  Read-only cells are the
 # node number and, on a device, the node it was taken from: those come from
-# somewhere else and are not typed over.
+# somewhere else and are not typed over.  A list (node type, pipe type, and
+# a diameter the database knows sizes for) is a flat menu.  Anything else is
+# typed.
 sub make_cell {
     my ($g, $r, $col, $bg) = @_;
     my $id = $g->{id};
     my $val = cell_get($id, $r, $col->{key});
-    if ($col->{kind} && $col->{kind} eq 'type') {
+    my @choices = lookup_choices($id, $r, $col);
+    if (@choices) {
+        my $fg = $col->{kind} eq 'diam' ? $C{number} : $C{ink};
         my $b = $g->{frame}->Menubutton(-text => $val, -font => $MONO, -relief => 'flat',
             -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
-            -background => $bg, -activebackground => $C{hover}, -foreground => $C{ink},
-            -anchor => 'w', -width => $col->{width}, -padx => px(4), -pady => px(2),
-            -indicatoron => 0, -cursor => 'hand2');
+            -highlightcolor => $C{accent}, -background => $bg, -activebackground => $C{hover},
+            -foreground => $fg, -activeforeground => $fg, -anchor => 'w', -width => $col->{width},
+            -padx => px(4), -pady => px(2), -indicatoron => 0, -cursor => 'hand2', -takefocus => 1);
         my $m = $b->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
             -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
             -activebackground => $C{select}, -activeforeground => $C{ink});
-        for my $ch (@HardyCross::Sheet::TYPE_CHOICES) {
+        for my $ch (@choices) {
             my ($value, $label) = @$ch;
             $m->command(-label => $label, -command => sub {
-                $b->configure(-text => $value);   # blank stays blank: "a node" is not written
-                commit_value($id, $r, 'type', $value);
+                # Blank stays blank: "a node" is the menu's words, not the cell's.
+                $b->configure(-text => $value) if eval { Tk::Exists($b) };
+                commit_value($id, $r, $col->{key}, $value);
             });
         }
         $b->configure(-menu => $m);
-        $b->bind('<FocusIn>' => sub { show_hint($col->{hint}) });
+        bind_sheet_cell($b, $g, $r, $col);
         return $b;
     }
     if ($col->{ro}) {
@@ -725,16 +821,149 @@ sub make_cell {
         return if $g->{building};
         commit_value($id, $r, $col->{key}, $e->get);
     });
-    $e->bind('<FocusIn>'    => sub { show_hint($col->{hint}) });
-    $e->bind('<FocusOut>'   => sub { grow_if_needed($id) });
-    $e->bind('<Tab>'        => sub { move_focus($g, $r, $col->{key}, 0,  1); Tk->break });
-    $e->bind('<Shift-Tab>'  => sub { move_focus($g, $r, $col->{key}, 0, -1); Tk->break });
-    $e->bind('<Return>'     => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
-    $e->bind('<Down>'       => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
-    $e->bind('<Up>'         => sub { move_focus($g, $r, $col->{key}, -1, 0); Tk->break });
-    $e->bind('<Control-z>'  => sub { edit_undo(); Tk->break });
-    $e->bind('<Control-y>'  => sub { edit_redo(); Tk->break });
+    $e->bind('<FocusOut>' => sub { grow_if_needed($id) });
+    bind_sheet_cell($e, $g, $r, $col);
     return $e;
+}
+
+# lookup_choices -- the menu for a list cell, each entry [value, label].
+# An empty return is a cell that is typed, not chosen.  PIPE DIAM is a list
+# only when the row's type (its own, or the one it inherits) has nominal
+# sizes.  A value already in the cell that is not on the list is offered
+# too, so opening a file does not hide what it said.
+sub lookup_choices {
+    my ($id, $r, $col) = @_;
+    my $kind = $col->{kind} // '';
+    return () if $kind eq '';
+    my @ch;
+    if ($kind eq 'type') {
+        @ch = @HardyCross::Sheet::TYPE_CHOICES;
+    } elsif ($kind eq 'pipetype') {
+        @ch = map { [ $_, $_ ] } HardyCross::Sheet::pipe_type_choices();
+    } elsif ($kind eq 'diam') {
+        my $type = HardyCross::Sheet::effective_type($sheet, $r);
+        my @sz = HardyCross::Sheet::diam_choices($sheet, $type);
+        return () unless @sz;
+        @ch = map { [ $_, $_ eq '0' ? '0   (SIZE THE PIPE)' : $_ ] } @sz;
+    } else {
+        return ();
+    }
+    my $cur = cell_get($id, $r, $col->{key});
+    if (length $cur && !grep { choice_is($_->[0], $cur) } @ch) {
+        unshift @ch, [ $cur, $cur ];
+    }
+    return @ch;
+}
+
+# choice_is -- the cell already says this choice.  100 and 100.0 are the
+# same size, so the list does not offer both.
+sub choice_is {
+    my ($a, $b) = @_;
+    return 1 if defined $a && defined $b && $a eq $b;
+    return 0 if !defined $a || !defined $b || $a eq '' || $b eq '';
+    return 0 if $a !~ /^[-+]?(?:\d+\.?\d*|\.\d+)\z/ || $b !~ /^[-+]?(?:\d+\.?\d*|\.\d+)\z/;
+    return $a == $b;
+}
+
+# bind_sheet_cell -- keys and the fill corner, on an entry and on a list.
+# Tab and Return move as on a sheet.  The bottom-right corner of the cell is
+# the fill handle: drag it across rows and those rows take this cell's value.
+# A click anywhere else is the cell's own (the cursor, or the menu).
+sub bind_sheet_cell {
+    my ($w, $g, $r, $col) = @_;
+    my $id = $g->{id};
+    my $hint = $col->{hint} . '  DRAG THE BOTTOM-RIGHT CORNER DOWN TO COPY THIS CELL.';
+    $w->bind('<FocusIn>'   => sub { show_hint($hint) });
+    $w->bind('<Tab>'       => sub { move_focus($g, $r, $col->{key}, 0,  1); Tk->break });
+    $w->bind('<Shift-Tab>' => sub { move_focus($g, $r, $col->{key}, 0, -1); Tk->break });
+    $w->bind('<Return>'    => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
+    $w->bind('<Down>'      => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
+    $w->bind('<Up>'        => sub { move_focus($g, $r, $col->{key}, -1, 0); Tk->break });
+    $w->bind('<Control-z>' => sub { edit_undo(); Tk->break });
+    $w->bind('<Control-y>' => sub { edit_redo(); Tk->break });
+    # These rebuild the grid, which destroys this cell.  That has to wait
+    # until the key binding has returned, or Tk is left in the cell it freed.
+    $w->bind('<Control-d>' => sub { $mw->afterIdle(\&edit_fill_down); Tk->break });
+    $w->bind('<Control-f>' => sub { open_find(0); Tk->break });
+    $w->bind('<Control-h>' => sub { open_find(1); Tk->break });
+    $w->bind('<Control-Insert>' => sub { $mw->afterIdle(\&edit_insert_row); Tk->break });
+    $w->bind('<Control-Delete>' => sub { $mw->afterIdle(\&edit_delete_row); Tk->break });
+    $w->bind('<Motion>' => sub {
+        return if $g->{drag};
+        my $e = $w->XEvent or return;
+        my $corner = in_fill_corner($w, $e->x, $e->y);
+        my $idle = $w->isa('Tk::Entry') ? 'xterm' : 'hand2';
+        $w->configure(-cursor => $corner ? 'crosshair' : $idle);
+    });
+    $w->bind('<ButtonPress-1>' => sub {
+        my $e = $w->XEvent or return;
+        return unless in_fill_corner($w, $e->x, $e->y);
+        $g->{drag} = { key => $col->{key}, row => $r, over => $r, saved => [] };
+        $w->grab;
+        Tk->break;
+    });
+    $w->bind('<B1-Motion>' => sub {
+        my $d = $g->{drag} or return;
+        my $y = $w->pointery;
+        my (undef, $n) = grid_spec($id);
+        my $over = $d->{row};
+        for my $rr (0 .. $n - 1) {
+            my $c = $g->{cell}{$rr}{ $col->{key} } or next;
+            my $y0 = $c->rooty;
+            if ($y < $y0) { $over = $rr; last }
+            $over = $rr;
+        }
+        if ($over != $d->{over}) {
+            $d->{over} = $over;
+            paint_fill($g);
+        }
+        Tk->break;
+    });
+    $w->bind('<ButtonRelease-1>' => sub {
+        my $d = $g->{drag} or return;
+        $g->{drag} = undef;
+        eval { $w->grabRelease };
+        restore_fill($d);
+        my @fill = ($id, $d->{row}, $d->{over}, $d->{key});
+        # Same as a key that rebuilds the grid: the cell under the pointer
+        # is still this binding's widget, so the copy waits a turn.
+        $mw->afterIdle(sub { fill_range(@fill) }) if $fill[1] != $fill[2];
+        Tk->break;
+    });
+}
+
+# in_fill_corner -- true when the pointer is in the cell's bottom-right
+# corner, the fill handle.  A cell that has not been drawn yet has no size.
+sub in_fill_corner {
+    my ($w, $x, $y) = @_;
+    my $wd = $w->width || 0;
+    my $ht = $w->height || 0;
+    return $wd && $ht && $x >= $wd - px(8) && $y >= $ht - px(8);
+}
+
+# paint_fill / restore_fill -- the rows the fill will cover, outlined while
+# the corner is dragged.  The outline they had (including a fault's red) is
+# put back when the drag moves on or ends.
+sub paint_fill {
+    my $g = shift;
+    my $d = $g->{drag} or return;
+    restore_fill($d);
+    my $lo = $d->{row} < $d->{over} ? $d->{row} : $d->{over};
+    my $hi = $d->{row} > $d->{over} ? $d->{row} : $d->{over};
+    for my $r ($lo .. $hi) {
+        my $c = $g->{cell}{$r}{ $d->{key} } or next;
+        my $old = eval { $c->cget('-highlightbackground') };
+        push @{ $d->{saved} }, [ $c, $old ];
+        $c->configure(-highlightbackground => $C{accent}, -highlightthickness => 2);
+    }
+}
+sub restore_fill {
+    my $d = shift or return;
+    for my $s (@{ $d->{saved} || [] }) {
+        my ($c, $old) = @$s;
+        $c->configure(-highlightbackground => $old, -highlightthickness => 1) if eval { Tk::Exists($c) };
+    }
+    $d->{saved} = [];
 }
 
 # cell_get / cell_set -- the text in one cell, from the model.  Curve points
@@ -805,7 +1034,17 @@ sub commit_value {
         refresh_others('SYSTEM');
     } elsif ($id eq 'NODES' && $key eq 'type') {
         HardyCross::Sheet::reconcile($sheet);
+        # The same rows, so this writes the chosen type into the cell and
+        # does not rebuild it.  The device tables are the ones rebuilt.
+        refresh_grid('NODES');
         refresh_others('NODES');
+    } elsif ($id eq 'SYSTEM' && $key eq 'type') {
+        # The type list's command is still running.  Rebuilding the grid now
+        # would destroy that menu under the callback, so it is painted once
+        # the callback has returned.  The diameter cell may change from a
+        # list to a typed bore, or the other way, and its choices follow the
+        # type.
+        $mw->afterIdle(sub { refresh_grid('SYSTEM') }) if $mw;
     }
     sheet_changed();
 }
@@ -853,7 +1092,7 @@ sub grow_if_needed {
 sub move_focus {
     my ($g, $r, $key, $dr, $dc) = @_;
     my ($cols) = grid_spec($g->{id});
-    my @keys = map { $_->{key} } grep { !$_->{ro} && (!$_->{kind} || $_->{kind} ne 'type') } @$cols;
+    my @keys = map { $_->{key} } grep { !$_->{ro} } @$cols;
     my ($i) = grep { $keys[$_] eq $key } 0 .. $#keys;
     return unless defined $i;
     my ($nr, $ni) = ($r + $dr, $i + $dc);
@@ -873,6 +1112,426 @@ sub move_focus {
 }
 
 sub show_hint { $hint->configure(-text => shift // '') if $hint }
+
+#==============================================================================
+# Rows, fill, find and replace.
+#
+# SYSTEM is the only grid a row can be inserted into or deleted from.  The
+# nodes, the supplies and the devices are filled from it, so a row there is
+# not a thing of its own.  Clearing a row blanks the cells that can be typed,
+# on whichever grid has the focus, and leaves a node that a pipe still names.
+# Filling copies one cell down the rows the corner was dragged over.  One
+# snapshot covers the whole gesture, so undo puts every cell back.
+#==============================================================================
+
+# focused_cell -- the grid, the row and the column of the cell that has the
+# keyboard, or nothing when focus is on a button or the find box.
+sub focused_cell {
+    my $w = $mw && eval { $mw->focusCurrent };
+    return unless $w;
+    for my $id (qw(SYSTEM NODES SUPPLIES), map { "DEV:$_" } @HardyCross::Sheet::DEVICE_TYPES) {
+        my $g = $grids{$id} or next;
+        for my $r (keys %{ $g->{cell} }) {
+            for my $k (keys %{ $g->{cell}{$r} }) {
+                my $c = $g->{cell}{$r}{$k} or next;
+                return ($id, $r + 0, $k) if $c eq $w;
+            }
+        }
+    }
+    return;
+}
+
+# after_structural -- the grids that are filled from the pipes and the node
+# types, painted again after a change that can add or drop a row.
+sub after_structural {
+    HardyCross::Sheet::reconcile($sheet);
+    refresh_all();
+    sheet_changed();
+}
+
+sub edit_insert_row {
+    my ($id, $r) = focused_cell();
+    unless (defined $id && $id eq 'SYSTEM') {
+        message('INSERT A ROW ON THE SYSTEM TAB. THE OTHER TABS ARE FILLED FROM IT.');
+        return;
+    }
+    my $n = @{ $sheet->{pipes} };
+    my $at = $r > $n ? $n : $r;
+    remember();
+    splice @{ $sheet->{pipes} }, $at, 0, HardyCross::Sheet::empty_pipe();
+    after_structural();
+    my $w = $grids{SYSTEM}{cell}{$at}{pipe};
+    $w->focusForce if $w;
+}
+
+sub edit_delete_row {
+    my ($id, $r) = focused_cell();
+    unless (defined $id && $id eq 'SYSTEM') {
+        message('DELETE A ROW ON THE SYSTEM TAB. THE OTHER TABS ARE FILLED FROM IT.');
+        return;
+    }
+    return if $r > $#{ $sheet->{pipes} };
+    remember();
+    splice @{ $sheet->{pipes} }, $r, 1;
+    after_structural();
+    my $focus = $r;
+    $focus = $#{ $sheet->{pipes} } if $focus > $#{ $sheet->{pipes} };
+    $focus = 0 if $focus < 0;
+    my $w = $grids{SYSTEM}{cell}{$focus}{pipe};
+    $w->focusForce if $w;
+}
+
+sub edit_clear_row {
+    my ($id, $r) = focused_cell();
+    unless (defined $id) {
+        message('CLICK A ROW FIRST.');
+        return;
+    }
+    my ($cols) = grid_spec($id);
+    my @keys = map { $_->{key} } grep { !$_->{ro} } @$cols;
+    return unless grep { length cell_get($id, $r, $_) } @keys;
+    remember();
+    cell_set($id, $r, $_, '') for @keys;
+    after_structural();
+}
+
+# fill_range -- copy the cell at $src down, or up, through $dst, in one
+# column.  The source cell is the one the drag started on.  On SYSTEM the
+# rows in between are created if the drag went past the last pipe.
+sub fill_range {
+    my ($id, $src, $dst, $key) = @_;
+    return if !defined $src || !defined $dst || $src == $dst;
+    my ($cols, $n) = grid_spec($id);
+    my ($col) = grep { $_->{key} eq $key } @$cols;
+    return if !$col || $col->{ro};
+    my $lo = $src < $dst ? $src : $dst;
+    my $hi = $src > $dst ? $src : $dst;
+    if ($id eq 'SYSTEM') {
+        $sheet->{pipes}[$_] //= HardyCross::Sheet::empty_pipe() for 0 .. $hi;
+    } else {
+        return if $src < 0 || $src >= $n;
+        $hi = $n - 1 if $hi >= $n;
+        $lo = 0 if $lo < 0;
+    }
+    my @rows = grep { $_ != $src } $lo .. $hi;
+    return unless @rows;
+    my $val = cell_get($id, $src, $key);
+    remember();
+    cell_set($id, $_, $key, $val) for @rows;
+    after_structural();
+}
+
+# edit_fill_down -- CTRL+D.  The focused cell copied into the row under it.
+# A drag of the corner covers more than one row; this is the one-row step.
+sub edit_fill_down {
+    my ($id, $r, $key) = focused_cell();
+    return unless defined $id;
+    fill_range($id, $r, $r + 1, $key);
+}
+
+#------------------------------------------------------------------------------
+# Find and replace, across the grid on screen or across every grid.  Read-only
+# cells (the node number a pipe already named) are not searched and not
+# written.  Replace all is one undo.
+#------------------------------------------------------------------------------
+sub current_grid_id {
+    my $tab = $toptabs && $toptabs->{current};
+    return 'NODES' if $tab && $tab eq 'NODES';
+    return 'SUPPLIES' if $tab && $tab eq 'SUPPLIES';
+    if ($tab && $tab eq 'PRESSURE DEVICES') {
+        my $d = $devtabs && $devtabs->{current};
+        return 'DEV:' . $d if $d;
+    }
+    return 'SYSTEM';
+}
+
+sub each_find_cell {
+    my $code = shift;
+    my @ids = $find_all
+        ? (qw(SYSTEM NODES SUPPLIES), map { "DEV:$_" } @HardyCross::Sheet::DEVICE_TYPES)
+        : (current_grid_id());
+    for my $id (@ids) {
+        my ($cols, $n) = grid_spec($id);
+        for my $r (0 .. $n - 1) {
+            for my $col (@$cols) {
+                next if $col->{ro};
+                $code->($id, $r, $col->{key});
+            }
+        }
+    }
+}
+
+sub find_hit {
+    my $text = shift // '';
+    return 0 unless length $find_what;
+    return index($text, $find_what) >= 0 if $find_case;
+    return index(uc $text, uc $find_what) >= 0;
+}
+
+# replaced -- $text with every match of the find text swapped for the
+# replacement.  The replacement is taken literally: a $ in it is a dollar.
+sub replaced {
+    my $text = shift // '';
+    return $text unless length $find_what;
+    my $with = $find_with // '';
+    my $q = quotemeta($find_what);
+    if ($find_case) { $text =~ s/$q/$with/ge }
+    else            { $text =~ s/$q/$with/ige }
+    return $text;
+}
+
+sub reveal_cell {
+    my ($id, $r, $key) = @_;
+    my $tab = $id =~ /^DEV:/ ? 'PRESSURE DEVICES' : $id;
+    select_tab($toptabs, $tab) if $toptabs && $toptabs->{page}{$tab};
+    select_tab($devtabs, $1) if $id =~ /^DEV:(.+)/ && $devtabs;
+    my $w = $grids{$id} && $grids{$id}{cell}{$r}{$key} or return;
+    $w->focusForce;
+    if ($w->isa('Tk::Entry')) {
+        my $t = $w->get;
+        my $at = $find_case ? index($t, $find_what) : index(uc $t, uc $find_what);
+        if ($at >= 0) { $w->selectionRange($at, $at + length $find_what) }
+        else { $w->selectionRange(0, 'end') }
+    }
+}
+
+sub find_next {
+    return 0 unless length $find_what;
+    my @cells;
+    each_find_cell(sub { push @cells, [ @_ ] });
+    return 0 unless @cells;
+    my $start = 0;
+    if (defined $find_pos) {
+        for my $i (0 .. $#cells) {
+            if (join("\t", @{ $cells[$i] }) eq $find_pos) { $start = $i + 1; last }
+        }
+    }
+    for my $k (0 .. $#cells) {
+        my ($id, $r, $key) = @{ $cells[ ($start + $k) % @cells ] };
+        next unless find_hit(cell_get($id, $r, $key));
+        $find_pos = "$id\t$r\t$key";
+        reveal_cell($id, $r, $key);
+        message('FOUND');
+        return 1;
+    }
+    message('NOT FOUND');
+    return 0;
+}
+
+sub replace_current {
+    return find_next() unless defined $find_pos;
+    my ($id, $r, $key) = split /\t/, $find_pos, 3;
+    my $old = cell_get($id, $r, $key);
+    unless (find_hit($old)) { return find_next() }
+    my $new = replaced($old);
+    if ($new ne $old) {
+        remember();
+        cell_set($id, $r, $key, $new);
+        after_structural();
+        reveal_cell($id, $r, $key);
+    }
+    message('REPLACED');
+    return 1;
+}
+
+sub replace_all {
+    return 0 unless length $find_what;
+    my @jobs;
+    each_find_cell(sub {
+        my ($id, $r, $key) = @_;
+        my $old = cell_get($id, $r, $key);
+        my $new = replaced($old);
+        push @jobs, [ $id, $r, $key, $new ] if $new ne $old;
+    });
+    unless (@jobs) { message('NOT FOUND'); return 0 }
+    remember();
+    cell_set(@$_) for @jobs;
+    after_structural();
+    my $n = @jobs;
+    message("$n REPLACED");
+    return $n;
+}
+
+# open_find -- the find box.  $replace selects the replacement field; FIND
+# and REPLACE open the same box.  A second call raises the one already open.
+sub open_find {
+    my $replace = shift;
+    if ($find_box && eval { Tk::Exists($find_box) }) {
+        $find_box->deiconify;
+        $find_box->raise;
+        $find_box->focus;
+        return $find_box;
+    }
+    my $d = $mw->Toplevel(-title => 'FIND AND REPLACE', -background => $C{paper});
+    $find_box = $d;
+    $d->protocol('WM_DELETE_WINDOW' => sub { $find_box = undef; $d->destroy });
+    my $body = $d->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1, -padx => px(16), -pady => px(14));
+    my $row = sub {
+        my ($label, $var) = @_;
+        my $f = $body->Frame(-background => $C{paper})->pack(-fill => 'x', -pady => px(3));
+        $f->Label(-text => $label, -font => $UI, -background => $C{paper}, -foreground => $C{muted},
+                  -width => 12, -anchor => 'w')->pack(-side => 'left');
+        my $e = flat_entry($f, $var, 28);
+        $e->pack(-side => 'left', -fill => 'x', -expand => 1, -ipady => px(3));
+        $e->bind('<KeyRelease>' => sub { $find_pos = undef });
+        return $e;
+    };
+    my $fe = $row->('FIND', \$find_what);
+    my $re = $row->('REPLACE', \$find_with);
+    my $opts = $body->Frame(-background => $C{paper})->pack(-fill => 'x', -pady => px([8, 4]));
+    my $case = check_box($opts, 'MATCH CASE', \$find_case, sub { $find_pos = undef });
+    $case->{frame}->pack(-side => 'left', -padx => px([0, 16]));
+    my $all = check_box($opts, 'ALL GRIDS', \$find_all, sub { $find_pos = undef });
+    $all->{frame}->pack(-side => 'left');
+    my $btns = $body->Frame(-background => $C{paper})->pack(-fill => 'x', -pady => px([10, 0]));
+    flat_button($btns, 'FIND NEXT', sub { find_next() })->pack(-side => 'left', -padx => px([0, 4]));
+    flat_button($btns, 'REPLACE', sub { replace_current() })->pack(-side => 'left', -padx => px(4));
+    flat_button($btns, 'REPLACE ALL', sub { replace_all() }, primary => 1)->pack(-side => 'left', -padx => px(4));
+    flat_button($btns, 'CLOSE', sub { $find_box = undef; $d->destroy })->pack(-side => 'right');
+    $fe->bind('<Return>' => sub { find_next(); Tk->break });
+    $re->bind('<Return>' => sub { replace_current(); Tk->break });
+    $d->bind('<Escape>' => sub { $find_box = undef; $d->destroy });
+    ($replace ? $re : $fe)->focus;
+    return $d;
+}
+
+#==============================================================================
+# Dark mode.  The shared tabs read %C when they build a widget, and an HList
+# keeps the colours in its cell styles, so both have to be painted again.
+# White text on a blue button is not the paper colour: a foreground of white
+# is left white, and a background of white becomes the dark paper.
+#==============================================================================
+
+# toggle_theme -- the menu and the toolbar.  The choice is written to this
+# machine's settings, the same small file as the database folder, so the
+# next time the sheet opens it is as it was left.  The text editor does not
+# read that key.
+sub toggle_theme {
+    apply_theme($theme eq 'dark' ? 'light' : 'dark');
+    eval { HardyCross::Settings::set('SHEET_THEME', uc $theme) };
+}
+
+# apply_theme -- put the named palette on screen.  'light' or 'dark'.
+sub apply_theme {
+    my $name = shift;
+    $name = $name && $name eq 'dark' ? 'dark' : 'light';
+    return if $name eq $theme && $mw;
+    my $from = $theme eq 'dark' ? \%THEME_DARK : \%THEME_LIGHT;
+    my $to   = $name eq 'dark' ? \%THEME_DARK : \%THEME_LIGHT;
+    my %map;
+    for my $k (keys %$from) {
+        my $a = uc $from->{$k};
+        $map{$a} = $to->{$k} if $a ne uc($to->{$k});
+    }
+    %C = %$to;
+    $theme = $name;
+    return unless $mw;
+    paint_theme(\%map, $mw);
+    my $bar = eval { $mw->cget('-menu') };
+    paint_theme(\%map, $bar) if $bar;
+    for my $draw (@theme_draws) { eval { $draw->() } }
+    eval { graph_draw() } if $gv{canvas};
+    eval { fill_results() } if $restabs;
+    restyle_validation();
+    eval { db_header() } if $dbv{path};
+    eval { db_fill() } if $dbv{tabs};
+    eval { db_form() } if $dbv{formrow};
+    $btn{THEME}->configure(-text => $theme eq 'dark' ? 'LIGHT MODE' : 'DARK MODE') if $btn{THEME};
+    $view_menu->entryconfigure(0, -label => $theme eq 'dark' ? 'LIGHT MODE' : 'DARK MODE',
+        -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink}) if $view_menu;
+    $mw->optionAdd('*Background', $C{paper});
+    $mw->optionAdd('*Foreground', $C{ink});
+    $mw->optionAdd('*Menu.background', $C{paper});
+    $mw->optionAdd('*Menu.foreground', $C{ink});
+    $mw->optionAdd('*Menu.activeBackground', $C{select});
+    $mw->optionAdd('*Menu.activeForeground', $C{ink});
+    update_actions();
+    mark_faults() if $validation;
+}
+
+# paint_theme -- one widget, its children, and the menus hanging off it.
+# A colour that belongs to the palette being left is swapped for the same
+# role in the palette being entered.  Anything else (white text on a blue
+# button, a system colour) is left.
+sub paint_theme {
+    my ($map, $w, $seen) = @_;
+    $seen //= {};
+    return unless $w && eval { Tk::Exists($w) };
+    my $path = eval { $w->PathName };
+    return unless defined $path;
+    return if $seen->{$path}++;
+    my @opt = qw(-background -foreground -activebackground -activeforeground
+        -highlightbackground -highlightcolor -insertbackground
+        -selectbackground -selectforeground -disabledforeground
+        -troughcolor -readonlybackground);
+    my %fg = map { $_ => 1 } qw(-foreground -activeforeground -selectforeground
+        -disabledforeground -insertbackground -highlightcolor);
+    for my $opt (@opt) {
+        my $v = eval { $w->cget($opt) };
+        next unless defined $v && length $v;
+        my $hex = uc $v;
+        # White as a foreground is the text on a blue button, and the tick
+        # in a check box.  White as a background is the paper.
+        next if $hex eq '#FFFFFF' && $fg{$opt};
+        my $n = $map->{$hex} or next;
+        eval { $w->configure($opt => $n) };
+    }
+    if ($w->isa('Tk::Menu')) {
+        eval { $w->configure(-background => $C{paper}, -foreground => $C{ink},
+            -activebackground => $C{select}, -activeforeground => $C{ink}) };
+        my $end = eval { $w->index('end') };
+        if (defined $end && $end ne 'none') {
+            for my $i (0 .. $end) {
+                next if ($w->type($i) // '') eq 'separator';
+                eval { $w->entryconfigure($i, -background => $C{paper}, -foreground => $C{ink},
+                    -activebackground => $C{select}, -activeforeground => $C{ink}) };
+                my $sub = eval { $w->entrycget($i, '-menu') };
+                paint_theme($map, $sub, $seen) if $sub;
+            }
+        }
+    }
+    if ($w->isa('Tk::Canvas')) {
+        for my $id (eval { $w->find('all') } || ()) {
+            for my $opt (qw(-fill -outline)) {
+                my $v = eval { $w->itemcget($id, $opt) };
+                next unless defined $v && length $v && $v ne 'black';
+                next if uc $v eq '#FFFFFF';
+                my $n = $map->{ uc $v } or next;
+                eval { $w->itemconfigure($id, $opt => $n) };
+            }
+        }
+    }
+    if ($w->isa('Tk::Text')) {
+        for my $tag (eval { $w->tagNames } || ()) {
+            next if $tag eq 'sel';
+            for my $opt (qw(-foreground -background)) {
+                my $v = eval { $w->tagCget($tag, $opt) };
+                next unless defined $v && length $v;
+                next if uc $v eq '#FFFFFF';
+                my $n = $map->{ uc $v } or next;
+                eval { $w->tagConfigure($tag, $opt => $n) };
+            }
+        }
+    }
+    paint_theme($map, $_, $seen) for eval { $w->children };
+}
+
+# restyle_validation -- the VALIDATION table keeps its cell styles from when
+# it was built.  New styles, then the rows again, so a fault reads in the
+# palette now on screen.  The result tables are rebuilt by fill_results.
+sub restyle_validation {
+    return unless $vtable && $vtable->{hlist} && eval { Tk::Exists($vtable->{hlist}) };
+    my $h = $vtable->{hlist};
+    $h->configure(-background => $C{paper}, -foreground => $C{ink},
+        -selectbackground => $C{select}, -selectforeground => $C{ink});
+    $vtable->{styles} = styles($h, wrap => 620);
+    for my $i (0 .. 3) {
+        eval { $h->header('configure', $i, -style => $vtable->{styles}{headw},
+                          -headerbackground => $C{panel}) };
+    }
+    fill_validation();
+}
 
 #==============================================================================
 # Undo.  Each change snapshots the grids first.  The PROJECT tab is not part
