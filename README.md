@@ -728,8 +728,12 @@ scaled display.
 
 **The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
 pipe network and a red sprinkler at the far node.  The editor sets it on its
-window and taskbar button itself, from PNG data held in `phcp_editor.pl`, so
-it shows whether run from source or built.  For the `.exe` files the build
+window and taskbar button itself, so it shows whether run from source or
+built.  On Windows it hands the window `data/phcp.ico` (beside the script, or
+packed inside `phcp_editor.exe`): Perl/Tk is Tk 8.4, which has no
+`wm iconphoto`, and a Tk picture set as the icon changes neither the title
+bar nor the taskbar there, so up to v1.0.0 the editor showed Tk's own icon.
+On other systems it uses PNG data held in `phcp_editor.pl`.  For the `.exe` files the build
 uses `tools/pack_with_icon.pl`: PAR::Packer removed its `--icon` option, and
 rewriting a finished program's resources would disturb the archive appended
 to it, so the icon is set where pp used to set it - on a copy of the
@@ -738,9 +742,24 @@ packed as a `.par` archive, then written out by that loader).  For the editor
 the same copy is also marked as a windowed program.  The loader carries its
 own core modules appended after its program image, which rewriting its
 resources would drop, so they are taken off first and put back after the
-icon is set.  It needs Win32::Exe, which the script installs.  If any step
-fails the program is built the plain way, without the icon.  The CI build on
-Windows (28 October 2026) wrote both programs with the icon.
+icon is set.  Windows itself writes the icon into the loader (its resource
+update functions, called through Win32::API, which Strawberry Perl
+includes).  Then `tools/check_exe_icon.pl` reads the finished `.exe` back the
+way Explorer does - its first icon group - and compares every picture with
+`data/phcp.ico` byte for byte; the build fails over to the plain way if they
+differ.  If any step fails the program is built the plain way, without the
+icon.
+
+Up to v1.0.0 the loader's icon was set with Win32::Exe, whose resource writer
+left the table pointing at the packager's own four pictures: the build log
+said the icon was set, but both programs showed the packager's icon in
+Explorer.  `check_exe_icon.pl` is there so that cannot pass unseen again;
+CI runs it on both built programs.
+
+```
+perl tools/check_exe_icon.pl phcp_editor.exe          compares with data/phcp.ico
+perl tools/check_exe_icon.pl program.exe other.ico
+```
 
 ## Continuous integration and releases
 
@@ -750,7 +769,7 @@ Windows (28 October 2026) wrote both programs with the icon.
 | job | what it does |
 |---|---|
 | test-linux | every test suite, the editor window under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of both programs, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe` and `phcp_editor.exe` kept as the run's downloads |
 | release | on a version tag (`v1.1.0`) or a release published on GitHub: both programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
