@@ -18,7 +18,12 @@ number changes; example 04's MAXITER raised from 20000 to 30000, because the
 2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
 changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).  A second window, `phcp_sheet.pl`, is a
+(`release_notes/v1.2.0.md`).  Fast entry is a second window,
+`phcp_fast.pl`, on the same `.phc` file: the text editor is not changed.
+A row adds ordinary command lines (`HardyCross/FastEntry.pm`); a run is a
+name such as `P1-P12` or `H1X15`.  An offered value is drawn quieter than one
+that was typed.  DARK is a machine setting (`FAST_DARK`), not part of the file.
+A second window, `phcp_sheet.pl`, is a
 spreadsheet on the same engine: SYSTEM, NODES, SUPPLIES and PRESSURE
 DEVICES, with the existing PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs.
 The text editor is not changed.  `HardyCross/Sheet.pm` holds the grids and
@@ -542,6 +547,7 @@ with Tk 804.036.  Not run on Windows.
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
+- [x] Fast entry: `phcp_fast.pl` and `HardyCross/FastEntry.pm`, a row for repeated pipes, nodes and outlets.  The text editor is not modified.  Same `.phc` file, same reader, validate before calculate.  Offered values are quieter.  DARK is remembered on the machine, not in the file
 - [x] Spreadsheet window: `phcp_sheet.pl` and `HardyCross/Sheet.pm`, a second front end.  The text editor, `phcp_editor.pl`, is unchanged
 - [x] Isometric drawing: `phcp_isometric.pl` forks the text editor (the editor file is unchanged), draws the network on a 30-degree grid and writes the `.phc`. A pipe is two clicks, or a known length, size, fittings and C with the click choosing the direction. `tools/test_isometric.pl`, `tools/test_isometric_window.pl`
 - [x] Experiment - a drawn network (`phcp_flow.pl`): ordinary `.phc`, the text editor and the engine unchanged.  Run on Linux (Tk 804.036, the window under Xvfb).  Not run on Windows.

@@ -1,14 +1,15 @@
 @echo off
 rem ===========================================================================
-rem build_windows.bat -- build phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe.
+rem build_windows.bat -- build phcp.exe, phcp_editor.exe, phcp_fast.exe,
+rem phcp_sheet.exe and phcp_isometric.exe.
 rem
 rem Copyright (c) 2026 Hycadia Pty Ltd.  SPDX-License-Identifier: MIT
 rem
 rem The command-line program, phcp.exe, needs nothing beyond Strawberry Perl
-rem and is always built.  The text editor, phcp_editor.exe, the
-rem spreadsheet, phcp_sheet.exe, and the isometric window, phcp_isometric.exe,
-rem also need Tk, which has to be COMPILED here
-rem from source -- and that is the step that can fail.  The windows are built
+rem and is always built.  The text editor, phcp_editor.exe, fast entry,
+rem phcp_fast.exe, the spreadsheet, phcp_sheet.exe, and the isometric window,
+rem phcp_isometric.exe, also need Tk, which has to be COMPILED here from
+rem source -- and that is the step that can fail.  The windows are built
 rem apart from the command-line program: if Tk will not build, you still get a
 rem working phcp.exe, and the Tk build log is copied to tk_build.log in this
 rem folder so the cause can be read.
@@ -58,7 +59,7 @@ perl -MPAR::Packer -e1 >nul 2>&1 || (echo ERROR: PAR::Packer is not available. &
 echo        ok
 
 echo.
-echo [3/8] Tk (needed for the text editor, the spreadsheet and the isometric window)...
+echo [3/8] Tk (needed for the text editor, fast entry, the spreadsheet and the isometric window)...
 perl -MTk -e1 >nul 2>&1
 if errorlevel 1 (
     echo        Installing the patched Tk 804.036_001 from the Strawberry Perl project...
@@ -125,6 +126,19 @@ if "!GUI!"=="yes" (
         call pp --gui -I . !EDMODS! %EDDATA% -o phcp_editor.exe phcp_editor.pl
         if errorlevel 1 (echo ERROR: pp failed building phcp_editor.exe & set GUI=no)
     )
+    if "!GUI!"=="yes" (
+        echo        Building phcp_fast.exe ^(fast entry^)...
+        set FASTMODS=%MODS% -M HardyCross::Editor -M HardyCross::FastEntry -M Tk -M Tk::Panedwindow -M Tk::Entry -M Tk::Listbox -M Tk::Menu -M Tk::Menubutton -M Tk::Text -M Tk::Scrollbar -M Tk::PNG !DPI!
+        set BUILT=no
+        if "!ICON!"=="yes" (
+            perl tools\pack_with_icon.pl data\phcp.ico gui phcp_fast.exe -I . !FASTMODS! %EDDATA% phcp_fast.pl && set BUILT=yes
+            if "!BUILT!"=="no" echo        the icon could not be added - building without it
+        )
+        if "!BUILT!"=="no" (
+            call pp --gui -I . !FASTMODS! %EDDATA% -o phcp_fast.exe phcp_fast.pl
+            if errorlevel 1 (echo ERROR: pp failed building phcp_fast.exe & exit /b 1)
+        )
+    )
 ) else (
     echo        SKIPPED - Tk could not be built.  See the note at the end.
 )
@@ -178,10 +192,10 @@ echo        ok - .phc examples solved and converged, PDF report and JSON written
 echo.
 echo ===========================================================================
 if "!GUI!"=="yes" (
-    echo  Built: phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe
+    echo  Built: phcp.exe, phcp_editor.exe, phcp_fast.exe, phcp_sheet.exe and phcp_isometric.exe
 ) else (
     echo  Built: phcp.exe  ^(command line, working^)
-    echo  NOT built: phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
+    echo  NOT built: phcp_editor.exe, phcp_fast.exe, phcp_sheet.exe and phcp_isometric.exe - Tk would not compile with Perl !PERLV! / GCC !GCCV!
     echo  The compiler output is saved in this folder as tk_build.log.
     echo  Send the last 40 lines of it for diagnosis.
 )
