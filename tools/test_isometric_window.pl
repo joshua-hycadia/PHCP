@@ -62,6 +62,13 @@ print "2. THE DRAWING WINDOW\n";
 main::build_window();
 $main::mw->update;
 is('the window is the isometric program', $main::mw->title eq 'PHCP ISOMETRIC - UNTITLED.PHC', $main::mw->title);
+is('DARK sits beside VALIDATE',
+   $main::iso{btn}{DARK} && $main::btn{VALIDATE} && $main::btn{CALCULATE}
+   && $main::iso{btn}{DARK}->parent eq $main::btn{VALIDATE}->parent
+   && $main::iso{btn}{DARK}->rootx > $main::btn{VALIDATE}->rootx
+   && $main::iso{btn}{DARK}->rootx < $main::btn{CALCULATE}->rootx
+   && abs($main::iso{btn}{DARK}->rooty - $main::btn{VALIDATE}->rooty) < 8,
+   join(' ', map { $_->rootx . ',' . $_->rooty } $main::btn{VALIDATE}, $main::iso{btn}{DARK}, $main::btn{CALCULATE}));
 is('there is no NETWORK tab',
    join(' ', @{ $main::toptabs->{names} }) eq 'ISOMETRIC PROJECT GRAPH QUICK TOOLS DATABASE'
    && $main::toptabs->{current} eq 'ISOMETRIC',

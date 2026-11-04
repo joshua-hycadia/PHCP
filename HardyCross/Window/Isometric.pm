@@ -88,8 +88,11 @@ sub build_isometric {
     $iso{btn}{OUT}  = flat_button($bar2, 'ZOOM OUT', sub { iso_zoom(1 / 1.25) })->pack(-side => 'left', -padx => px(4));
     $iso{lock} = 1;
     $iso{btn}{LOCK} = flat_button($bar2, 'LOCK', sub { iso_set_lock() })->pack(-side => 'left', -padx => px(4));
-    $iso{btn}{DARK} = flat_button($bar2, 'DARK', sub { iso_apply_theme($iso{theme} eq 'DARK' ? 'LIGHT' : 'DARK') })
-        ->pack(-side => 'left', -padx => px(4));
+    # DARK sits on the main toolbar, beside VALIDATE.  The drawing tools stay
+    # the things you click to place a pipe.
+    $iso{btn}{DARK} = flat_button($main::btn{VALIDATE}->parent, 'DARK',
+        sub { iso_apply_theme(($iso{theme} || '') eq 'DARK' ? 'LIGHT' : 'DARK') });
+    $iso{btn}{DARK}->pack(-after => $main::btn{VALIDATE}, -side => 'left', -padx => px(4));
     $iso{labels} = { map { $_ => ($_ =~ /^(POINTS|PIPES|DEVICES)\z/ ? 1 : 0) } @LABELS };
     require Tk::Menubutton;
     my $labels = $bar2->Menubutton(-text => 'LABELS', -font => $UI_B, -relief => 'flat', -borderwidth => 0,
