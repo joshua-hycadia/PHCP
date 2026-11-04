@@ -183,9 +183,11 @@ is('calculate runs the engine and converges', $r->{ok} && $r->{converged});
 is('the pipe table has the pipe', (grep { $_->[0] =~ /P1/ } table_rows('PIPES')) ? 1 : 0);
 
 # Completion.  The model is replaced by the file opened next, so this edit
-# does not have to be undone.
+# does not have to be undone.  With nothing remembered, AS takes the first
+# type.  Tab keeps it and moves to the next cell.  It does not walk the list.
 select_tab($main::toptabs, 'SYSTEM');
 $mw->update;
+%main::recall = ();
 my $ptype = grid_cell('SYSTEM', 0, 'type');
 $ptype->focusForce;
 $ptype->delete(0, 'end');
@@ -193,13 +195,42 @@ $ptype->insert(0, 'AS');
 $ptype->eventGenerate('<KeyRelease>', -keysym => 's', -when => 'now');
 $mw->update;
 my $as = $ptype->get;
-is('typing AS completes a pipe type', $as eq 'ASAH' || $as eq 'ASAM', $as);
+is('typing AS completes the first pipe type', $as eq 'ASAH', $as);
 is('the rest of that match is selected', $ptype->selectionPresent && $ptype->index('sel.first') == 2);
 $ptype->eventGenerate('<Tab>', -when => 'now');
 $mw->update;
-my $as2 = eval { $ptype->get } // '';
-is('tab moves to the other pipe type', $as2 ne '' && $as2 ne $as && ($as2 eq 'ASAH' || $as2 eq 'ASAM'), $as2);
-# Put the type back so the diameter list is ASAM's, then complete a size.
+is('tab keeps the pipe type and moves to the next cell',
+   grid_text('SYSTEM', 0, 'type') eq 'ASAH'
+   && $mw->focusCurrent && $mw->focusCurrent eq grid_cell('SYSTEM', 0, 'c'),
+   'type=' . grid_text('SYSTEM', 0, 'type') . ' focus=' . ($mw->focusCurrent ? $mw->focusCurrent->PathName : 'none'));
+# The type just kept is what a later row offers.  Down still walks the others.
+my $prow = grid_cell('SYSTEM', 1, 'type');
+$prow->focusForce;
+$mw->update;   # the focus change paints before the next key, as it does for a person
+$prow->delete(0, 'end');
+$prow->insert(0, 'AS');
+$prow->eventGenerate('<KeyRelease>', -keysym => 's', -when => 'now');
+$mw->update;
+is('the next row completes AS to the type last kept', $prow->get eq 'ASAH', $prow->get);
+$prow->eventGenerate('<Down>', -when => 'now');
+$mw->update;
+is('down walks to the other pipe type', $prow->get eq 'ASAM', $prow->get);
+# A neighbour wins when nothing has been kept yet.  Row 0 is set to ASAM
+# without remembering it, so row 2, whose nearest type is that ASAM, follows it.
+%main::recall = ();
+commit_value('SYSTEM', 0, 'type', 'ASAM');
+lookup_finish('SYSTEM', 0, 'type');
+$mw->update;
+my $prow2 = grid_cell('SYSTEM', 2, 'type');
+$prow2->focusForce;
+$mw->update;
+$prow2->delete(0, 'end');
+$prow2->insert(0, 'AS');
+$prow2->eventGenerate('<KeyRelease>', -keysym => 's', -when => 'now');
+$mw->update;
+is('a row completes AS to the type in the nearest row', $prow2->get eq 'ASAM', $prow2->get);
+# Diameter.  10 takes 100.  Once 100 is kept, typing 1 on the next row takes 100,
+# not the first size that starts with 1.
 type_cell('SYSTEM', 0, 'type', 'ASAM');
 my $diam = grid_cell('SYSTEM', 0, 'diam');
 $diam->focusForce;
@@ -208,10 +239,30 @@ $diam->insert(0, '10');
 $diam->eventGenerate('<KeyRelease>', -keysym => '0', -when => 'now');
 $mw->update;
 is('typing 10 completes the diameter', $diam->get eq '100', $diam->get);
+$diam->eventGenerate('<Tab>', -when => 'now');
+$mw->update;
+my $diam2 = grid_cell('SYSTEM', 1, 'diam');
+$diam2->focusForce;
+$mw->update;
+$diam2->delete(0, 'end');
+$diam2->insert(0, '1');
+$diam2->eventGenerate('<KeyRelease>', -keysym => '1', -when => 'now');
+$mw->update;
+is('typing 1 completes to the diameter last kept', $diam2->get eq '100', $diam2->get);
 select_tab($main::toptabs, 'NODES');
+$mw->update;
+%main::recall = ();
+commit_value('NODES', 0, 'type', 'SUPPLY');
+lookup_finish('NODES', 0, 'type');
 $mw->update;
 my $nt = grid_cell('NODES', 1, 'type');
 $nt->focusForce;
+$mw->update;
+$nt->delete(0, 'end');
+$nt->insert(0, 'S');
+$nt->eventGenerate('<KeyRelease>', -keysym => 's', -when => 'now');
+$mw->update;
+is('typing S completes to the node type last in the column', $nt->get eq 'SUPPLY', $nt->get);
 $nt->delete(0, 'end');
 $nt->insert(0, 'SP');
 $nt->eventGenerate('<KeyRelease>', -keysym => 'p', -when => 'now');

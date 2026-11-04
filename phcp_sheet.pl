@@ -896,8 +896,9 @@ sub bind_row_hover {
 # node number and, on a device, the node it was taken from: those come from
 # somewhere else and are not typed over.  A list (node type, pipe type, and
 # a diameter the database knows sizes for) is an entry that completes as it
-# is typed: the first match is filled in, the rest of the matches stay
-# listed, and Tab moves through them.  Anything else is typed.
+# is typed.  Several matches: the one last entered in this column, or else
+# the nearest row that already has one.  Tab keeps it and moves to the next
+# cell.  Down walks the other matches.  Anything else is typed.
 sub make_cell {
     my ($g, $r, $col, $bg) = @_;
     my $id = $g->{id};
@@ -975,7 +976,7 @@ sub make_cell {
         # FocusIn was bound for the hint.  A list cell also remembers the
         # value to restore on Escape, and says how completion works.
         $e->bind('<FocusIn>' => sub {
-            show_hint($col->{hint} . '  TYPE TO COMPLETE. TAB MOVES THROUGH THE MATCHES. ALT+DOWN, OR THE RIGHT EDGE, OPENS THE LIST.');
+            show_hint($col->{hint} . '  TYPE TO COMPLETE. TAB KEEPS IT AND MOVES ON. DOWN WALKS THE OTHER MATCHES. ALT+DOWN, OR THE RIGHT EDGE, OPENS THE LIST.');
             $e->{phcp_orig} = cell_get($id, $r, $col->{key});
         });
         bind_row_hover($e, $g, $r);
@@ -1120,13 +1121,17 @@ sub lookup_fill_menu {
             # it are painted.  Typing, by contrast, waits until the cell is
             # left, so the entry is not rebuilt under the cursor.
             commit_value($id, $r, $col->{key}, $value);
+            recall_choice($id, $col->{key}, $value);
             lookup_unpost($e);
         });
     }
 }
 
-# lookup_type -- after a key, fill the first match and list the others.
-# The suggested tail is selected, so the next character replaces it.
+# lookup_type -- after a key, fill one match and list the others.  An exact
+# word wins.  Otherwise the value last kept in this column, and after that
+# the nearest row that already has one, so a run of the same pipe does not
+# start again at the first code in the list.  The suggested tail is
+# selected, so the next character replaces it.
 sub lookup_type {
     my $e = shift or return;
     return unless $e->{phcp_choices};
@@ -1142,14 +1147,7 @@ sub lookup_type {
         commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $e->get, 1);
         return;
     }
-    my $i = 0;
-    for (0 .. $#hit) {
-        my $disp = choice_display($hit[$_]);
-        if (uc($disp) eq uc($prefix) || (length($hit[$_][0]) && uc($hit[$_][0]) eq uc($prefix))) {
-            $i = $_;
-            last;
-        }
-    }
+    my $i = best_hit_index($e, $prefix, @hit);
     apply_completion($e, $prefix, choice_display($hit[$i]));
     commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $hit[$i][0], 1);
     if (@hit > 1) {
@@ -1209,7 +1207,8 @@ sub lookup_shown_value {
 }
 
 # lookup_accept -- keep the match on show and close the list.  The tail is
-# no longer selected, so the next Tab leaves the cell.
+# no longer selected.  The value is remembered, so the next cell of this
+# kind offers it first.
 sub lookup_accept {
     my $e = shift or return;
     return unless $e->{phcp_choices} && eval { Tk::Exists($e) };
@@ -1217,12 +1216,66 @@ sub lookup_accept {
         $e->selectionClear;
         $e->icursor('end');
     }
-    commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, lookup_shown_value($e), 1);
+    my $val = lookup_shown_value($e);
+    commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $val, 1);
+    recall_choice($e->{phcp_id}, $e->{phcp_key}, $val);
     lookup_unpost($e);
 }
 
-# lookup_cycle -- Tab through the matches for the current prefix.  One match
-# is not cycled: Tab then leaves the cell, as it does everywhere else.
+# The last value kept in a list column, by grid and column.  A letter of a
+# completion does not count: only a value the user kept.
+our %recall;
+sub recall_choice {
+    my ($id, $key, $val) = @_;
+    return if !defined $val || !length $val;
+    $recall{"$id\0$key"} = $val;
+}
+
+# nearest_hit -- of the matches, the one in the nearest other row.  A row
+# whose value does not fit what was typed is skipped, so AS under an S40
+# pipe still finds the ASAM above it.  Rows above come first.
+sub nearest_hit {
+    my ($e, @hit) = @_;
+    my ($id, $r, $key) = ($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key});
+    my (undef, $n) = grid_spec($id);
+    return undef unless $n;
+    for my $dist (1 .. $n - 1) {
+        for my $rr ($r - $dist, $r + $dist) {
+            next if $rr < 0 || $rr >= $n;
+            my $v = cell_get($id, $rr, $key);
+            next if !defined $v || !length $v;
+            for (0 .. $#hit) {
+                return $_ if choice_is($hit[$_][0], $v) || choice_display($hit[$_]) eq $v;
+            }
+        }
+    }
+    return undef;
+}
+
+# best_hit_index -- which of the prefix matches to fill in.  The word they
+# typed, then the value last kept in this column, then the nearest row that
+# fits the prefix.
+sub best_hit_index {
+    my ($e, $prefix, @hit) = @_;
+    return 0 unless @hit;
+    for (0 .. $#hit) {
+        my $disp = choice_display($hit[$_]);
+        if (uc($disp) eq uc($prefix) || (length($hit[$_][0]) && uc($hit[$_][0]) eq uc($prefix))) {
+            return $_;
+        }
+    }
+    my $last = $recall{ $e->{phcp_id} . "\0" . $e->{phcp_key} };
+    if (defined $last && length $last) {
+        for (0 .. $#hit) {
+            return $_ if choice_is($hit[$_][0], $last) || choice_display($hit[$_]) eq $last;
+        }
+    }
+    my $near = nearest_hit($e, @hit);
+    return $near if defined $near;
+    return 0;
+}
+
+# lookup_cycle -- Down and Up through the matches for the current prefix.
 sub lookup_cycle {
     my ($e, $dir) = @_;
     return 0 unless $e && $e->{phcp_choices} && completion_selected($e);
@@ -1245,14 +1298,13 @@ sub lookup_cycle {
     return 1;
 }
 
-# lookup_tab -- Tab in a list cell.  Several matches: move to the next one
-# and stay.  One match, or the suggestion already accepted: leave the cell.
-# A pipe type or a node type can change other cells, so that paint waits
-# until this binding has returned, and the move happens after it.
+# lookup_tab -- Tab in a list cell.  The match on show is kept, and the
+# cursor leaves for the next cell.  Down walks the other matches.  A pipe
+# type or a node type can change other cells, so that paint waits until
+# this binding has returned, and the move happens after it.
 sub lookup_tab {
     my ($w, $g, $r, $col, $dir) = @_;
     return 0 unless $w && $w->{phcp_choices};
-    return 1 if lookup_cycle($w, $dir);
     lookup_accept($w);
     my $kind = $col->{kind} // '';
     if ($kind eq 'pipetype' || $kind eq 'type') {
@@ -1266,12 +1318,13 @@ sub lookup_tab {
     return 0;
 }
 
-# lookup_step -- Up and Down walk the open match list.  With the list
-# closed they move to the next row, as on the rest of the sheet.
+# lookup_step -- Up and Down walk the matches while a suggestion is showing.
+# Once the value is kept they move to the next row, as on the rest of the sheet.
 sub lookup_step {
     my ($e, $dir) = @_;
-    return 0 unless $e && $e->{phcp_open} && eval { $e->{phcp_open}->ismapped };
-    return lookup_cycle($e, $dir);
+    return 0 unless $e && $e->{phcp_choices};
+    return 1 if lookup_cycle($e, $dir);
+    return 0;
 }
 
 # lookup_maybe_finish -- paint a finished type once the cursor has left the
@@ -1330,14 +1383,19 @@ sub bind_sheet_cell {
         Tk->break;
     });
     # Enter may add a row, which rebuilds this grid and frees the cell the
-    # key went to.  That waits until the binding has returned.  A list cell
-    # accepts its match first, and a type is painted before the move.
+    # key went to.  That waits until the binding has returned.  While a
+    # suggestion is still selected, Enter keeps it and moves across, the
+    # same as Tab: confirming a pipe type must not drop onto the next row
+    # before the diameter is typed.  Enter with the value already kept
+    # moves down.
     $w->bind('<Return>' => sub {
+        my $across = $w->{phcp_choices} && completion_selected($w);
         lookup_accept($w) if $w->{phcp_choices};
-        my ($grid, $row, $colkey, $kind) = ($g, $r, $col->{key}, $col->{kind});
+        my ($grid, $row, $colkey, $kind, $go) = ($g, $r, $col->{key}, $col->{kind}, $across);
         $mw->afterIdle(sub {
             lookup_finish($grid->{id}, $row, $colkey) if $kind && $kind =~ /^(?:pipetype|type)\z/;
-            enter_down($grid, $row, $colkey);
+            if ($go) { move_focus($grid, $row, $colkey, 0, 1); }
+            else     { enter_down($grid, $row, $colkey); }
         });
         Tk->break;
     });
