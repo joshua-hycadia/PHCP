@@ -1,6 +1,7 @@
 # PHCP continuous integration and release.
 #
-#   test-linux      every test suite, the editor window under a virtual display
+#   test-linux      every test suite, the editor window and the drawn-network
+#                   window under a virtual display
 #   build-windows   build_windows.bat on a Windows runner, exactly as on a PC:
 #                   phcp.exe and phcp_editor.exe, the smoke test, the icon
 #                   read back out of both, then the test suites that need no
@@ -38,12 +39,14 @@ jobs:
         run: |
           set -e
           for t in test_curves test_phc test_pipedata test_report_checks test_pdf test_json \
-                   test_editor test_dbedit test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp stress_resolver; do
+                   test_editor test_flow test_dbedit test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp stress_resolver; do
             echo "== $t"
             perl tools/$t.pl
           done
       - name: Editor window, under Xvfb
         run: perl tools/test_editor_window.pl
+      - name: Drawn network window, under Xvfb
+        run: perl tools/test_flow_window.pl
       - name: Invariance stress, 60 random networks
         run: perl tools/stress_invariance.pl 60
 
@@ -86,7 +89,7 @@ jobs:
         shell: cmd
         run: |
           set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
-          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_dbedit test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp) do (
+          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_flow test_dbedit test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp) do (
             echo == %%t
             perl tools\%%t.pl || exit /b 1
           )

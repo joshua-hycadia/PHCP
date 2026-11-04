@@ -18,7 +18,11 @@ number changes; example 04's MAXITER raised from 20000 to 30000, because the
 2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
 changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).
+(`release_notes/v1.2.0.md`).  Open as an experiment, not a release: a drawn
+network (`phcp_flow.pl`, `HardyCross/Flow.pm`) on branch
+`cursor/flow-canvas-c398`.  It saves ordinary `.phc`.  The text editor and
+the engine are unchanged.  The window has been run on Linux under Xvfb; it
+has not been run on Windows, and `build_windows.bat` does not package it.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -450,6 +454,29 @@ proposed).  Default OFF: every example solves exactly as before.
 | `HardyCross/Editor.pm` | VELOCITY PRESSURE in the PROJECT tab; the outlet table and line results on Pn |
 | `tools/test_velocity_pressure.pl`, `tools/baseline/velocity_pressure_off.txt` | a hand-checked range, OFF against results frozen from the earlier solver, ON against OFF on the examples |
 
+## Experiment - a drawn network
+
+The text editor stays as it is.  This is a second program.  The page is the
+network: a supply, a junction or a head is a block, and a pipe or a pump is
+the line between two blocks.  It still saves ordinary `.phc`, and the
+existing reader and solver are the judge.  No second file format.  No engine
+change, and no change to a solved number.
+
+| file | change |
+|---|---|
+| `phcp_flow.pl` | the window: place a block, drag from a port to connect, a card for the file or the selection, VALIDATE then CALCULATE, ARRANGE and FIT |
+| `HardyCross/Flow.pm` | the drawing, with no Tk: read and write `.phc`, lay the blocks out, hand the text to the reader and the solver |
+| `tools/test_flow.pl` | every example written back solves the same; copies and a changed pipe; editing |
+| `tools/test_flow_window.pl` | the window under a virtual display |
+
+A position is a `// FLOW x y` comment, which the reader already ignores, so
+moving a block does not change the model VALIDATE last accepted.  `NC`, `PC`
+and `CHANGEPIPE` are expanded on open and written back as ordinary `NODE` and
+`PIPE` lines.  The note at the top of a file is kept; a note between commands
+is not.  Options, design areas and supply graphs are kept and are not edited
+on the card.  Figures are drawn only when the solve converges.  Run on Linux
+with Tk 804.036.  Not run on Windows.
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -502,3 +529,4 @@ proposed).  Default OFF: every example solves exactly as before.
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
+- [x] Experiment - a drawn network (`phcp_flow.pl`): ordinary `.phc`, the text editor and the engine unchanged.  Run on Linux (Tk 804.036, the window under Xvfb).  Not run on Windows.  Branch `cursor/flow-canvas-c398`
