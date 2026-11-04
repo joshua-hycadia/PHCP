@@ -224,6 +224,16 @@ def phc_text(m: dict) -> str:
     L += ["", f"USE       BORE {C_FACTOR:g}"]
     for p in m["pipes"]:
         L.append(f"PIPE      P{p['id']} N{p['from']} N{p['to']} {p['length_m']} {p['bore_mm']}")
+        # round 2 (tools/devices.py): a fitting allowance and at most one device per pipe
+        if p.get("eq_m"):
+            L.append(f"EQV       P{p['id']} {p['eq_m']}")
+        d = p.get("device")
+        if d and d["type"] == "BFP":
+            L.append(f"BFP       P{p['id']} " + " ".join(f"{q:g} {dp:g}" for q, dp in d["curve"]))
+        elif d and d["type"] == "PRV":
+            L.append(f"PRV       P{p['id']} 0 {d['drop_kpa']:g}")
+        elif d and d["type"] == "ORIFICE":
+            L.append(f"OFD       P{p['id']} {d['bore_mm']:g}")       # PHCP's default Cd 0.596
     return "\n".join(L) + "\n"
 
 

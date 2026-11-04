@@ -1021,6 +1021,14 @@ PHCP was the slowest of the six (median 3.75 s a model, 21.5 s for grids).
 `comparison/README.md` has the method, the full tables, the plots, the models
 and every result, and the scripts to regenerate them.
 
+Round 2 (`comparison/ROUND2.md`) gives the same networks fittings (suite A, all
+six programs) and then a BFP, a fixed-drop PRV and an orifice plate (suite B,
+the programs that take all three).  With fittings the differences are those of
+round 1.  With the devices, AU Calc Program reads +0.67% (median) and EPANET
++0.35%, and PHCP's default orifice model agrees with the AS 2118.1 Appendix C
+method.  PHCP's Hardy Cross iteration stays the slowest, by design, since every
+loop correction is traceable; with devices it slows most on large grids.
+
 ## Stress testing
 
 `tools/stress_invariance.pl` needs no reference program.  It takes a random

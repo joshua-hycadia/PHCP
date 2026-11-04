@@ -10,7 +10,9 @@ now scales the plate's differential as 1/CD^2 (engine change, approved
 4 November 2026; results move only where a CD is given); and the icon fix:
 the PHCP icon on the editor's window on Windows and on both `.exe` files,
 which v1.0.0 lacked, with CI reading it back out of the built programs.
-Released together as v1.1.0 (`release_notes/v1.1.0.md`).
+Released together as v1.1.0 (`release_notes/v1.1.0.md`).  Open: benchmark
+round 2 (`comparison/ROUND2.md`) - the same networks with fittings, and with a
+BFP, a fixed-drop PRV and an orifice plate; files only, no solved number changes.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
