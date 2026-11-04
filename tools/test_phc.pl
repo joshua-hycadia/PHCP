@@ -335,6 +335,16 @@ print "5. COPIES, CHANGES AND DEVICES\n";
     my ($d) = read_phc("${m}BP P1 300 2000 250\n");
     is('a solve runs through a pipe with a pump in it', $d && HardyCross::solve_model($d));
 
+    # A plate's CD reaches the element; the drop goes as 1/Cd^2, so a CD of
+    # 0 or less, or above 1, is refused.
+    my ($oc, $oce) = read_phc("${m}OFD P1 60 0.7826\n");
+    is('OFD P1 60 0.7826: the plate carries CD 0.7826',
+       $oc && abs({ elems_by_id($oc) }->{'P1.OFD'}{cd} - 0.7826) < 1e-12, $oce);
+    for my $bad ('OFD P1 60 0', 'OPP P1 30 -0.6', 'OPP P1 30 1.2') {
+        my ($n, $e) = read_phc("$m$bad\n");
+        is("'$bad': refused, CD out of range", !$n && $e =~ /CD must be/, $n ? 'it was accepted' : "got: $e");
+    }
+
     # The pressure ratio valve, as the manufacturer's worked example: a tank
     # 153 m up gives about 1500 kPa at a 3:1 valve, and 500 kPa after it --
     # to within +/-5% of the inlet pressure, 75 kPa.  The calculation uses
