@@ -90,6 +90,8 @@ perl tools/test_editor.pl           # the editor's logic, headless
 perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
 perl tools/test_sheet.pl            # the spreadsheet's grids, headless
 perl tools/test_sheet_window.pl     # the spreadsheet window (re-runs under xvfb-run)
+perl tools/test_flow.pl             # the drawn network, headless
+perl tools/test_flow_window.pl      # the drawn window (re-runs under xvfb-run)
 perl tools/test_dbedit.pl           # database editing and the team folder, headless
 perl tools/test_isometric.pl        # the isometric drawing, and the .phc it writes
 perl tools/test_isometric_window.pl # the isometric window (re-runs under xvfb-run)
