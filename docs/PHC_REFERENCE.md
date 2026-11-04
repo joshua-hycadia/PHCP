@@ -56,6 +56,18 @@ PIPE  P1  A  B  6000  50     // DROP TO THE FIRST BRANCH
 
 `!` and `#` are refused anywhere outside a comment.
 
+**The isometric drawing.** The editor's ISOMETRIC tab stores each point's
+place on its grid in a comment, which this reader skips like any other
+comment. `//ISO GRID 1` is the metres of one grid step. `//ISO N1 0 0 4.5`
+is the point `N1`, the two plan steps and the vertical step. Deleting the
+comments leaves the calculation unchanged.
+
+```
+//ISO GRID 1
+//ISO N1 0 0 0
+//ISO N2 6 0 4.5
+```
+
 **Case.** Command words, units, method names, option names and pipe types may
 be typed in any case. `pipe`, `Pipe` and `PIPE` are the same command. Names of
 pipes, nodes, outlets and areas are case-sensitive: `S1` and `s1` are two
