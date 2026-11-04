@@ -375,7 +375,10 @@ expected value must be re-derived by hand - never just changed to match.
 A white, flat window: one-pixel grey rules instead of bevels, blue and
 black used only to highlight, red for what is wrong.  Monospace for the
 model and the results, a plain sans-serif for the window's own labels, and
-everything in capitals.
+everything in capitals.  VIEW, and DARK MODE on the toolbar, switches the
+whole window to a dark palette.  The choice is remembered as EDITOR_THEME
+in this machine's settings file.  The spreadsheet keeps its own choice,
+SHEET_THEME, and the two windows do not follow each other.
 
 **The editor holds the network only.**  The title, project details, units,
 method and options are set in the PROJECT tab.  The `.phc` file still holds
@@ -443,7 +446,7 @@ the suites that need no display on Windows; the window suite runs on Linux
 only.
 
 The earlier spreadsheet, `phcp_gui.pl`, is retired with its tests, and
-Tk::TableMatrix is no longer needed.  The text editor is unchanged.  A
+Tk::TableMatrix is no longer needed.  The text editor remains.  A
 second window, the spreadsheet below, is another way in to the same engine.
 
 ## The spreadsheet window
@@ -483,7 +486,7 @@ PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE
 
 EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  Enter on the last system row adds another row and moves to its pipe cell.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
 
-VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file.  The text editor does not use it.
+VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file as SHEET_THEME.  The text editor remembers its own choice as EDITOR_THEME, and the two windows do not follow each other.
 
 A file saved here is ordinary `.phc`.  `phcp.pl` and the text editor read it.
 VALIDATE and CALCULATE call `HardyCross/Editor.pm`, the same checks and the

@@ -1934,8 +1934,8 @@ sub open_find {
 
 # toggle_theme -- the menu and the toolbar.  The choice is written to this
 # machine's settings, the same small file as the database folder, so the
-# next time the sheet opens it is as it was left.  The text editor does not
-# read that key.
+# next time the sheet opens it is as it was left.  The text editor keeps
+# its own key, EDITOR_THEME, and does not read this one.
 sub toggle_theme {
     apply_theme($theme eq 'dark' ? 'light' : 'dark');
     eval { HardyCross::Settings::set('SHEET_THEME', uc $theme) };

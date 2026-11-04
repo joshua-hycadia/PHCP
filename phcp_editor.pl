@@ -44,8 +44,9 @@
 # Layout: this file holds the frame of the window and the NETWORK tab; each
 # other tab is a file of its own in HardyCross/Window/, in package main, so it
 # shares this file's globals and helpers.
-#   this file                  colours and fonts; widget helpers (flat buttons,
-#                              tabs, check boxes, drop-downs); build_window;
+#   this file                  colours and fonts, and the dark palette; widget
+#                              helpers (flat buttons, tabs, check boxes,
+#                              drop-downs); build_window;
 #                              the NETWORK tab -- colouring, line numbers, the
 #                              lists, the status bar, the command strip,
 #                              proposals, the pick list; VALIDATE and
@@ -75,6 +76,7 @@ use HardyCross::Editor;
 use HardyCross::DbEdit;
 use HardyCross::Graph;
 use HardyCross::Tools;
+use HardyCross::Settings;
 # The window, one file to a tab (all in package main).
 use HardyCross::Window::Project;
 use HardyCross::Window::Tools;
@@ -86,12 +88,17 @@ use File::Spec;
 #------------------------------------------------------------------------------
 # Colours.
 #
-# A white, matte window: white paper, a very light grey for panels, one-pixel
-# grey rules in place of bevels.  Blue and black are the highlight colours -
-# command words, the current field, the active tab, the CALCULATE button, the
-# selection - and red marks what is wrong.  Every colour is named once here.
+# The light window is white and matte: white paper, a very light grey for
+# panels, one-pixel grey rules in place of bevels.  Blue and black are the
+# highlight colours - command words, the current field, the active tab, the
+# CALCULATE button, the selection - and red marks what is wrong.  Every
+# colour is named once here.  Dark mode is the same roles in a dark palette.
+# %C is the palette on screen.  The light hexes are the ones the window has
+# always used; dark mode does not redraw the light window in new colours.
+# EDITOR_THEME remembers the choice.  The spreadsheet uses SHEET_THEME, so
+# the two windows do not follow each other.
 #------------------------------------------------------------------------------
-our %C = (
+our %THEME_LIGHT = (
     paper      => '#FFFFFF',     # editor, tables, form fields
     panel      => '#F6F7F9',     # toolbar, status bar, table headings
     line       => '#DDE1E6',     # one-pixel rules and field outlines
@@ -111,7 +118,38 @@ our %C = (
     warn       => '#8A5A00',     # a warning
     proposal   => '#9AA5B4',     # the greyed proposed line
     sash       => '#E4E7EB',     # the dividers between panes, wide enough to grab
+    scroll     => '#CDD2D9',     # the scrollbar thumb
+    scroll_on  => '#B4BBC5',     # the scrollbar thumb under the pointer
 );
+our %THEME_DARK = (
+    paper      => '#1F232B',
+    panel      => '#282D37',
+    line       => '#3A4150',
+    hover      => '#323846',
+    ink        => '#E8EAED',
+    muted      => '#A8B0BD',
+    faint      => '#7C8594',
+    accent     => '#3D7AEC',
+    accent_dk  => '#2F64C4',
+    accent_bg  => '#1A2C4C',
+    select     => '#2C4468',
+    curline    => '#252A33',
+    number     => '#A8C7FF',
+    error      => '#FF8A80',
+    error_bg   => '#3E2628',
+    fault_bg   => '#4A3032',
+    warn       => '#E7B15A',
+    proposal   => '#8E97A6',
+    sash       => '#2A303A',
+    scroll     => '#555E6E',
+    scroll_on  => '#6A7486',
+);
+our $theme = 'light';
+our %C = %THEME_LIGHT;
+# Closures that redraw a canvas from %C (the check boxes).  apply_theme
+# calls them after the palette has changed, so the tick is drawn again.
+our @theme_draws;
+our $view_menu;           # the VIEW menu, so its label can follow the palette
 
 # The ordinary pointer.  X11's "arrow" points up and to the right, so it is
 # left_ptr there; Windows calls the same pointer "arrow".
@@ -271,6 +309,7 @@ sub check_box {
         }
     };
     $_->bind('<ButtonRelease-1>' => sub { $$var = $$var ? 0 : 1; $draw->(); $cmd->() }) for $f, $c, $l, $n;
+    push @theme_draws, $draw;
     $draw->();
     return { frame => $f, draw => $draw, label => $l, count => $n };
 }
@@ -326,7 +365,7 @@ sub flat_scrollbar {
     my ($parent, $orient) = @_;
     return $parent->Scrollbar(-orient => $orient, -relief => 'flat', -borderwidth => 0,
         -elementborderwidth => 0, -width => px(11), -troughcolor => $C{panel},
-        -background => '#CDD2D9', -activebackground => '#B4BBC5', -highlightthickness => 0);
+        -background => $C{scroll}, -activebackground => $C{scroll_on}, -highlightthickness => 0);
 }
 
 #==============================================================================
@@ -488,6 +527,11 @@ sub build_window {
     set_title();
     update_actions();
     update_status();
+    # A palette remembered from last time.  The widgets are built in the
+    # light colours and then repainted, so the shared tabs take the dark
+    # colours too.
+    my $saved = eval { lc(HardyCross::Settings::get('EDITOR_THEME') // '') } // '';
+    apply_theme('dark') if $saved eq 'dark';
     $ed->focus;
     return $mw;
 }
@@ -512,13 +556,21 @@ sub build_menus {
     $edit->command(-label => 'REDO',      -accelerator => 'CTRL+Y',     -command => sub { redo() });
     $edit->separator;
     $edit->command(-label => 'PICK LIST', -accelerator => 'CTRL+SPACE', -command => sub { pick_list() });
+    # cascade() here returns the entry, not the menu, so the menu is made on
+    # its own and the label of DARK MODE can be changed when the palette is.
+    $view_menu = $bar->Menu(-tearoff => 0, -font => $UI, -relief => 'flat', -borderwidth => 0,
+        -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink});
+    $bar->cascade(-label => 'VIEW', -menu => $view_menu);
+    $view_menu->command(-label => 'DARK MODE', -command => sub { toggle_theme() });
     my $model = $bar->cascade(-label => 'MODEL', -tearoff => 0);
     $model->command(-label => 'VALIDATE',  -accelerator => 'F4', -command => sub { validate() });
     $model->command(-label => 'CALCULATE', -accelerator => 'F5', -command => sub { calculate() });
 }
 
-# build_toolbar -- the file buttons, VALIDATE and CALCULATE, WRITE REPORT, and
-# on the right the model's state: not validated, problems, valid, calculated.
+# build_toolbar -- the file buttons, VALIDATE and CALCULATE, WRITE REPORT,
+# DARK MODE, and on the right the model's state: not validated, problems,
+# valid, calculated.
 sub build_toolbar {
     my $tb = $mw->Frame(-background => $C{panel})->pack(-side => 'top', -fill => 'x');
     my $in = $tb->Frame(-background => $C{panel})->pack(-fill => 'x', -padx => px(14), -pady => px(8));
@@ -533,6 +585,7 @@ sub build_toolbar {
     $sep->();
     $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
     $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
+    $btn{THEME} = flat_button($in, 'DARK MODE', sub { toggle_theme() })->pack(-side => 'right', -padx => px([0, 8]));
     rule($mw, 'x', -side => 'top');
 }
 
@@ -553,10 +606,6 @@ sub build_network {
     $statusbar = $sb->Text(-height => 1, -wrap => 'none', -font => $MONO, -background => $C{panel},
         -foreground => $C{ink}, -borderwidth => 0, -highlightthickness => 0, -padx => px(14), -pady => px(6),
         -state => 'disabled', -cursor => $POINTER, -takefocus => 0)->pack(-fill => 'x');
-    $statusbar->tagConfigure('current', -foreground => $C{accent}, -font => $MONO_B, -underline => 1);
-    $statusbar->tagConfigure('muted', -foreground => $C{muted});
-    $statusbar->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
-    $statusbar->tagConfigure('good', -foreground => $C{accent}, -font => $MONO_B);
 
     # The editor: line numbers, text, scrollbars.  The gutter is a second
     # Text in the same font, scrolled with the editor, so its numbers stay
@@ -568,9 +617,6 @@ sub build_network {
         -foreground => $C{faint}, -borderwidth => 0, -highlightthickness => 0, -padx => px(6), -pady => px(6),
         -state => 'disabled', -cursor => $POINTER, -takefocus => 0, -spacing1 => 1, -spacing3 => 1)
         ->pack(-side => 'left', -fill => 'y');
-    $gutter->tagConfigure('num', -justify => 'right');
-    $gutter->tagConfigure('cur', -foreground => $C{ink}, -font => $MONO_B);
-    $gutter->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
     $gutter->bind('<ButtonRelease-1>' => sub {
         my ($n) = $gutter->index('current') =~ /^(\d+)/;
         go_to_line($n) if $n;
@@ -590,17 +636,9 @@ sub build_network {
     # Syntax colours.  Blue for command words and keywords, black bold for a
     # name being defined, dark blue for numbers, grey italic for comments.
     # Behind a line in error, a pale red; behind the exact field validation
-    # found at fault, a deeper red with the text underlined.
-    $ed->tagConfigure('curline', -background => $C{curline});
-    $ed->tagConfigure('command', -foreground => $C{accent}, -font => $MONO_B);
-    $ed->tagConfigure('keyword', -foreground => $C{accent});
-    $ed->tagConfigure('name',    -foreground => $C{ink}, -font => $MONO_B);
-    $ed->tagConfigure('ref',     -foreground => $C{ink});
-    $ed->tagConfigure('number',  -foreground => $C{number});
-    $ed->tagConfigure('comment', -foreground => $C{muted}, -font => $MONO_I);
-    $ed->tagConfigure('error',   -background => $C{error_bg});
-    $ed->tagConfigure('fault',   -background => $C{fault_bg}, -foreground => $C{error}, -underline => 1);
-    $ed->tagConfigure('proposal', -foreground => $C{proposal}, -font => $MONO_I);
+    # found at fault, a deeper red with the text underlined.  The same tags
+    # are set again when the palette changes.
+    style_editor_tags();
     $ed->tagLower('curline');
     $ed->tagRaise('error');
     $ed->tagRaise('fault');
@@ -1356,6 +1394,180 @@ sub file_quit {
 # record; that is not an error worth showing, so it is caught.
 sub undo { discard_proposal(); eval { text_widget()->undo }; after_change() }
 sub redo { discard_proposal(); eval { text_widget()->redo }; after_change() }
+
+#==============================================================================
+# Dark mode.  The shared tabs read %C when they build a widget, and an HList
+# keeps the colours in its cell styles, so both have to be painted again.
+# White text on a blue button is not the paper colour: a foreground of white
+# is left white, and a background of white becomes the dark paper.
+#==============================================================================
+
+# style_editor_tags -- the syntax colours, the gutter and the status bar,
+# from the palette now in %C.  Called when the editor is built and again
+# when the palette changes.
+sub style_editor_tags {
+    return unless $ed && $gutter && $statusbar;
+    $statusbar->tagConfigure('current', -foreground => $C{accent}, -font => $MONO_B, -underline => 1);
+    $statusbar->tagConfigure('muted', -foreground => $C{muted});
+    $statusbar->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
+    $statusbar->tagConfigure('good', -foreground => $C{accent}, -font => $MONO_B);
+    $gutter->tagConfigure('num', -justify => 'right');
+    $gutter->tagConfigure('cur', -foreground => $C{ink}, -font => $MONO_B);
+    $gutter->tagConfigure('bad', -foreground => $C{error}, -font => $MONO_B);
+    $ed->tagConfigure('curline', -background => $C{curline});
+    $ed->tagConfigure('command', -foreground => $C{accent}, -font => $MONO_B);
+    $ed->tagConfigure('keyword', -foreground => $C{accent});
+    $ed->tagConfigure('name',    -foreground => $C{ink}, -font => $MONO_B);
+    $ed->tagConfigure('ref',     -foreground => $C{ink});
+    $ed->tagConfigure('number',  -foreground => $C{number});
+    $ed->tagConfigure('comment', -foreground => $C{muted}, -font => $MONO_I);
+    $ed->tagConfigure('error',   -background => $C{error_bg});
+    $ed->tagConfigure('fault',   -background => $C{fault_bg}, -foreground => $C{error}, -underline => 1);
+    $ed->tagConfigure('proposal', -foreground => $C{proposal}, -font => $MONO_I);
+}
+
+# toggle_theme -- the VIEW menu and the toolbar.  The choice is written to
+# this machine's settings, the same small file as the database folder, so
+# the next time the editor opens it is as it was left.  EDITOR_THEME is
+# this window's key.  The spreadsheet reads SHEET_THEME and not this one.
+sub toggle_theme {
+    apply_theme($theme eq 'dark' ? 'light' : 'dark');
+    eval { HardyCross::Settings::set('EDITOR_THEME', uc $theme) };
+}
+
+# apply_theme -- put the named palette on screen.  'light' or 'dark'.
+sub apply_theme {
+    my $name = shift;
+    $name = $name && $name eq 'dark' ? 'dark' : 'light';
+    return if $name eq $theme && $mw;
+    my $from = $theme eq 'dark' ? \%THEME_DARK : \%THEME_LIGHT;
+    my $to   = $name eq 'dark' ? \%THEME_DARK : \%THEME_LIGHT;
+    my %map;
+    for my $k (keys %$from) {
+        my $a = uc $from->{$k};
+        $map{$a} = $to->{$k} if $a ne uc($to->{$k});
+    }
+    %C = %$to;
+    $theme = $name;
+    return unless $mw;
+    paint_theme(\%map, $mw);
+    my $bar = eval { $mw->cget('-menu') };
+    paint_theme(\%map, $bar) if $bar;
+    style_editor_tags();
+    for my $name (qw(ERRORS WARNINGS NODES)) {
+        next unless $list{$name} && eval { Tk::Exists($list{$name}) };
+        $list{$name}->configure(-background => $C{paper},
+            -foreground => $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink},
+            -selectbackground => $C{select}, -selectforeground => $C{ink});
+    }
+    for my $draw (@theme_draws) { eval { $draw->() } }
+    eval { graph_draw() } if $main::gv{canvas};
+    eval { fill_results() } if $restabs;
+    restyle_validation();
+    eval { db_header() } if $dbv{path};
+    eval { db_fill() } if $dbv{tabs};
+    eval { db_form() } if $dbv{formrow};
+    eval { db_state() } if $dbv{btn};
+    recolour() if $ed;
+    $btn{THEME}->configure(-text => $theme eq 'dark' ? 'LIGHT MODE' : 'DARK MODE') if $btn{THEME};
+    $view_menu->entryconfigure(0, -label => $theme eq 'dark' ? 'LIGHT MODE' : 'DARK MODE',
+        -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink}) if $view_menu;
+    $mw->optionAdd('*Background', $C{paper});
+    $mw->optionAdd('*Foreground', $C{ink});
+    $mw->optionAdd('*Menu.background', $C{paper});
+    $mw->optionAdd('*Menu.foreground', $C{ink});
+    $mw->optionAdd('*Menu.activeBackground', $C{select});
+    $mw->optionAdd('*Menu.activeForeground', $C{ink});
+    update_actions();
+}
+
+# paint_theme -- one widget, its children, and the menus hanging off it.
+# A colour that belongs to the palette being left is swapped for the same
+# role in the palette being entered.  Anything else (white text on a blue
+# button, a system colour) is left.
+sub paint_theme {
+    my ($map, $w, $seen) = @_;
+    $seen //= {};
+    return unless $w && eval { Tk::Exists($w) };
+    my $path = eval { $w->PathName };
+    return unless defined $path;
+    return if $seen->{$path}++;
+    my @opt = qw(-background -foreground -activebackground -activeforeground
+        -highlightbackground -highlightcolor -insertbackground
+        -selectbackground -selectforeground -disabledforeground
+        -troughcolor -readonlybackground);
+    my %fg = map { $_ => 1 } qw(-foreground -activeforeground -selectforeground
+        -disabledforeground -insertbackground -highlightcolor);
+    for my $opt (@opt) {
+        my $v = eval { $w->cget($opt) };
+        next unless defined $v && length $v;
+        my $hex = uc $v;
+        # White as a foreground is the text on a blue button, and the tick
+        # in a check box.  White as a background is the paper.
+        next if $hex eq '#FFFFFF' && $fg{$opt};
+        my $n = $map->{$hex} or next;
+        eval { $w->configure($opt => $n) };
+    }
+    if ($w->isa('Tk::Menu')) {
+        eval { $w->configure(-background => $C{paper}, -foreground => $C{ink},
+            -activebackground => $C{select}, -activeforeground => $C{ink}) };
+        my $end = eval { $w->index('end') };
+        if (defined $end && $end ne 'none') {
+            for my $i (0 .. $end) {
+                next if ($w->type($i) // '') eq 'separator';
+                eval { $w->entryconfigure($i, -background => $C{paper}, -foreground => $C{ink},
+                    -activebackground => $C{select}, -activeforeground => $C{ink}) };
+                my $sub = eval { $w->entrycget($i, '-menu') };
+                paint_theme($map, $sub, $seen) if $sub;
+            }
+        }
+    }
+    if ($w->isa('Tk::Menubutton')) {
+        my $sub = eval { $w->cget('-menu') };
+        paint_theme($map, $sub, $seen) if $sub;
+    }
+    if ($w->isa('Tk::Canvas')) {
+        for my $id (eval { $w->find('all') } || ()) {
+            for my $opt (qw(-fill -outline)) {
+                my $v = eval { $w->itemcget($id, $opt) };
+                next unless defined $v && length $v && $v ne 'black';
+                next if uc $v eq '#FFFFFF';
+                my $n = $map->{ uc $v } or next;
+                eval { $w->itemconfigure($id, $opt => $n) };
+            }
+        }
+    }
+    if ($w->isa('Tk::Text')) {
+        for my $tag (eval { $w->tagNames } || ()) {
+            next if $tag eq 'sel';
+            for my $opt (qw(-foreground -background)) {
+                my $v = eval { $w->tagCget($tag, $opt) };
+                next unless defined $v && length $v;
+                next if uc $v eq '#FFFFFF';
+                my $n = $map->{ uc $v } or next;
+                eval { $w->tagConfigure($tag, $opt => $n) };
+            }
+        }
+    }
+    paint_theme($map, $_, $seen) for eval { $w->children };
+}
+
+# restyle_validation -- the VALIDATION table keeps its cell styles from when
+# it was built.  New styles, then the rows again, so a fault reads in the
+# palette now on screen.  The result tables are rebuilt by fill_results.
+sub restyle_validation {
+    return unless $vtable && $vtable->{hlist} && eval { Tk::Exists($vtable->{hlist}) };
+    my $h = $vtable->{hlist};
+    $h->configure(-background => $C{paper}, -foreground => $C{ink},
+        -selectbackground => $C{select}, -selectforeground => $C{ink});
+    $vtable->{styles} = styles($h, wrap => 620);
+    for my $i (0 .. 3) {
+        eval { $h->header('configure', $i, -style => $vtable->{styles}{headw},
+                          -headerbackground => $C{panel}) };
+    }
+    fill_validation();
+}
 
 #==============================================================================
 # Start.  Run as a program, build the window and enter the event loop.  A test

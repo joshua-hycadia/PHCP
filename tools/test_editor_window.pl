@@ -98,8 +98,12 @@ is('the window opens, titled in capitals', $main::mw->title eq 'PHCP EDITOR - UN
 my $menubar = $main::mw->cget(-menu);
 my @casc = grep { $menubar->type($_) eq 'cascade' } 0 .. $menubar->index('end');
 my @menus = map { $menubar->entrycget($_, -label) } @casc;
-is('menus in capitals: FILE EDIT MODEL', "@menus" eq 'FILE EDIT MODEL', "@menus");
-my $mm = $menubar->entrycget($casc[2], -menu);
+is('menus in capitals: FILE EDIT VIEW MODEL', "@menus" eq 'FILE EDIT VIEW MODEL', "@menus");
+my ($view_i) = grep { $menubar->entrycget($_, -label) eq 'VIEW' } @casc;
+my $vm = $menubar->entrycget($view_i, -menu);
+is('VIEW: DARK MODE', $vm->entrycget(0, -label) eq 'DARK MODE', $vm->entrycget(0, -label));
+my ($model_i) = grep { $menubar->entrycget($_, -label) eq 'MODEL' } @casc;
+my $mm = $menubar->entrycget($model_i, -menu);
 my @mi = map { $mm->entrycget($_, -label) } grep { $mm->type($_) eq 'command' } 0 .. $mm->index('end');
 is('MODEL: VALIDATE, then CALCULATE', "@mi" eq 'VALIDATE CALCULATE', "@mi");
 is('white paper and black ink in the editor',
@@ -780,6 +784,86 @@ print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
     my $r2 = main::calculate();
     is('   the model still counts as validated, and calculates again unchanged',
        $r2->{ok} && main::buffer() eq join("\n", @b), main::buffer());
+}
+
+print "15. DARK MODE\n";
+{
+    my $paper = lc $main::mw->cget('-background');
+    my $edbg = lc $main::ed->cget('-background');
+    my ($sb) = grep { $_->isa('Tk::Scrollbar') } $main::mw->Descendants;
+    my $scroll = lc $sb->cget('-background');
+    main::toggle_theme();
+    $main::mw->update;
+    my ($box) = grep { $_->isa('Tk::Canvas') } $main::checks{pipes}{frame}->children;
+    my ($rect) = $box->find('all');
+    my $outline = lc $box->itemcget($rect, '-outline');
+    is('dark mode is remembered and repaints the editor',
+       $main::theme eq 'dark'
+       && lc $main::mw->cget('-background') eq lc $main::C{paper}
+       && lc $main::ed->cget('-background') eq lc $main::C{paper}
+       && lc $main::ed->cget('-background') ne $edbg
+       && lc $main::ed->cget('-foreground') eq lc $main::C{ink}
+       && lc $main::gutter->cget('-background') eq lc $main::C{panel}
+       && lc $main::ed->tagCget('command', '-foreground') eq lc $main::C{accent}
+       && lc $main::ed->tagCget('number', '-foreground') eq lc $main::C{number}
+       && lc $main::ed->tagCget('error', '-background') eq lc $main::C{error_bg}
+       && lc $main::ed->tagCget('fault', '-foreground') eq lc $main::C{error}
+       && lc $sb->cget('-background') eq lc $main::C{scroll}
+       && lc $sb->cget('-background') ne $scroll
+       && lc $main::list{ERRORS}->cget('-foreground') eq lc $main::C{error}
+       && lc $main::vtable->{hlist}->cget('-background') eq lc $main::C{paper}
+       && $outline eq lc $main::C{faint}
+       && $main::btn{THEME}->cget('-text') eq 'LIGHT MODE'
+       && $main::view_menu->entrycget(0, '-label') eq 'LIGHT MODE');
+    is('the choice is written as EDITOR_THEME, not the sheet\'s key',
+       (HardyCross::Settings::get('EDITOR_THEME') // '') eq 'DARK'
+       && !defined HardyCross::Settings::get('SHEET_THEME'));
+    main::select_tab($main::toptabs, 'PROJECT');
+    $main::mw->update;
+    is('the PROJECT tab follows the editor palette',
+       lc $main::toptabs->{page}{PROJECT}->cget('-background') eq lc $main::C{paper}
+       && lc $main::form{JOB}->cget('-background') eq lc $main::C{paper}
+       && lc $main::form{JOB}->cget('-foreground') eq lc $main::C{ink});
+    my $units = $main::form{LENGTH}->cget('-menu');
+    is('a PROJECT drop-down menu follows it too',
+       $units && lc $units->cget('-background') eq lc $main::C{paper}
+       && lc $units->cget('-foreground') eq lc $main::C{ink});
+    main::select_tab($main::toptabs, 'NETWORK');
+    main::toggle_theme();
+    $main::mw->update;
+    is('light mode puts the white editor back',
+       $main::theme eq 'light'
+       && lc $main::mw->cget('-background') eq $paper
+       && lc $main::ed->cget('-background') eq '#ffffff'
+       && lc $main::ed->cget('-foreground') eq '#111111'
+       && lc $main::ed->tagCget('command', '-foreground') eq '#1f5fbf'
+       && lc $sb->cget('-background') eq '#cdd2d9'
+       && $main::btn{THEME}->cget('-text') eq 'DARK MODE'
+       && (HardyCross::Settings::get('EDITOR_THEME') // '') eq 'LIGHT');
+    # A fresh process, the way the editor is actually opened: the widgets are
+    # built light and then repainted from the saved choice.
+    HardyCross::Settings::set('EDITOR_THEME', 'DARK');
+    my $probe = "$TMP/boot_theme.pl";
+    open my $pf, '>', $probe or die $!;
+    print $pf <<'END';
+use strict;
+use warnings;
+$main::PHCP_EDITOR_LOAD_ONLY = 1;
+require "./phcp_editor.pl";
+main::build_window();
+main::mw->update;
+my $bg = lc main::ed->cget('-background');
+my $ok = main::theme eq 'dark'
+    && $bg eq lc main::C{paper}
+    && $bg ne '#ffffff'
+    && main::btn{THEME}->cget('-text') eq 'LIGHT MODE'
+    && (HardyCross::Settings::get('SHEET_THEME') // '') eq '';
+print $ok ? "DARK\n" : "NO theme=$main::theme bg=$bg\n";
+main::mw->destroy;
+END
+    close $pf;
+    my $boot = `perl -I. $probe 2>&1`;
+    is('a saved EDITOR_THEME of DARK opens the editor in dark mode', $boot =~ /^DARK\s*\z/, $boot);
 }
 
 $main::mw->destroy;
