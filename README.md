@@ -479,7 +479,7 @@ instead of the command lines.
 | SUPPLIES | a row when a node's type is SUPPLY: the static pressure and the flow/pressure points.  The elevation stays on the node |
 | PRESSURE DEVICES | one table each for PUMP, BP, BFP, PRV, OPP, OFD and PRA, with the columns that device needs.  Choosing the type on a node adds the row; a device already in a file is listed too |
 
-PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE.  PIPE DIAM is the nominal sizes of that type, in the project's size unit, and 0 is on the list so a pipe can still be asked to size itself.  A bore, or a type the database does not know, is typed.  A blank pipe type inherits the row above it, as a USE line does.
+PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE.  PIPE DIAM is the nominal sizes of that type, in the project's size unit, and 0 is on the list so a pipe can still be asked to size itself.  A bore, or a type the database does not know, is typed.  A blank pipe type inherits the row above it, as a USE line does.  Typing in a list completes the first match and shows the others; Tab moves through those matches, and Enter keeps the one on show.
 
 EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  Enter on the last system row adds another row and moves to its pipe cell.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
 

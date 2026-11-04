@@ -88,12 +88,15 @@ sub type_cell {
     $w->delete(0, 'end');
     $w->insert(0, $text);
     $w->eventGenerate('<KeyRelease>', -keysym => 'a', -when => 'now');
+    # A completed pipe type or node type paints the cells that follow it
+    # once the entry is left.  Choosing the whole value does that here.
+    lookup_finish($id, $r, $key) if $w->{phcp_choices};
     $mw->update;
 }
 
 sub menu_labels {
     my $w = shift or return;
-    my $m = eval { $w->cget('-menu') } or return;
+    my $m = eval { $w->cget('-menu') } || $w->{phcp_menu} or return;
     my $end = eval { $m->index('end') };
     return if !defined $end || $end eq 'none';
     return map { $m->entrycget($_, '-label') } 0 .. $end;
@@ -103,12 +106,14 @@ type_cell('SYSTEM', 0, 'pipe', 'P1');
 type_cell('SYSTEM', 0, 'from', 'A');
 type_cell('SYSTEM', 0, 'to', 'B');
 type_cell('SYSTEM', 0, 'length', '10');
-is('pipe type is a list', grid_cell('SYSTEM', 0, 'type')->isa('Tk::Menubutton'));
+is('pipe type is a list', grid_cell('SYSTEM', 0, 'type')->isa('Tk::Entry')
+   && grid_cell('SYSTEM', 0, 'type')->{phcp_menu});
 my @types = menu_labels(grid_cell('SYSTEM', 0, 'type'));
 is('the pipe type list is the database, and BORE',
    (grep { $_ eq 'ASAM' } @types) && (grep { $_ eq 'BORE' } @types));
 type_cell('SYSTEM', 0, 'type', 'ASAM');
-is('a database type makes the diameter a list', grid_cell('SYSTEM', 0, 'diam')->isa('Tk::Menubutton'));
+is('a database type makes the diameter a list', grid_cell('SYSTEM', 0, 'diam')->isa('Tk::Entry')
+   && grid_cell('SYSTEM', 0, 'diam')->{phcp_menu});
 my @diams = menu_labels(grid_cell('SYSTEM', 0, 'diam'));
 is('that list has 0, so the pipe can be sized, and the nominal size',
    (grep { $_ eq '0   (SIZE THE PIPE)' } @diams) && (grep { $_ eq '100' } @diams));
@@ -122,7 +127,9 @@ is('the node number is shown and is not an entry', grid_text('NODES', 0, 'node')
    && !grid_cell('NODES', 0, 'node')->isa('Tk::Entry'));
 is('a new node\'s type is blank', grid_text('NODES', 0, 'type') eq '');
 is('node type is a list, the same kind of cell as the pipe type',
-   grid_cell('NODES', 0, 'type')->isa('Tk::Menubutton'));
+   grid_cell('NODES', 0, 'type')->isa('Tk::Entry')
+   && grid_cell('NODES', 0, 'type')->{phcp_menu}
+   && grid_cell('SYSTEM', 0, 'type')->{phcp_menu});
 
 # Choosing PRV is the menu's command: commit_value is what that command calls.
 commit_value('NODES', 1, 'type', 'PRV');
@@ -175,6 +182,42 @@ my $r = calculate();
 is('calculate runs the engine and converges', $r->{ok} && $r->{converged});
 is('the pipe table has the pipe', (grep { $_->[0] =~ /P1/ } table_rows('PIPES')) ? 1 : 0);
 
+# Completion.  The model is replaced by the file opened next, so this edit
+# does not have to be undone.
+select_tab($main::toptabs, 'SYSTEM');
+$mw->update;
+my $ptype = grid_cell('SYSTEM', 0, 'type');
+$ptype->focusForce;
+$ptype->delete(0, 'end');
+$ptype->insert(0, 'AS');
+$ptype->eventGenerate('<KeyRelease>', -keysym => 's', -when => 'now');
+$mw->update;
+my $as = $ptype->get;
+is('typing AS completes a pipe type', $as eq 'ASAH' || $as eq 'ASAM', $as);
+is('the rest of that match is selected', $ptype->selectionPresent && $ptype->index('sel.first') == 2);
+$ptype->eventGenerate('<Tab>', -when => 'now');
+$mw->update;
+my $as2 = eval { $ptype->get } // '';
+is('tab moves to the other pipe type', $as2 ne '' && $as2 ne $as && ($as2 eq 'ASAH' || $as2 eq 'ASAM'), $as2);
+# Put the type back so the diameter list is ASAM's, then complete a size.
+type_cell('SYSTEM', 0, 'type', 'ASAM');
+my $diam = grid_cell('SYSTEM', 0, 'diam');
+$diam->focusForce;
+$diam->delete(0, 'end');
+$diam->insert(0, '10');
+$diam->eventGenerate('<KeyRelease>', -keysym => '0', -when => 'now');
+$mw->update;
+is('typing 10 completes the diameter', $diam->get eq '100', $diam->get);
+select_tab($main::toptabs, 'NODES');
+$mw->update;
+my $nt = grid_cell('NODES', 1, 'type');
+$nt->focusForce;
+$nt->delete(0, 'end');
+$nt->insert(0, 'SP');
+$nt->eventGenerate('<KeyRelease>', -keysym => 'p', -when => 'now');
+$mw->update;
+is('typing SP completes the node type', $nt->get eq 'SPRINKLER', $nt->get);
+
 # A file the editor already opens, through the sheet.
 open_path("$FindBin::Bin/../examples/01_single_branch.phc");
 $mw->update;
@@ -182,7 +225,8 @@ is('opening a .phc file fills the system grid from it', grid_text('SYSTEM', 0, '
    && grid_text('SYSTEM', 0, 'from') eq 'N1' && grid_text('SYSTEM', 0, 'diam') eq '100.0');
 is('a bore is typed, and its pipe type stays a list',
    grid_cell('SYSTEM', 0, 'diam')->isa('Tk::Entry')
-   && grid_cell('SYSTEM', 0, 'type')->isa('Tk::Menubutton')
+   && !grid_cell('SYSTEM', 0, 'diam')->{phcp_menu}
+   && grid_cell('SYSTEM', 0, 'type')->{phcp_menu}
    && grid_text('SYSTEM', 0, 'type') eq 'BORE');
 is('the supply and the sprinkler land on the nodes tab',
    grid_text('NODES', 0, 'type') eq 'SUPPLY' && grid_text('NODES', 1, 'type') eq 'SPRINKLER');

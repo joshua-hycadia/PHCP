@@ -889,8 +889,9 @@ sub bind_row_hover {
 # make_cell -- one cell.  A row number's row is $r.  Read-only cells are the
 # node number and, on a device, the node it was taken from: those come from
 # somewhere else and are not typed over.  A list (node type, pipe type, and
-# a diameter the database knows sizes for) is a flat menu.  Anything else is
-# typed.
+# a diameter the database knows sizes for) is an entry that completes as it
+# is typed: the first match is filled in, the rest of the matches stay
+# listed, and Tab moves through them.  Anything else is typed.
 sub make_cell {
     my ($g, $r, $col, $bg) = @_;
     my $id = $g->{id};
@@ -898,30 +899,81 @@ sub make_cell {
     my @choices = lookup_choices($id, $r, $col);
     if (@choices) {
         my $fg = $col->{kind} eq 'diam' ? $C{number} : $C{ink};
-        my $b = $g->{frame}->Menubutton(-text => $val, -font => $MONO, -relief => 'flat',
+        my $e = $g->{frame}->Entry(-font => $MONO, -width => $col->{width}, -relief => 'flat',
             -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
-            -highlightcolor => $C{accent}, -background => $bg, -activebackground => $C{hover},
-            -foreground => $fg, -activeforeground => $fg, -anchor => 'w', -width => $col->{width},
-            -padx => px(6), -pady => px(3), -indicatoron => 0, -cursor => 'hand2', -takefocus => 1);
-        my $m = $b->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
-            -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
-            -activebackground => $C{select}, -activeforeground => $C{ink});
-        for my $ch (@choices) {
-            my ($value, $label) = @$ch;
-            $m->command(-label => $label, -command => sub {
-                # Blank stays blank: "a node" is the menu's words, not the cell's.
-                $b->configure(-text => $value) if eval { Tk::Exists($b) };
-                commit_value($id, $r, $col->{key}, $value);
-            });
-        }
-        $b->configure(-menu => $m);
-        $m->bind('<Unmap>' => sub {
-            my $row = $r;
-            $mw->afterIdle(sub { clear_row_hover($g, $row) });
+            -highlightcolor => $C{accent}, -background => $bg, -foreground => $fg,
+            -insertbackground => $C{ink}, -selectbackground => $C{select}, -selectforeground => $C{ink},
+            -takefocus => 1);
+        $e->insert(0, $val);
+        $e->{phcp_choices} = \@choices;
+        $e->{phcp_id} = $id;
+        $e->{phcp_r} = $r;
+        $e->{phcp_key} = $col->{key};
+        $e->{phcp_kind} = $col->{kind};
+        $e->{phcp_menu} = lookup_menu_for($e, $id, $r, $col, \@choices);
+        $e->{phcp_pop}  = lookup_menu_for($e, $id, $r, $col, []);
+        $e->bind('<KeyRelease>' => sub {
+            return if $g->{building} || $e->{phcp_busy};
+            my $ks = eval { $e->XEvent->K } // '';
+            return if $ks =~ /^(?:Tab|ISO_Left_Tab|Return|KP_Enter|Up|Down|Left|Right|Escape|Prior|Next|Home|End)$/;
+            lookup_type($e);
         });
-        bind_sheet_cell($b, $g, $r, $col);
-        bind_row_hover($b, $g, $r);
-        return $b;
+        # Backspace over a suggested tail deletes the last character the user
+        # typed, not only the suggestion, then completion runs again.
+        $e->bind('<BackSpace>' => sub {
+            return unless completion_selected($e);
+            my $prefix = typed_prefix($e);
+            my $np = length($prefix) ? substr($prefix, 0, -1) : '';
+            $e->{phcp_busy} = 1;
+            $e->delete(0, 'end');
+            $e->insert(0, $np);
+            $e->{phcp_busy} = 0;
+            Tk->break;
+        });
+        $e->bind('<Escape>' => sub {
+            my $orig = $e->{phcp_orig};
+            $orig = '' if !defined $orig;
+            $e->{phcp_busy} = 1;
+            $e->delete(0, 'end');
+            $e->insert(0, $orig);
+            $e->icursor('end');
+            $e->selectionClear if eval { $e->selectionPresent };
+            $e->{phcp_busy} = 0;
+            commit_value($id, $r, $col->{key}, $orig, 1);
+            lookup_unpost($e);
+            Tk->break;
+        });
+        $e->bind('<Right>' => sub {
+            return unless completion_selected($e);
+            $e->selectionClear;
+            $e->icursor('end');
+            lookup_unpost($e);
+            Tk->break;
+        });
+        $e->bind('<Alt-Down>' => sub { lookup_post($e, $e->{phcp_menu}); Tk->break });
+        $e->bind('<FocusOut>' => sub {
+            my $grid_id = $g->{id};
+            $mw->afterIdle(sub {
+                return unless eval { Tk::Exists($e) };
+                my $f = eval { $mw->focusCurrent };
+                return if $f && $f eq $e;
+                # The match list takes the pointer, not this edit.  Painting
+                # waits until the list has gone and the cursor has left.
+                return if $e->{phcp_open} && eval { $e->{phcp_open}->ismapped };
+                lookup_unpost($e);
+                lookup_maybe_finish($e);
+                grow_if_needed($grid_id);
+            });
+        });
+        bind_sheet_cell($e, $g, $r, $col);
+        # FocusIn was bound for the hint.  A list cell also remembers the
+        # value to restore on Escape, and says how completion works.
+        $e->bind('<FocusIn>' => sub {
+            show_hint($col->{hint} . '  TYPE TO COMPLETE. TAB MOVES THROUGH THE MATCHES. ALT+DOWN, OR THE RIGHT EDGE, OPENS THE LIST.');
+            $e->{phcp_orig} = cell_get($id, $r, $col->{key});
+        });
+        bind_row_hover($e, $g, $r);
+        return $e;
     }
     if ($col->{ro}) {
         $g->{ro}{$r}{ $col->{key} } = 1;
@@ -979,6 +1031,269 @@ sub lookup_choices {
     return @ch;
 }
 
+# choice_display -- what the cell shows for a choice.  A blank node is the
+# words "A NODE" while it is being completed, and empty once it is kept.
+# A size of 0 is shown as 0; the menu's "(SIZE THE PIPE)" stays in the list.
+sub choice_display {
+    my $ch = shift;
+    return $ch->[1] if !length($ch->[0] // '');
+    return $ch->[0];
+}
+
+# choice_hits -- the choices whose text starts with what has been typed.
+# Matching ignores case.  A blank node matches its menu words.  A size
+# matches its number, not the note beside 0.
+sub choice_hits {
+    my ($prefix, $choices) = @_;
+    return () if !defined $prefix || $prefix eq '' || !$choices;
+    my $p = uc $prefix;
+    my @hit;
+    for my $ch (@$choices) {
+        my $disp = uc(choice_display($ch));
+        my $val = uc($ch->[0] // '');
+        if (!length($ch->[0] // '')) {
+            push @hit, $ch if $disp =~ /^\Q$p/;
+        } else {
+            push @hit, $ch if $val =~ /^\Q$p/ || $disp =~ /^\Q$p/;
+        }
+    }
+    return @hit;
+}
+
+# typed_prefix -- the characters the user has typed.  A suggested tail is
+# selected through to the end of the cell, and is not part of the prefix.
+sub typed_prefix {
+    my $e = shift;
+    my $text = $e->get;
+    return $text unless completion_selected($e);
+    return substr($text, 0, $e->index('sel.first'));
+}
+sub completion_selected {
+    my $e = shift or return 0;
+    return 0 unless eval { $e->selectionPresent };
+    my $text = eval { $e->get };
+    return 0 unless defined $text;
+    my $b = eval { $e->index('sel.last') };
+    my $a = eval { $e->index('sel.first') };
+    return defined $a && defined $b && $b == length($text) && $a < $b;
+}
+
+# lookup_menu_for -- a flat menu of choices.  Picking one writes that value.
+# An empty choice list is the menu filled in later with the matches so far.
+sub lookup_menu_for {
+    my ($e, $id, $r, $col, $choices) = @_;
+    my $m = $e->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
+        -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
+        -activebackground => $C{select}, -activeforeground => $C{ink});
+    lookup_fill_menu($m, $e, $id, $r, $col, $choices) if $choices && @$choices;
+    $m->bind('<Unmap>' => sub {
+        my $g = $grids{$id};
+        $mw->afterIdle(sub {
+            clear_row_hover($g, $r) if $g;
+            lookup_maybe_finish($e) if eval { Tk::Exists($e) };
+        });
+    });
+    return $m;
+}
+sub lookup_fill_menu {
+    my ($m, $e, $id, $r, $col, $choices) = @_;
+    my $end = eval { $m->index('end') };
+    $m->delete(0, 'end') if defined $end && $end ne 'none';
+    eval { $m->unpost };
+    for my $ch (@$choices) {
+        my ($value, $label) = @$ch;
+        $m->command(-label => $label, -command => sub {
+            return unless eval { Tk::Exists($e) };
+            $e->{phcp_busy} = 1;
+            $e->delete(0, 'end');
+            $e->insert(0, length($value) ? $value : '');
+            $e->icursor('end');
+            $e->selectionClear if eval { $e->selectionPresent };
+            $e->{phcp_busy} = 0;
+            # A picked row is the whole value, so the grids that depend on
+            # it are painted.  Typing, by contrast, waits until the cell is
+            # left, so the entry is not rebuilt under the cursor.
+            commit_value($id, $r, $col->{key}, $value);
+            lookup_unpost($e);
+        });
+    }
+}
+
+# lookup_type -- after a key, fill the first match and list the others.
+# The suggested tail is selected, so the next character replaces it.
+sub lookup_type {
+    my $e = shift or return;
+    return unless $e->{phcp_choices};
+    my $prefix = typed_prefix($e);
+    if (!length($prefix // '')) {
+        lookup_unpost($e);
+        commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, '', 1);
+        return;
+    }
+    my @hit = choice_hits($prefix, $e->{phcp_choices});
+    if (!@hit) {
+        lookup_unpost($e);
+        commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $e->get, 1);
+        return;
+    }
+    my $i = 0;
+    for (0 .. $#hit) {
+        my $disp = choice_display($hit[$_]);
+        if (uc($disp) eq uc($prefix) || (length($hit[$_][0]) && uc($hit[$_][0]) eq uc($prefix))) {
+            $i = $_;
+            last;
+        }
+    }
+    apply_completion($e, $prefix, choice_display($hit[$i]));
+    commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $hit[$i][0], 1);
+    if (@hit > 1) {
+        lookup_fill_menu($e->{phcp_pop}, $e, $e->{phcp_id}, $e->{phcp_r},
+            { key => $e->{phcp_key} }, \@hit);
+        lookup_post($e, $e->{phcp_pop}, $i);
+    } else {
+        lookup_unpost($e);
+    }
+}
+
+# apply_completion -- show $display, with the characters after the prefix
+# selected.  phcp_busy stops this rewrite from being read as another key.
+sub apply_completion {
+    my ($e, $prefix, $display) = @_;
+    $e->{phcp_busy} = 1;
+    $e->delete(0, 'end');
+    $e->insert(0, $display);
+    my $n = length($prefix // '');
+    if ($n < length($display) && uc(substr($display, 0, $n)) eq uc($prefix)) {
+        $e->selectionRange($n, 'end');
+        $e->icursor($n);
+    } else {
+        $e->selectionClear if eval { $e->selectionPresent };
+        $e->icursor('end');
+    }
+    $e->{phcp_busy} = 0;
+}
+
+sub lookup_post {
+    my ($e, $m, $active) = @_;
+    return unless $e && $m && eval { Tk::Exists($e) && Tk::Exists($m) };
+    lookup_unpost($e);
+    my $x = $e->rootx;
+    my $y = $e->rooty + ($e->height || 0);
+    $m->post($x, $y);
+    $m->activate($active) if defined $active && $active >= 0;
+    $e->{phcp_open} = $m;
+}
+sub lookup_unpost {
+    my $e = shift or return;
+    for my $m ($e->{phcp_pop}, $e->{phcp_menu}, $e->{phcp_open}) {
+        eval { $m->unpost } if $m;
+    }
+    $e->{phcp_open} = undef;
+}
+
+# lookup_shown_value -- the stored value for whatever the cell is showing.
+# "A NODE" is stored as a blank.  Text that matches nothing is kept as typed.
+sub lookup_shown_value {
+    my $e = shift;
+    my $shown = eval { $e->get } // '';
+    for my $ch (@{ $e->{phcp_choices} || [] }) {
+        return $ch->[0] if choice_display($ch) eq $shown || (length($ch->[0]) && choice_is($ch->[0], $shown));
+    }
+    return $shown;
+}
+
+# lookup_accept -- keep the match on show and close the list.  The tail is
+# no longer selected, so the next Tab leaves the cell.
+sub lookup_accept {
+    my $e = shift or return;
+    return unless $e->{phcp_choices} && eval { Tk::Exists($e) };
+    if (eval { $e->selectionPresent }) {
+        $e->selectionClear;
+        $e->icursor('end');
+    }
+    commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, lookup_shown_value($e), 1);
+    lookup_unpost($e);
+}
+
+# lookup_cycle -- Tab through the matches for the current prefix.  One match
+# is not cycled: Tab then leaves the cell, as it does everywhere else.
+sub lookup_cycle {
+    my ($e, $dir) = @_;
+    return 0 unless $e && $e->{phcp_choices} && completion_selected($e);
+    my @hit = choice_hits(typed_prefix($e), $e->{phcp_choices});
+    return 0 unless @hit > 1;
+    my $shown = $e->get;
+    my $i = 0;
+    for (0 .. $#hit) {
+        if (choice_display($hit[$_]) eq $shown || (length($hit[$_][0]) && choice_is($hit[$_][0], $shown))) {
+            $i = $_;
+            last;
+        }
+    }
+    $i = ($i + $dir) % @hit;
+    my $prefix = typed_prefix($e);
+    apply_completion($e, $prefix, choice_display($hit[$i]));
+    commit_value($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key}, $hit[$i][0], 1);
+    lookup_fill_menu($e->{phcp_pop}, $e, $e->{phcp_id}, $e->{phcp_r}, { key => $e->{phcp_key} }, \@hit);
+    lookup_post($e, $e->{phcp_pop}, $i);
+    return 1;
+}
+
+# lookup_tab -- Tab in a list cell.  Several matches: move to the next one
+# and stay.  One match, or the suggestion already accepted: leave the cell.
+# A pipe type or a node type can change other cells, so that paint waits
+# until this binding has returned, and the move happens after it.
+sub lookup_tab {
+    my ($w, $g, $r, $col, $dir) = @_;
+    return 0 unless $w && $w->{phcp_choices};
+    return 1 if lookup_cycle($w, $dir);
+    lookup_accept($w);
+    my $kind = $col->{kind} // '';
+    if ($kind eq 'pipetype' || $kind eq 'type') {
+        my ($grid, $row, $key, $d) = ($g, $r, $col->{key}, $dir);
+        $mw->afterIdle(sub {
+            lookup_finish($grid->{id}, $row, $key);
+            move_focus($grid, $row, $key, 0, $d);
+        });
+        return 1;
+    }
+    return 0;
+}
+
+# lookup_step -- Up and Down walk the open match list.  With the list
+# closed they move to the next row, as on the rest of the sheet.
+sub lookup_step {
+    my ($e, $dir) = @_;
+    return 0 unless $e && $e->{phcp_open} && eval { $e->{phcp_open}->ismapped };
+    return lookup_cycle($e, $dir);
+}
+
+# lookup_maybe_finish -- paint a finished type once the cursor has left the
+# cell and its list is closed.  Closing the list to redraw the matches does
+# not count: the cursor is still in the cell, or the list is open again.
+sub lookup_maybe_finish {
+    my $e = shift or return;
+    return unless $e->{phcp_kind} && $e->{phcp_kind} =~ /^(?:pipetype|type)\z/;
+    my $f = eval { $mw->focusCurrent };
+    return if eval { Tk::Exists($e) } && $f && $f eq $e;
+    return if $e->{phcp_open} && eval { $e->{phcp_open}->ismapped };
+    lookup_finish($e->{phcp_id}, $e->{phcp_r}, $e->{phcp_key});
+}
+
+# lookup_finish -- paint what a pipe type or a node type changes.  Not done
+# on each letter, or the entry would be destroyed while it was being typed.
+sub lookup_finish {
+    my ($id, $r, $key) = @_;
+    return if $restoring;
+    if ($id eq 'NODES' && $key eq 'type') {
+        HardyCross::Sheet::reconcile($sheet);
+        refresh_grid('NODES');
+        refresh_others('NODES');
+    } elsif ($id eq 'SYSTEM' && $key eq 'type') {
+        refresh_grid('SYSTEM');
+    }
+}
+
 # choice_is -- the cell already says this choice.  100 and 100.0 are the
 # same size, so the list does not offer both.
 sub choice_is {
@@ -998,17 +1313,40 @@ sub bind_sheet_cell {
     my $id = $g->{id};
     my $hint = $col->{hint} . '  DRAG THE BOTTOM-RIGHT CORNER DOWN TO COPY THIS CELL.';
     $w->bind('<FocusIn>'   => sub { show_hint($hint) });
-    $w->bind('<Tab>'       => sub { move_focus($g, $r, $col->{key}, 0,  1); Tk->break });
-    $w->bind('<Shift-Tab>' => sub { move_focus($g, $r, $col->{key}, 0, -1); Tk->break });
-    # Enter may add a row, which rebuilds this grid and frees the cell the
-    # key went to.  That waits until the binding has returned.
-    $w->bind('<Return>' => sub {
-        my ($grid, $row, $colkey) = ($g, $r, $col->{key});
-        $mw->afterIdle(sub { enter_down($grid, $row, $colkey) });
+    $w->bind('<Tab>' => sub {
+        if (lookup_tab($w, $g, $r, $col, 1)) { Tk->break; return }
+        move_focus($g, $r, $col->{key}, 0, 1);
         Tk->break;
     });
-    $w->bind('<Down>'      => sub { move_focus($g, $r, $col->{key}, 1,  0); Tk->break });
-    $w->bind('<Up>'        => sub { move_focus($g, $r, $col->{key}, -1, 0); Tk->break });
+    $w->bind('<Shift-Tab>' => sub {
+        if (lookup_tab($w, $g, $r, $col, -1)) { Tk->break; return }
+        move_focus($g, $r, $col->{key}, 0, -1);
+        Tk->break;
+    });
+    # Enter may add a row, which rebuilds this grid and frees the cell the
+    # key went to.  That waits until the binding has returned.  A list cell
+    # accepts its match first, and a type is painted before the move.
+    $w->bind('<Return>' => sub {
+        lookup_accept($w) if $w->{phcp_choices};
+        my ($grid, $row, $colkey, $kind) = ($g, $r, $col->{key}, $col->{kind});
+        $mw->afterIdle(sub {
+            lookup_finish($grid->{id}, $row, $colkey) if $kind && $kind =~ /^(?:pipetype|type)\z/;
+            enter_down($grid, $row, $colkey);
+        });
+        Tk->break;
+    });
+    $w->bind('<Down>' => sub {
+        if (lookup_step($w, 1)) { Tk->break; return }
+        lookup_unpost($w) if $w->{phcp_choices};
+        move_focus($g, $r, $col->{key}, 1, 0);
+        Tk->break;
+    });
+    $w->bind('<Up>' => sub {
+        if (lookup_step($w, -1)) { Tk->break; return }
+        lookup_unpost($w) if $w->{phcp_choices};
+        move_focus($g, $r, $col->{key}, -1, 0);
+        Tk->break;
+    });
     $w->bind('<Control-z>' => sub { edit_undo(); Tk->break });
     $w->bind('<Control-y>' => sub { edit_redo(); Tk->break });
     # These rebuild the grid, which destroys this cell.  That has to wait
@@ -1022,11 +1360,17 @@ sub bind_sheet_cell {
         return if $g->{drag};
         my $e = $w->XEvent or return;
         my $corner = in_fill_corner($w, $e->x, $e->y);
+        my $edge = in_menu_edge($w, $e->x, $e->y);
         my $idle = $w->isa('Tk::Entry') ? 'xterm' : 'hand2';
-        $w->configure(-cursor => $corner ? 'crosshair' : $idle);
+        $w->configure(-cursor => $corner ? 'crosshair' : $edge ? 'hand2' : $idle);
     });
     $w->bind('<ButtonPress-1>' => sub {
         my $e = $w->XEvent or return;
+        if (in_menu_edge($w, $e->x, $e->y)) {
+            lookup_post($w, $w->{phcp_menu});
+            Tk->break;
+            return;
+        }
         return unless in_fill_corner($w, $e->x, $e->y);
         $g->{drag} = { key => $col->{key}, row => $r, over => $r, saved => [] };
         $w->grab;
@@ -1064,6 +1408,16 @@ sub bind_sheet_cell {
 
 # in_fill_corner -- true when the pointer is in the cell's bottom-right
 # corner, the fill handle.  A cell that has not been drawn yet has no size.
+# in_menu_edge -- the right edge of a list cell opens the whole list.
+# The bottom-right corner stays the fill handle, so the two do not overlap.
+sub in_menu_edge {
+    my ($w, $x, $y) = @_;
+    return 0 unless $w && $w->{phcp_menu};
+    return 0 if in_fill_corner($w, $x, $y);
+    my $wd = $w->width || 0;
+    return $wd && $x >= $wd - px(18);
+}
+
 sub in_fill_corner {
     my ($w, $x, $y) = @_;
     my $wd = $w->width || 0;
@@ -1153,28 +1507,31 @@ sub pair_put {
 # undo returns to what was there before this key.  A FROM NODE, TO NODE or
 # NODE TYPE change rebuilds the grids that are filled from it.
 sub commit_value {
-    my ($id, $r, $key, $val) = @_;
+    my ($id, $r, $key, $val, $quiet) = @_;
     return if $restoring;
     my $old = cell_get($id, $r, $key);
     return if $val eq $old;
     remember();
     cell_set($id, $r, $key, $val);
-    if ($id eq 'SYSTEM' && $key =~ /^(from|to)\z/) {
-        HardyCross::Sheet::reconcile($sheet);
-        refresh_others('SYSTEM');
-    } elsif ($id eq 'NODES' && $key eq 'type') {
-        HardyCross::Sheet::reconcile($sheet);
-        # The same rows, so this writes the chosen type into the cell and
-        # does not rebuild it.  The device tables are the ones rebuilt.
-        refresh_grid('NODES');
-        refresh_others('NODES');
-    } elsif ($id eq 'SYSTEM' && $key eq 'type') {
-        # The type list's command is still running.  Rebuilding the grid now
-        # would destroy that menu under the callback, so it is painted once
-        # the callback has returned.  The diameter cell may change from a
-        # list to a typed bore, or the other way, and its choices follow the
-        # type.
-        $mw->afterIdle(sub { refresh_grid('SYSTEM') }) if $mw;
+    # Quiet is a letter of a completion.  The cell stays as it is until the
+    # edit is finished; painting now would destroy it.
+    if (!$quiet) {
+        if ($id eq 'SYSTEM' && $key =~ /^(from|to)\z/) {
+            HardyCross::Sheet::reconcile($sheet);
+            refresh_others('SYSTEM');
+        } elsif ($id eq 'NODES' && $key eq 'type') {
+            HardyCross::Sheet::reconcile($sheet);
+            # The same rows, so this writes the chosen type into the cell and
+            # does not rebuild it.  The device tables are the ones rebuilt.
+            refresh_grid('NODES');
+            refresh_others('NODES');
+        } elsif ($id eq 'SYSTEM' && $key eq 'type') {
+            # The list's command is still running.  Rebuilding the grid now
+            # would destroy that menu under the callback, so it is painted
+            # once the callback has returned.  The diameter cell may change
+            # from a list to a typed bore, or the other way.
+            $mw->afterIdle(sub { refresh_grid('SYSTEM') }) if $mw;
+        }
     }
     sheet_changed();
 }
