@@ -45,8 +45,11 @@
 # Perl 5, as the rest of PHCP.  The defined-or operator needs Perl 5.10,
 # which the engine already requires.  No signatures and no try/catch.
 #
-# The flat buttons, tabs and colours below are the editor's look, copied
-# into this file so the editor itself is not opened and not edited.
+# The flat buttons, tabs and colours below belong to this window: a white
+# sheet, a grey band for the toolbar and the column headings, a shadow
+# under the bar, and a stripe on alternate rows.  Inter and JetBrains Mono
+# are used when the machine has them.  The editor is not opened and is
+# not edited.
 #==============================================================================
 use strict;
 use warnings;
@@ -75,60 +78,63 @@ use HardyCross::Window::Database;
 use HardyCross::Window::Results;
 
 #------------------------------------------------------------------------------
-# Colours and type.  The window opens on the same white, flat palette as the
-# editor: one blue, black text, red for a fault.  DARK MODE (VIEW, and the
-# toolbar) swaps in the second palette.  %C is the palette on screen now.
+# Colours and type.  The sheet has its own flat palette: a white surface, a
+# grey header band, one blue, and a shadow line under the toolbar.  It is not
+# the editor's palette, and the editor is not changed by it.  DARK MODE swaps
+# in the second palette.  %C is the one on screen.
 # The two hashes stay as they were defined, so a toggle can map every colour
 # a widget was given back to the other palette.  scroll is the scrollbar
-# thumb, which is not one of the editor's named colours.
+# thumb.  shadow is the soft edge under a bar.
 # Widgets take a copy of the hex when they are built.  Changing %C does not
 # by itself repaint them; apply_theme walks the window and swaps the hexes.
 #------------------------------------------------------------------------------
 our %THEME_LIGHT = (
     paper      => '#FFFFFF',
-    panel      => '#F6F7F9',
-    line       => '#DDE1E6',
-    hover      => '#EEF1F5',
-    ink        => '#111111',
-    muted      => '#6B7280',
-    faint      => '#A3AAB4',
-    accent     => '#1F5FBF',
-    accent_dk  => '#184C99',
-    accent_bg  => '#E8F0FC',
-    select     => '#D3E3FA',
-    curline    => '#F5F8FD',
-    number     => '#0B4F9C',
-    error      => '#C62828',
-    error_bg   => '#FDEEEE',
-    fault_bg   => '#F9D4D4',
+    panel      => '#F4F6F9',
+    line       => '#E2E6EE',
+    hover      => '#E8F0FA',
+    ink        => '#1C1F24',
+    muted      => '#5C6570',
+    faint      => '#8A929E',
+    accent     => '#1967D2',
+    accent_dk  => '#1558B0',
+    accent_bg  => '#E8F0FE',
+    select     => '#D3E3FD',
+    curline    => '#EEF2F7',
+    number     => '#185ABC',
+    error      => '#C5221F',
+    error_bg   => '#FCE8E6',
+    fault_bg   => '#F6D4D2',
     warn       => '#8A5A00',
-    proposal   => '#9AA5B4',
+    proposal   => '#9AA0A6',
     sash       => '#E4E7EB',
-    scroll     => '#CDD2D9',
-    scroll_on  => '#B4BBC5',
+    scroll     => '#C5CDD8',
+    scroll_on  => '#A8B2C0',
+    shadow     => '#D5DBE3',
 );
 our %THEME_DARK = (
-    paper      => '#1B1E24',
-    panel      => '#252A32',
+    paper      => '#1F232B',
+    panel      => '#282D37',
     line       => '#3A4150',
-    hover      => '#313844',
-    ink        => '#E7E9EE',
-    muted      => '#A3ABBA',
-    faint      => '#727B8A',
+    hover      => '#323846',
+    ink        => '#E8EAED',
+    muted      => '#A8B0BD',
+    faint      => '#7C8594',
     accent     => '#3D7AEC',
     accent_dk  => '#2F64C4',
     accent_bg  => '#1A2C4C',
-    select     => '#2A4368',
-    curline    => '#222730',
-    number     => '#9DC4FF',
-    error      => '#FF8B82',
-    error_bg   => '#3C2426',
-    fault_bg   => '#4A2E30',
+    select     => '#2C4468',
+    curline    => '#252A33',
+    number     => '#A8C7FF',
+    error      => '#FF8A80',
+    error_bg   => '#3E2628',
+    fault_bg   => '#4A3032',
     warn       => '#E7B15A',
     proposal   => '#8E97A6',
-    sash       => '#2C323C',
-    scroll     => '#4C5564',
-    scroll_on  => '#627084',
+    sash       => '#2A303A',
+    scroll     => '#555E6E',
+    scroll_on  => '#6A7486',
+    shadow     => '#14171C',
 );
 our $theme = 'light';
 our %C = %THEME_LIGHT;
@@ -156,13 +162,19 @@ sub dpi_aware {
 }
 
 sub pick_fonts {
+    # Inter for the chrome and JetBrains Mono for the grid, when the machine
+    # has them.  Otherwise the same faces the editor would pick: Segoe UI and
+    # Consolas on Windows, DejaVu on a plain Linux install.  The grid stays
+    # monospace so a column of figures lines up.
     my %have = map { lc $_ => 1 } $main::mw->fontFamilies;
-    my ($mono) = grep { $have{ lc $_ } } 'Consolas', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
-    my ($ui)   = grep { $have{ lc $_ } } 'Segoe UI', 'DejaVu Sans', 'Liberation Sans', 'Helvetica Neue', 'Arial';
+    my ($mono) = grep { $have{ lc $_ } } 'JetBrains Mono', 'Cascadia Mono', 'Consolas',
+        'Roboto Mono', 'Source Code Pro', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Courier New';
+    my ($ui) = grep { $have{ lc $_ } } 'Inter', 'Segoe UI', 'Roboto', 'Source Sans 3',
+        'Noto Sans', 'Cantarell', 'Liberation Sans', 'DejaVu Sans', 'Helvetica Neue', 'Arial';
     $mono //= 'Courier';
     $ui   //= 'Helvetica';
     ($MONO, $MONO_B, $MONO_I) = ([ $mono, 10 ], [ $mono, 10, 'bold' ], [ $mono, 10, 'italic' ]);
-    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 9 ], [ $ui, 9, 'bold' ], [ $ui, 8, 'bold' ], [ $ui, 8 ]);
+    ($UI, $UI_B, $UI_S, $UI_S_N) = ([ $ui, 10 ], [ $ui, 10, 'bold' ], [ $ui, 9, 'bold' ], [ $ui, 9 ]);
 }
 
 #------------------------------------------------------------------------------
@@ -178,13 +190,15 @@ sub rule {
 sub flat_button {
     my ($parent, $text, $cmd, %o) = @_;
     my $p = $o{primary};
+    # A filled button has no second edge: the outline is the same blue as the
+    # face.  The others sit on the grey bar as a white chip with a hairline.
     return $parent->Button(-text => $text, -command => $cmd, -font => $UI_B,
         -relief => 'flat', -borderwidth => 0, -highlightthickness => 1,
         -highlightbackground => $p ? $C{accent} : $C{line}, -highlightcolor => $C{accent},
         -background => $p ? $C{accent} : $C{paper}, -foreground => $p ? '#FFFFFF' : $C{ink},
         -activebackground => $p ? $C{accent_dk} : $C{hover},
         -activeforeground => $p ? '#FFFFFF' : $C{ink},
-        -disabledforeground => $C{faint}, -padx => px(14), -pady => px(5), -cursor => 'hand2');
+        -disabledforeground => $C{faint}, -padx => px(16), -pady => px(6), -cursor => 'hand2');
 }
 
 sub make_tabs {
@@ -196,10 +210,14 @@ sub make_tabs {
     for my $n (@$names) {
         my $f = $t->{bar}->Frame(-background => $C{paper})->pack(-side => 'left');
         my $l = $f->Label(-text => $n, -font => $UI_B, -background => $C{paper}, -foreground => $C{muted},
-                          -padx => px(14), -pady => px(7), -cursor => 'hand2')->pack(-side => 'top');
-        my $u = $f->Frame(-height => px(2), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
+                          -padx => px(14), -pady => px(8), -cursor => 'hand2')->pack(-side => 'top');
+        my $u = $f->Frame(-height => px(3), -background => $C{paper})->pack(-side => 'top', -fill => 'x');
         $t->{label}{$n} = [ $l, $u ];
         $l->bind('<ButtonRelease-1>' => sub { select_tab($t, $n) });
+        $l->bind('<Enter>' => sub { $l->configure(-foreground => $C{ink}) });
+        $l->bind('<Leave>' => sub {
+            $l->configure(-foreground => ($t->{current} // '') eq $n ? $C{ink} : $C{muted});
+        });
         $t->{page}{$n} = $body->Frame(-background => $C{paper});
     }
     select_tab($t, $names->[0]);
@@ -404,11 +422,12 @@ sub build_window {
     $vp->pack(-fill => 'both', -expand => 1);
 
     my $foot = $mw->Frame(-background => $C{panel})->pack(-side => 'bottom', -fill => 'x');
-    rule($foot, 'x', -side => 'top');
+    $foot->Frame(-background => $C{shadow}, -height => 1)->pack(-side => 'top', -fill => 'x');
     $hint = $foot->Label(-text => '', -font => $UI, -background => $C{panel}, -foreground => $C{muted},
-                         -anchor => 'w', -justify => 'left')->pack(-fill => 'x', -padx => px(12), -pady => px([4, 0]));
-    $statusbar = $foot->Label(-text => '', -font => $UI_B, -background => $C{panel}, -foreground => $C{ink},
-                              -anchor => 'w', -justify => 'left')->pack(-fill => 'x', -padx => px(12), -pady => px([0, 6]));
+                         -anchor => 'w', -justify => 'left', -wraplength => px(1100))
+                 ->pack(-fill => 'x', -padx => px(16), -pady => px([6, 0]));
+    $statusbar = $foot->Label(-text => '', -font => $UI, -background => $C{panel}, -foreground => $C{ink},
+                              -anchor => 'w', -justify => 'left')->pack(-fill => 'x', -padx => px(16), -pady => px([1, 8]));
 
     bind_keys();
     refresh_all();
@@ -476,7 +495,8 @@ sub build_toolbar {
     $btn{REPORT} = flat_button($in, 'WRITE REPORT', sub { file_report() })->pack(-side => 'left', -padx => px(4));
     $pill = $in->Label(-text => '', -font => $UI_B, -padx => px(12), -pady => px(4))->pack(-side => 'right');
     $btn{THEME} = flat_button($in, 'DARK MODE', sub { toggle_theme() })->pack(-side => 'right', -padx => px([0, 8]));
-    rule($mw, 'x');
+    # A soft edge, not a hard rule: the bar sits a step above the sheet.
+    $mw->Frame(-background => $C{shadow}, -height => 1)->pack(-side => 'top', -fill => 'x');
 }
 
 sub bind_keys {
@@ -502,30 +522,30 @@ sub bind_keys {
 # come from.  The grids themselves scroll under it.
 sub blurb {
     my ($page, $text) = @_;
-    my $f = $page->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(12), -pady => px([8, 4]));
+    my $f = $page->Frame(-background => $C{paper})->pack(-side => 'top', -fill => 'x', -padx => px(16), -pady => px([10, 6]));
     $f->Label(-text => $text, -font => $UI, -background => $C{paper}, -foreground => $C{muted},
-              -anchor => 'w', -justify => 'left')->pack(-fill => 'x');
+              -anchor => 'w', -justify => 'left', -wraplength => px(1100))->pack(-fill => 'x');
     return $f;
 }
 
 sub build_system {
     my $page = shift;
-    blurb($page, 'EACH ROW IS A PIPE.  PIPE TYPE AND, FOR A DATABASE TYPE, PIPE DIAM ARE LISTS.  DRAG A CELL\'S BOTTOM-RIGHT CORNER TO COPY IT DOWN.  EDIT INSERTS, DELETES, CLEARS, AND FINDS.');
+    blurb($page, 'Each row is a pipe.  Pipe type, and the diameter of a database type, are lists.  Drag a cell\'s bottom-right corner to copy it down.  Edit inserts, deletes, clears, and finds.');
     $grids{SYSTEM} = build_grid($page, 'SYSTEM');
 }
 sub build_nodes {
     my $page = shift;
-    blurb($page, 'FILLED FROM THE SYSTEM TAB.  A BLANK TYPE IS A NODE, AND THE WORD IS NOT WRITTEN IN THE CELL.');
+    blurb($page, 'Filled from the System tab, in the order the node numbers first appear.  A blank type is a node, and the word is not written in the cell.');
     $grids{NODES} = build_grid($page, 'NODES');
 }
 sub build_supplies {
     my $page = shift;
-    blurb($page, 'A ROW APPEARS WHEN A NODE\'S TYPE IS SUPPLY.  THE ELEVATION STAYS ON THE NODES TAB.');
+    blurb($page, 'A row appears when a node\'s type is Supply.  The elevation stays on the Nodes tab.');
     $grids{SUPPLIES} = build_grid($page, 'SUPPLIES');
 }
 sub build_devices {
     my $page = shift;
-    blurb($page, 'A ROW APPEARS WHEN A NODE\'S TYPE IS THAT DEVICE.  A DEVICE ALREADY IN A FILE IS LISTED TOO.  EACH TABLE HAS THE COLUMNS THAT DEVICE NEEDS.');
+    blurb($page, 'A row appears when a node\'s type is that device.  A device already in a file is listed too.  Each table has only the columns that device needs.');
     $devtabs = make_tabs($page, [ @HardyCross::Sheet::DEVICE_TYPES ]);
     for my $type (@HardyCross::Sheet::DEVICE_TYPES) {
         $grids{"DEV:$type"} = build_grid($devtabs->{page}{$type}, "DEV:$type");
@@ -547,9 +567,10 @@ sub build_grid {
     my $box = $parent->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
     $g->{vsb} = flat_scrollbar($box, 'vertical')->pack(-side => 'right', -fill => 'y');
     my $col = $box->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
-    $g->{hclip} = $col->Frame(-background => $C{panel}, -height => px(26))->pack(-side => 'top', -fill => 'x');
+    $g->{hclip} = $col->Frame(-background => $C{panel}, -height => px(42))->pack(-side => 'top', -fill => 'x');
     $g->{hclip}->packPropagate(0);
     $g->{hframe} = $g->{hclip}->Frame(-background => $C{panel});
+    $col->Frame(-background => $C{line}, -height => 1)->pack(-side => 'top', -fill => 'x');
     $g->{hframe}->place(-x => 0, -y => 0, -anchor => 'nw');
     $g->{hsb} = flat_scrollbar($col, 'horizontal')->pack(-side => 'bottom', -fill => 'x');
     $g->{clip} = $col->Frame(-background => $C{paper})->pack(-fill => 'both', -expand => 1);
@@ -734,32 +755,43 @@ sub rebuild_grid {
     my $id = $g->{id};
     $_->destroy for $g->{frame}->children, $g->{hframe}->children;
     $g->{cell} = {};
+    $g->{rownum} = {};
+    $g->{ro} = {};
+    $g->{hover} = undef;
     my ($cols, $n) = grid_spec($id);
+    # Bold headings are wider than the same letters in the cell face.  The
+    # column is the wider of the heading and the cell's character width, plus
+    # the padding, so a heading such as PIPE DIAM is not clipped.
     my $cw = $mw->fontMeasure($MONO, '0') || 8;
     my $col_px = sub {
         my $col = shift;
-        my $chars = length $col->{head};
-        $chars = $col->{width} if $col->{width} > $chars;
-        return $cw * $chars + px(14);
+        my $head_w = $mw->fontMeasure($MONO_B, $col->{head}) || 0;
+        my $body_w = $cw * ($col->{width} || 1);
+        my $w = $head_w > $body_w ? $head_w : $body_w;
+        return $w + px(22);
     };
     my $c = 0;
     my $head = sub {
         my ($text, $pxw) = @_;
         my $l = $g->{hframe}->Label(-text => $text, -font => $MONO_B, -background => $C{panel},
-                                    -foreground => $C{muted}, -anchor => 'w', -padx => px(4), -pady => px(4));
+                                    -foreground => $C{ink}, -anchor => 'w', -padx => px(6), -pady => px(8));
         $l->grid(-row => 0, -column => $c, -sticky => 'ew');
         $g->{hframe}->gridColumnconfigure($c, -minsize => $pxw);
         $g->{frame}->gridColumnconfigure($c, -minsize => $pxw);
         $c++;
     };
-    $head->('ROW', $cw * 5 + px(10));
+    my $row_w = $mw->fontMeasure($MONO_B, 'ROW') || 0;
+    my $num_w = $mw->fontMeasure($MONO, '9999') || 0;
+    $head->('ROW', ($row_w > $num_w ? $row_w : $num_w) + px(22));
     $head->($_->{head}, $col_px->($_)) for @$cols;
 
     for my $r (0 .. $n - 1) {
         my $bg = $r % 2 ? $C{curline} : $C{paper};
         my $num = $g->{frame}->Label(-text => $r + 1, -font => $MONO, -background => $C{panel},
-                                     -foreground => $C{faint}, -anchor => 'e', -width => 4, -padx => px(4));
+                                     -foreground => $C{muted}, -anchor => 'e', -width => 4, -padx => px(6), -pady => px(3));
         $num->grid(-row => $r, -column => 0, -sticky => 'nsew');
+        $g->{rownum}{$r} = $num;
+        bind_row_hover($num, $g, $r);
         my $cc = 1;
         for my $col (@$cols) {
             my $w = make_cell($g, $r, $col, $bg);
@@ -769,6 +801,86 @@ sub rebuild_grid {
         }
     }
     grid_place($g);
+}
+
+# row_base_bg -- the colour a cell has when the pointer is not on its row.
+# Read-only cells and the row number sit on the grey band.  The rest stripe.
+sub row_base_bg {
+    my ($g, $r, $key) = @_;
+    return $C{panel} if !defined $key || $g->{ro}{$r}{$key};
+    return $r % 2 ? $C{curline} : $C{paper};
+}
+
+# paint_row -- shade a whole row, or put its own colours back.  A fault's
+# red outline is a highlight colour, so this does not touch it.  A fill drag
+# and a rebuild leave the row alone: those are already painting it.
+sub paint_row {
+    my ($g, $r, $on) = @_;
+    return unless $g && defined $r;
+    return if $g->{building} || $g->{drag};
+    my $num = $g->{rownum}{$r};
+    $num->configure(-background => $on ? $C{hover} : $C{panel}) if $num && eval { Tk::Exists($num) };
+    my $cells = $g->{cell}{$r} or return;
+    for my $key (keys %$cells) {
+        my $w = $cells->{$key} or next;
+        next unless eval { Tk::Exists($w) };
+        my $bg = $on ? $C{hover} : row_base_bg($g, $r, $key);
+        eval { $w->configure(-background => $bg) };
+    }
+}
+
+# pointer_in_row -- true when the pointer's y is still inside this row.
+# Moving from one cell to the next in the same row must not flash the stripe
+# back on between the Leave and the Enter.
+sub pointer_in_row {
+    my ($g, $r) = @_;
+    return 0 unless $g && defined $r;
+    my $num = $g->{rownum}{$r} or return 0;
+    return 0 unless eval { Tk::Exists($num) };
+    my $y = eval { $g->{frame}->pointery };
+    return 0 unless defined $y;
+    my $y0 = eval { $num->rooty } // return 0;
+    my $h = eval { $num->height } || 0;
+    return $h && $y >= $y0 && $y < $y0 + $h;
+}
+
+# row_menu_open -- a list on this row is posted, so the pointer has left the
+# cell for the menu and the row should stay shaded.
+sub row_menu_open {
+    my ($g, $r) = @_;
+    for my $c (values %{ $g->{cell}{$r} || {} }) {
+        my $menu = eval { $c->cget('-menu') };
+        return 1 if $menu && eval { $menu->ismapped };
+    }
+    return 0;
+}
+
+sub clear_row_hover {
+    my ($g, $r) = @_;
+    return if $g->{building} || $g->{drag};
+    return if pointer_in_row($g, $r) || row_menu_open($g, $r);
+    paint_row($g, $r, 0);
+    $g->{hover} = undef if defined $g->{hover} && $g->{hover} == $r;
+}
+
+# bind_row_hover -- shade the row under the pointer.  Leave waits until the
+# pointer has actually gone, so crossing a cell border inside the row does
+# not flicker.
+sub bind_row_hover {
+    my ($w, $g, $r) = @_;
+    $w->bind('<Enter>' => sub {
+        return if $g->{drag} || $g->{building};
+        if (defined $g->{hover} && $g->{hover} != $r) {
+            paint_row($g, $g->{hover}, 0);
+        }
+        $g->{hover} = $r;
+        paint_row($g, $r, 1);
+    });
+    $w->bind('<Leave>' => sub {
+        return if $g->{drag} || $g->{building};
+        my $row = $r;
+        $mw->afterIdle(sub { clear_row_hover($g, $row) });
+    });
 }
 
 # make_cell -- one cell.  A row number's row is $r.  Read-only cells are the
@@ -787,7 +899,7 @@ sub make_cell {
             -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
             -highlightcolor => $C{accent}, -background => $bg, -activebackground => $C{hover},
             -foreground => $fg, -activeforeground => $fg, -anchor => 'w', -width => $col->{width},
-            -padx => px(4), -pady => px(2), -indicatoron => 0, -cursor => 'hand2', -takefocus => 1);
+            -padx => px(6), -pady => px(3), -indicatoron => 0, -cursor => 'hand2', -takefocus => 1);
         my $m = $b->Menu(-tearoff => 0, -font => $MONO, -relief => 'flat', -borderwidth => 1,
             -activeborderwidth => 0, -background => $C{paper}, -foreground => $C{ink},
             -activebackground => $C{select}, -activeforeground => $C{ink});
@@ -800,14 +912,22 @@ sub make_cell {
             });
         }
         $b->configure(-menu => $m);
+        $m->bind('<Unmap>' => sub {
+            my $row = $r;
+            $mw->afterIdle(sub { clear_row_hover($g, $row) });
+        });
         bind_sheet_cell($b, $g, $r, $col);
+        bind_row_hover($b, $g, $r);
         return $b;
     }
     if ($col->{ro}) {
-        return $g->{frame}->Label(-text => $val, -font => $MONO, -background => $C{panel},
+        $g->{ro}{$r}{ $col->{key} } = 1;
+        my $l = $g->{frame}->Label(-text => $val, -font => $MONO, -background => $C{panel},
                                   -foreground => $C{ink}, -anchor => 'w', -width => $col->{width},
-                                  -padx => px(4), -pady => px(2), -highlightthickness => 1,
+                                  -padx => px(6), -pady => px(3), -highlightthickness => 1,
                                   -highlightbackground => $C{line});
+        bind_row_hover($l, $g, $r);
+        return $l;
     }
     my $e = $g->{frame}->Entry(-font => $MONO, -width => $col->{width}, -relief => 'flat',
         -borderwidth => 0, -highlightthickness => 1, -highlightbackground => $C{line},
@@ -823,6 +943,7 @@ sub make_cell {
     });
     $e->bind('<FocusOut>' => sub { grow_if_needed($id) });
     bind_sheet_cell($e, $g, $r, $col);
+    bind_row_hover($e, $g, $r);
     return $e;
 }
 
@@ -938,7 +1059,7 @@ sub in_fill_corner {
     my ($w, $x, $y) = @_;
     my $wd = $w->width || 0;
     my $ht = $w->height || 0;
-    return $wd && $ht && $x >= $wd - px(8) && $y >= $ht - px(8);
+    return $wd && $ht && $x >= $wd - px(10) && $y >= $ht - px(10);
 }
 
 # paint_fill / restore_fill -- the rows the fill will cover, outlined while
@@ -1745,7 +1866,7 @@ sub update_actions {
     my $valid = defined $valid_text && $valid_text eq $full;
     $btn{CALCULATE}->configure($valid
         ? (-state => 'normal', -background => $C{accent}, -highlightbackground => $C{accent})
-        : (-state => 'disabled', -background => $C{panel}, -highlightbackground => $C{line}));
+        : (-state => 'disabled', -background => $C{paper}, -highlightbackground => $C{line}));
     my ($text, $fg, $bg);
     if ($solved && $solved->{text} eq $full) {
         ($text, $fg, $bg) = $solved->{converged} ? ('CALCULATED', $C{accent}, $C{accent_bg})

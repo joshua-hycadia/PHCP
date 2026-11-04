@@ -463,8 +463,11 @@ second window, the spreadsheet below, is another way in to the same engine.
 +------------------------------------------------------------------+
 ```
 
-The same white, flat window, and the same PROJECT, GRAPH, QUICK TOOLS,
-DATABASE and results tabs.  Those tabs are the editor's files under
+A white sheet: a grey toolbar and header band, a shadow under the bar,
+alternate rows a step off white, and the row under the pointer shaded.
+Inter is used for the chrome and JetBrains Mono for the grid when those
+faces are installed.  The same PROJECT, GRAPH, QUICK TOOLS, DATABASE and
+results tabs.  Those tabs are the editor's files under
 `HardyCross/Window/`; this program does not change them, and it does not
 change `phcp_editor.pl`.  What is different is the network: four grids
 instead of the command lines.
