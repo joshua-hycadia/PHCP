@@ -120,8 +120,8 @@ my @strip = main::strip_commands();
 is('the command strip lists the 22 network commands (PUMPDUTY, AREA, SUPPLYGRAPH among them), no settings',
    @strip == 22 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' } @strip) == 2 && $strip[0] eq 'USE' && $strip[-1] eq 'SUPPLYGRAPH' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
-is('NETWORK, PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
-   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS DATABASE'
+is('NETWORK, PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
+   join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS ORIFICE PLATE DATABASE'
    && join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
 is('the ERRORS, WARNINGS and NODES lists sit to the right of the editor',
    $main::list{ERRORS}->rootx > $main::ed->rootx + $main::ed->width - 5
@@ -748,7 +748,51 @@ print "13. THE QUICK TOOLS TAB\n";
     is('the model is untouched by all of it', main::full_text() eq $model);
 }
 
-print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
+print "14. THE ORIFICE PLATE TAB\n";
+{
+    my $model = main::full_text();
+    main::select_tab($main::toptabs, 'ORIFICE PLATE');
+    $main::mw->update;
+    my $text = sub { $main::opw{ $_[0] }{result}->get('1.0', 'end - 1 chars') };
+    is('an ORIFICE PLATE tab: size a plate, or the loss across a bore',
+       $main::toptabs->{current} eq 'ORIFICE PLATE'
+       && $text->('SIZE') =~ /CHOOSE A PIPE SIZE, AND GIVE A FLOW AND A DROP/
+       && $text->('DROP') =~ /CHOOSE A PIPE SIZE, AND GIVE A FLOW AND A BORE/);
+    $main::op{SIZE}{size} = 50;
+    main::orifice_sizes('SIZE');
+    $main::opw{SIZE}{field}{FLOW}->insert(0, '500');
+    $main::opw{SIZE}{field}{DROP}->insert(0, '100');
+    main::orifice_update('SIZE');
+    my $ans = HardyCross::Tools::plate(mode => 'SIZE', type => 'ASAM', size => 50, flow => 500, drop => 100,
+                                       step_default => 0.5);
+    my $bore = sprintf('%.4g', $ans->{bore});
+    is('SIZE: DN50 at 500 L/min for a 100 kPa net loss shows that bore',
+       $ans->{ok} && $text->('SIZE') =~ /BORE\s+\Q$bore\E MM/ && $text->('SIZE') =~ /NET LOSS/
+       && $text->('SIZE') =~ /0\.596\s+\(THE DEFAULT\)/ && $main::opw{SIZE}{problems}->cget(-text) eq '',
+       $text->('SIZE'));
+    $main::opw{SIZE}{field}{CD}->insert(0, '1.2');
+    main::orifice_update('SIZE');
+    is('   a CD above 1 is refused and the field outlined red',
+       $main::opw{SIZE}{problems}->cget(-text) =~ /NOT MORE THAN 1/
+       && lc $main::opw{SIZE}{field}{CD}->cget(-highlightbackground) eq lc $main::C{error}
+       && $text->('SIZE') =~ /NO ANSWER/);
+    $main::opw{SIZE}{field}{CD}->delete(0, 'end');
+    $main::op{DROP}{size} = 65;
+    main::orifice_sizes('DROP');
+    $main::opw{DROP}{field}{FLOW}->insert(0, '500');
+    $main::opw{DROP}{field}{BORE}->insert(0, '38.5');
+    main::orifice_update('DROP');
+    my $drop = HardyCross::Tools::plate(mode => 'DROP', type => 'ASAM', size => 65, flow => 500, bore => 38.5,
+                                        step_default => 0.5);
+    my $loss = sprintf('%.4g', $drop->{drop});
+    is('DROP: a 38.5 mm bore in DN65 at 500 L/min shows that net loss',
+       $drop->{ok} && $text->('DROP') =~ /NET LOSS\s+\Q$loss\E KPA/ && $text->('DROP') =~ /PERMANENT-LOSS RATIO/,
+       $text->('DROP'));
+    main::select_tab($main::toptabs, 'NETWORK');
+    is('the model is untouched by the orifice plate tab', main::full_text() eq $model);
+}
+
+print "15. AN ASSUMED ROUGHNESS IS FLAGGED\n";
 {
     $main::settings->{method} = 'DW';
     main::set_buffer(join "\n", 'WATER W1 0 500', 'USE PE11', 'PIPE P1 W1 A 50 110', 'NODE A 0',
@@ -786,7 +830,7 @@ print "14. AN ASSUMED ROUGHNESS IS FLAGGED\n";
        $r2->{ok} && main::buffer() eq join("\n", @b), main::buffer());
 }
 
-print "15. DARK MODE\n";
+print "16. DARK MODE\n";
 {
     my $paper = lc $main::mw->cget('-background');
     my $edbg = lc $main::ed->cget('-background');

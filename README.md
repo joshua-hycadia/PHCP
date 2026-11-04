@@ -360,7 +360,7 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
-| NETWORK | PROJECT | GRAPH | QUICK TOOLS | DATABASE                |
+| NETWORK | PROJECT | GRAPH | QUICK TOOLS | ORIFICE PLATE | DATABASE |
 |  USE PIPE ... | NODE NC ... | PUMP BP ... | AREA ...  (strip)      |
 |  +----+--------------------------------------+ +---------------+ |
 |  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
@@ -422,6 +422,7 @@ there and selects it.
 | undo | Ctrl+Z and Ctrl+Y.  A proposal that was only offered is never part of the undo record |
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
 | QUICK TOOLS tab | velocity, fittings, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
+| ORIFICE PLATE tab | the bore that gives a net loss, or the net loss across a bore.  The same sums as `OPP` and `OFD`.  See Orifice plate |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
@@ -429,7 +430,7 @@ there and selects it.
 
 The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
 other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
-QUICK TOOLS, DATABASE, and the results tables).
+QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -458,7 +459,7 @@ second window, the spreadsheet below, is another way in to the same engine.
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
 | SYSTEM | NODES | SUPPLIES | PRESSURE DEVICES | PROJECT | GRAPH   |
-|        | QUICK TOOLS | DATABASE                                    |
+|        | QUICK TOOLS | ORIFICE PLATE | DATABASE                |
 |  ROW | PIPE | FROM NODE | TO NODE | LENGTH | TYPE | DIAM | FITTINGS |
 |   1  |  1   | 2         | 101     | 7000   | ASAM | 100  | 2E T     |
 +------------------------------------------------------------------+
@@ -469,8 +470,8 @@ second window, the spreadsheet below, is another way in to the same engine.
 A white sheet: a grey toolbar and header band, a shadow under the bar,
 alternate rows a step off white, and the row under the pointer shaded.
 Inter is used for the chrome and JetBrains Mono for the grid when those
-faces are installed.  The same PROJECT, GRAPH, QUICK TOOLS, DATABASE and
-results tabs.  Those tabs are the editor's files under
+faces are installed.  The same PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE,
+DATABASE and results tabs.  Those tabs are the editor's files under
 `HardyCross/Window/`; this program does not change them, and it does not
 change `phcp_editor.pl`.  What is different is the network: four grids
 instead of the command lines.
@@ -594,6 +595,28 @@ the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
 Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
 laminar, and the solver's blend of the two between Re 2000 and 4000) - for
 every pipe type and size in the database.
+
+## Orifice plate
+
+ORIFICE PLATE is a tab of both windows.  It answers as it is typed, in the
+PROJECT tab's units, and it does not change the model.
+
+| calculator | give | get |
+|---|---|---|
+| SIZE THE PLATE | a pipe type and size (or BORE and a bore), a flow, and the net loss wanted.  CD blank is 0.596.  Bore step blank is the PROJECT tab's ORIF_STEP, or 0.5 mm | the bore, rounded as an `OPP` plate is rounded, the net loss that rounded bore actually gives, beta, the velocities, the tapping differential and the permanent-loss ratio |
+| DROP ACROSS A PLATE | a pipe, a flow and a plate bore.  CD blank is 0.596 | the net loss, as an `OFD` plate, with the same figures |
+
+The net loss is the solver's own: the tapping differential,
+633.28 (0.596/CD)^2 (Q^2/d^4) (1 - b^4) kPa (Q in L/min, d in mm, b = d/D),
+times the ISO 5167 permanent-loss ratio.  `OPP` finds the bore from that
+loss by bisection and rounds it to the step, and this tab does those two
+steps with the same routines.  A CD must be more than 0 and not more than 1.
+A plate bore that is not smaller than the pipe is refused.  When even a bore
+almost as large as the pipe still drops more than asked, or a very small
+bore does not drop enough, the tab says so.
+
+`HardyCross/Tools.pm` does the work.  `tools/test_tools.pl` checks the bore
+and the loss against that formula written out in the test.
 
 ## The report: cover sheet
 

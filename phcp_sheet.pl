@@ -17,7 +17,7 @@
 #   | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 #   +------------------------------------------------------------------+
 #   | SYSTEM | NODES | SUPPLIES | PRESSURE DEVICES | PROJECT | GRAPH   |
-#   |        | QUICK TOOLS | DATABASE                                    |
+#   |        | QUICK TOOLS | ORIFICE PLATE | DATABASE                |
 #   |  ROW | PIPE | FROM NODE | TO NODE | LENGTH | TYPE | DIAM | ...    |
 #   |   1  |  1   | 2         | 101     | 7000   | S20  | 100  | 2E T   |
 #   +------------------------------------------------------------------+
@@ -36,7 +36,8 @@
 # and clears rows, copies a cell downwards, and finds and replaces.  VIEW
 # switches the whole window between the light palette and a dark one.
 #
-# PROJECT, GRAPH, QUICK TOOLS and DATABASE are the same tabs as the editor.
+# PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE and DATABASE are the same tabs
+# as the editor.
 # They live in HardyCross/Window/ and decide nothing for themselves.  The
 # decisions for the grids are HardyCross::Sheet, which has no Tk in it.
 # VALIDATE and CALCULATE call HardyCross::Editor, the same checks and the
@@ -73,6 +74,7 @@ use HardyCross::Settings;
 # helpers below are the ones it calls.  Nothing in those files is modified.
 use HardyCross::Window::Project;
 use HardyCross::Window::Tools;
+use HardyCross::Window::Orifice;
 use HardyCross::Window::Graph;
 use HardyCross::Window::Database;
 use HardyCross::Window::Results;
@@ -407,8 +409,11 @@ sub build_window {
     my $top = $mw->Frame(-background => $C{paper});
     my $bottom = $mw->Frame(-background => $C{paper});
     $toptabs = make_tabs($top, [ 'SYSTEM', 'NODES', 'SUPPLIES', 'PRESSURE DEVICES',
-                                 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'DATABASE' ],
-                         sub { tools_refresh() if $_[0] eq 'QUICK TOOLS' });
+                                 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'ORIFICE PLATE', 'DATABASE' ],
+                         sub {
+                             tools_refresh() if $_[0] eq 'QUICK TOOLS';
+                             orifice_refresh() if $_[0] eq 'ORIFICE PLATE';
+                         });
     build_system($toptabs->{page}{SYSTEM});
     build_nodes($toptabs->{page}{NODES});
     build_supplies($toptabs->{page}{SUPPLIES});
@@ -416,6 +421,7 @@ sub build_window {
     build_project($toptabs->{page}{PROJECT});
     build_graph($toptabs->{page}{GRAPH});
     build_tools($toptabs->{page}{'QUICK TOOLS'});
+    build_orifice($toptabs->{page}{'ORIFICE PLATE'});
     build_database($toptabs->{page}{DATABASE});
     build_results($bottom);
     $vp->add($top, -height => px(560));

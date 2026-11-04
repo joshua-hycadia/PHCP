@@ -91,7 +91,7 @@ perl tools/test_sheet.pl            # the spreadsheet's grids, headless
 perl tools/test_sheet_window.pl     # the spreadsheet window (re-runs under xvfb-run)
 perl tools/test_dbedit.pl           # database editing and the team folder, headless
 perl tools/test_graph.pl            # the Q^1.85 water supply graph, and SUPPLYGRAPH in a report
-perl tools/test_tools.pl            # the QUICK TOOLS calculators
+perl tools/test_tools.pl            # the QUICK TOOLS calculators and the orifice plate
 perl tools/test_sizing.pl           # auto pipe sizing, each answer checked at the demand point
 perl tools/test_manual.pl           # docs/PHC_REFERENCE.md against the program
 perl tools/test_velocity_pressure.pl  # OPTION VELOCITY_PRESSURE: hand check, OFF unchanged, ON vs OFF

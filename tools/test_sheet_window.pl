@@ -61,7 +61,7 @@ is('the window is a spreadsheet, not the text editor', $mw->title =~ /^PHCP SHEE
 
 my @tabs = @{ $main::toptabs->{names} };
 is('the network is four grids, then the editor\'s other tabs',
-   join(' ', @tabs) eq 'SYSTEM NODES SUPPLIES PRESSURE DEVICES PROJECT GRAPH QUICK TOOLS DATABASE',
+   join(' ', @tabs) eq 'SYSTEM NODES SUPPLIES PRESSURE DEVICES PROJECT GRAPH QUICK TOOLS ORIFICE PLATE DATABASE',
    "@tabs");
 is('the results tabs are the editor\'s',
    join(' ', @{ $main::restabs->{names} }) eq 'VALIDATION PIPES NODES OUTLETS REPORT');
@@ -354,6 +354,22 @@ $mw->update;
 is('find and replace opens a box', $main::find_box && Tk::Exists($main::find_box));
 $main::find_box->destroy if $main::find_box;
 $main::find_box = undef;
+
+select_tab($main::toptabs, 'ORIFICE PLATE');
+$mw->update;
+$main::op{SIZE}{size} = 50;
+orifice_sizes('SIZE');
+$main::opw{SIZE}{field}{FLOW}->insert(0, '500');
+$main::opw{SIZE}{field}{DROP}->insert(0, '100');
+orifice_update('SIZE');
+my $plate = HardyCross::Tools::plate(mode => 'SIZE', type => 'ASAM', size => 50, flow => 500, drop => 100, step_default => 0.5);
+my $shown = $main::opw{SIZE}{result}->get('1.0', 'end - 1 chars');
+my $bore = sprintf('%.4g', $plate->{bore});
+is('the orifice plate tab sizes a plate the way the editor\'s tab does',
+   $main::toptabs->{current} eq 'ORIFICE PLATE' && $plate->{ok} && $shown =~ /BORE\s+\Q$bore\E MM/ && $shown =~ /NET LOSS/,
+   $shown);
+select_tab($main::toptabs, 'SYSTEM');
+$mw->update;
 
 my $paper = $mw->cget('-background');
 my $head = $main::grids{SYSTEM}{hclip}->cget('-background');

@@ -54,6 +54,7 @@
 #   Window/Project.pm          PROJECT tab: title, details, units, method, options
 #   Window/Graph.pm            GRAPH tab: a Q^1.85 water supply graph
 #   Window/Tools.pm            QUICK TOOLS tab: the calculators
+#   Window/Orifice.pm          ORIFICE PLATE tab: size a plate, or the loss across one
 #   Window/Database.pm         DATABASE tab: the pipe and fitting database
 #   Window/Results.pm          the results: VALIDATION, PIPES, NODES, OUTLETS
 #==============================================================================
@@ -80,6 +81,7 @@ use HardyCross::Settings;
 # The window, one file to a tab (all in package main).
 use HardyCross::Window::Project;
 use HardyCross::Window::Tools;
+use HardyCross::Window::Orifice;
 use HardyCross::Window::Graph;
 use HardyCross::Window::Database;
 use HardyCross::Window::Results;
@@ -203,7 +205,7 @@ sub dpi_aware {
 our ($mw, $ed, $gutter, $report, $statusbar, $strip, $pill, $vtable);
 our (%list, %list_lines, %list_head);   # ERRORS, WARNINGS, NODES: listbox, entries, heading
 our (%table);                    # PIPES, NODES, OUTLETS: { hlist, data, sort, desc }
-our ($toptabs, $restabs);        # the NETWORK / PROJECT / GRAPH / QUICK TOOLS / DATABASE tabs; the results tabs
+our ($toptabs, $restabs);        # the NETWORK / PROJECT / GRAPH / QUICK TOOLS / ORIFICE PLATE / DATABASE tabs; the results tabs
 our (%btn, %form, %checks);      # toolbar buttons; PROJECT tab fields; HIDE boxes
 our $project_canvas;             # the PROJECT tab's scrolling canvas
 our %dbv;                        # the DATABASE tab: { db, editing, kind, sel, ... }
@@ -510,12 +512,16 @@ sub build_window {
     my $vp = divider($mw, 'vertical');
     my $top = $mw->Frame(-background => $C{paper});
     my $bottom = $mw->Frame(-background => $C{paper});
-    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'DATABASE' ],
-                         sub { tools_refresh() if $_[0] eq 'QUICK TOOLS' });
+    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'ORIFICE PLATE', 'DATABASE' ],
+                         sub {
+                             tools_refresh() if $_[0] eq 'QUICK TOOLS';
+                             orifice_refresh() if $_[0] eq 'ORIFICE PLATE';
+                         });
     build_network($toptabs->{page}{NETWORK});
     build_project($toptabs->{page}{PROJECT});
     build_graph($toptabs->{page}{GRAPH});
     build_tools($toptabs->{page}{'QUICK TOOLS'});
+    build_orifice($toptabs->{page}{'ORIFICE PLATE'});
     build_database($toptabs->{page}{DATABASE});
     build_results($bottom);
     $vp->add($top, -height => px(560));
