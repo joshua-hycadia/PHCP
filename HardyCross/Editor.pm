@@ -450,8 +450,12 @@ sub results_at {
     }
     if ($k =~ /^(SPRINKLER|HYDRANT|HREEL)\z/ && $el{$id}) {
         my $e = $el{$id};
-        return sprintf '%s  DISCHARGE %s AT %s (REQUIRED %.*f)', $id, $qs->(abs $e->{q}),
-            $ps->($p->($e->{n1})), $u->{pdp}, $e->{preq} / $u->{pf};
+        # With velocity pressure ON, an in-line sprinkler discharges on Pn,
+        # and the line says so; otherwise the line reads as it always has.
+        return sprintf '%s  DISCHARGE %s AT %s%s (REQUIRED %.*f)', $id, $qs->(abs $e->{q}),
+            $ps->($p->($e->{n1})),
+            ($e->{pv} ? sprintf(', PN %s', $ps->(HardyCross::outlet_pressure($net, $e) / $u->{pf})) : ''),
+            $u->{pdp}, $e->{preq} / $u->{pf};
     }
     if ($k eq 'WATER' && $el{$id}) {
         return sprintf '%s  SUPPLIES %s AT %s', $id, $qs->(abs $el{$id}{q}), $ps->($p->($el{$id}{n2}));
@@ -615,7 +619,9 @@ sub result_tables {
     my $kunit = $net->{phc_units} ? HardyCross::Phc::k_factor_to_model(1, $net->{phc_units})
                                     * $u->{qf} / sqrt($u->{pf}) : 1;
     for my $e (grep { $_->{kind} eq 'DISCHARGE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
-        my $p = ($node->($e->{n1})->{h} - $GW * $e->{z}) / $u->{pf};
+        # The pressure the outlet discharges on: Pn for an in-line sprinkler
+        # under OPTION VELOCITY_PRESSURE ON, the gauge pressure otherwise.
+        my $p = HardyCross::outlet_pressure($net, $e) / $u->{pf};
         my $pass = abs($e->{q}) >= $e->{qreq} - 1e-6 && $p >= $e->{preq} / $u->{pf} - 1e-6;
         push @{ $t{outlets}{rows} }, $row->([
             $txt->($e->{id}), $txt->($node->($e->{n1})->{id}),
@@ -729,6 +735,10 @@ our @OPTION_FORM = (
     [ 'FITTING_BASIS', 'FITTING LENGTHS',
       'CORRECTED: ADJUSTED FOR THE C-FACTOR AND THE INSTALLED BORE. STANDARD: AS PUBLISHED IN AS 2118.1. '
       . 'BLANK: CORRECTED.', [ '', 'CORRECTED', 'STANDARD' ] ],
+    [ 'VELOCITY_PRESSURE', 'VELOCITY PRESSURE',
+      'ON: IN-LINE SPRINKLERS DISCHARGE ON THE NORMAL PRESSURE PN = PT - PV, PV FROM THE PIPE FEEDING THE HEAD; '
+      . 'END SPRINKLERS, HYDRANTS AND HOSE REELS STAY ON TOTAL PRESSURE (AS 2118.1 CL 14.15, AT THE DESIGNER\'S '
+      . 'DISCRETION). OFF: EVERY OUTLET ON TOTAL PRESSURE. BLANK: OFF.', [ '', 'OFF', 'ON' ] ],
     [ 'ORIF_STEP', 'ORIFICE PLATE BORE STEP',
       'A BORE SIZED FOR AN OPP PLATE IS ROUNDED TO THIS STEP, IN THE PIPE SIZE UNIT. BLANK: 0.5 MM.' ],
     [ 'HOSE_ALLOWANCE', 'HOSE STREAM ALLOWANCE',
@@ -1117,7 +1127,7 @@ sub why {
           . 'CONNECT IT WITH A PIPE, OR DELETE IT.' ],
         [ qr/NO SUPPLY AND NO DISCHARGE/,
           'PRESSURES ARE WORKED OUT FROM A KNOWN PRESSURE. ADD A WATER SUPPLY, OR AN OUTLET.' ],
-        [ qr/UNKNOWN OPTION|VALUE .* IS NOT A NUMBER|FITTING_BASIS/,
+        [ qr/UNKNOWN OPTION|VALUE .* IS NOT A NUMBER|FITTING_BASIS|VELOCITY_PRESSURE/,
           'CHECK THE OPTION IN THE PROJECT TAB: LEAVE A FIELD BLANK FOR THE DEFAULT.' ],
     );
     for my $w (@why) {

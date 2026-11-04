@@ -288,6 +288,17 @@ sub parse_row {
             $o->{fitting_basis} = $v2;
         }
         elsif ($k eq 'ORIF_STEP'){ $o->{orif_step} = num($v) * $net->{f_dia} }
+        elsif ($k eq 'VELOCITY_PRESSURE') {
+            # OFF (the default): every outlet discharges on total pressure,
+            # q = K sqrt(Pt).  ON: sprinklers discharge on the normal
+            # pressure, q = K sqrt(Pt - Pv), AS 2118.1:2017 Clause 14.15 --
+            # the convention is set out at HardyCross::velocity_pressures.
+            # The report states which, so it is never a hidden setting.
+            my $v2 = uc $v;
+            HardyCross::fail("VELOCITY_PRESSURE must be ON or OFF")
+                unless $v2 eq 'ON' || $v2 eq 'OFF';
+            $o->{vel_press} = $v2 eq 'ON' ? 1 : 0;
+        }
         return;
     }
     #--------------------------------------------------------------- NODES

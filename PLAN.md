@@ -16,6 +16,9 @@ and with a BFP, a fixed-drop PRV and an orifice plate; files only, no solved
 number changes.  Open: example 04's MAXITER raised from 20000 to 30000, because
 the 1000-node grid needs 24 820 iterations and `test_phc.pl --full` failed on it
 (example file only, approved 4 November 2026; no other example moves).
+Also open, on `job/velocity-pressure`: `OPTION VELOCITY_PRESSURE` (AS 2118.1
+Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
+changes no solved number.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -432,6 +435,21 @@ without SIZE 0 solves and reports exactly as before.
 | `HardyCross/Report.pm` | each trial listed, and the one chosen |
 | `phcp_editor.pl`, `HardyCross/Areas.pm` | COMPUTING in the status bar while a calculation runs, with a turning mark, what is being done and the seconds gone; a busy cursor |
 
+## v1.1 - velocity pressure (AS 2118.1 Cl 14.15)
+
+Engine change, approved by the maintainer 4 November 2026 (the rule below, as
+proposed).  Default OFF: every example solves exactly as before.
+
+| file | change |
+|---|---|
+| `HardyCross.pm` | `velocity_pressures` in the outer loop: each sprinkler's Pv from the pipe bringing the most water into its node, 0 for an end head; held as an added head in the outlet's edge until no Pv moves by more than TOL_LOOP; `outlet_pressure`; a warning if unsettled |
+| `HardyCross/Parse.pm`, `HardyCross/Phc.pm` | `OPTION VELOCITY_PRESSURE ON` or `OFF`, checked on its line |
+| `HardyCross/Demand.pm` | margins (governing outlet, demand point) on the pressure each outlet discharges on |
+| `HardyCross/Report.pm` | the basis on the cover sheet, Section 1, Section 4 (election), under the pipe schedule, Section 7 (PT and PV columns when ON) and Section 8 |
+| `HardyCross/Json.pm` | `velocity_pressure`; each outlet's `velocity_pressure` and `discharge_pressure` |
+| `HardyCross/Editor.pm` | VELOCITY PRESSURE in the PROJECT tab; the outlet table and line results on Pn |
+| `tools/test_velocity_pressure.pl`, `tools/baseline/velocity_pressure_off.txt` | a hand-checked range, OFF against results frozen from the earlier solver, ON against OFF on the examples |
+
 ## Definition of done, each PR
 
 - All tests in `CONTRIBUTING.md` pass, plus the new ones.
@@ -483,3 +501,4 @@ without SIZE 0 solves and reports exactly as before.
 - [x] v1.1 - sizing trials (SIZING_TRIALS, default 5) and a COMPUTING indicator while a calculation runs
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
+- [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)

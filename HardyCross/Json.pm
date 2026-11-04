@@ -36,8 +36,16 @@
 #                  pipes (id <pipe>.<command>; it sits at the pipe's start,
 #                  between the start node and the node <pipe>~)
 #   nodes          [ { id, elevation, pressure } ]  pressure is gauge
+#   velocity_pressure  true / false: OPTION VELOCITY_PRESSURE.  true, in-line
+#                  sprinklers discharge on normal pressure (AS 2118.1 Cl 14.15);
+#                  false, every outlet on total pressure
 #   outlets        [ { id, node, type, k, required_flow, flow,
-#                    required_pressure, pressure, margin, pass } ]  fixed flows
+#                    required_pressure, pressure, velocity_pressure,
+#                    discharge_pressure, margin, pass } ]  pressure is the
+#                  gauge (total) pressure; velocity_pressure the Pv taken off
+#                  it (0 unless applied); discharge_pressure = pressure -
+#                  velocity_pressure, what flow = k sqrt(P) is worked on, and
+#                  what margin and pass are measured on.  Fixed flows
 #                  included, with type FIXEDFLOW and k null
 #   governing      { id, margin } the outlet with least pressure to spare, or null
 #   demand         { supply, flow, pressure, available, margin, meets } at the
@@ -125,13 +133,19 @@ sub results {
     }
     my @fail;
     for my $e (grep { $_->{kind} eq 'DISCHARGE' } @el) {
-        my $p = ($node->($e->{n1})->{h} - $GW * $e->{z}) / $up;
-        my $pass = abs($e->{q}) >= $e->{qreq} - 1e-6 && $p >= $e->{preq} / $up - 1e-6;
+        # pressure is the gauge (total) pressure at the outlet, as it always
+        # was; discharge_pressure is what q = K sqrt(P) is worked on -- the
+        # normal pressure of an in-line sprinkler with velocity pressure ON,
+        # the same as pressure otherwise.  margin and pass are on the latter.
+        my $p  = ($node->($e->{n1})->{h} - $GW * $e->{z}) / $up;
+        my $pd = HardyCross::outlet_pressure($net, $e) / $up;
+        my $pass = abs($e->{q}) >= $e->{qreq} - 1e-6 && $pd >= $e->{preq} / $up - 1e-6;
         push @outlets, { id => $e->{id}, node => $node->($e->{n1})->{id},
             type => $e->{otype} eq 'HOSEREEL' ? 'HREEL' : $e->{otype}, k => r4($e->{k}),
             required_flow => r4($e->{qreq} / $uf), flow => r4(abs($e->{q}) / $uf),
             required_pressure => r4($e->{preq} / $up), pressure => r4($p),
-            margin => r4($p - $e->{preq} / $up), pass => $pass ? JSON::PP::true : JSON::PP::false };
+            velocity_pressure => r4(($e->{pv} // 0) / $up), discharge_pressure => r4($pd),
+            margin => r4($pd - $e->{preq} / $up), pass => $pass ? JSON::PP::true : JSON::PP::false };
         push @fail, $outlets[-1] unless $pass;
     }
     for my $f (grep { defined $_->{preq} } @{ $net->{fixed} || [] }) {
@@ -149,6 +163,7 @@ sub results {
         interface => $INTERFACE, program => "PHCP $HardyCross::VERSION", model => $model,
         status => $ok ? 'converged' : 'not_converged', converged => $ok ? JSON::PP::true : JSON::PP::false,
         iterations => $net->{iters} // 0, units => units($net),
+        velocity_pressure => $net->{opts}{vel_press} ? JSON::PP::true : JSON::PP::false,
         database => HardyCross::PipeData::path()
             ? { name => HardyCross::PipeData::dataset(), issued => HardyCross::PipeData::issued(),
                 file => HardyCross::PipeData::path(), sha256 => HardyCross::PipeData::sha256() } : undef,
@@ -189,12 +204,17 @@ sub results {
                  : 'DID NOT CONVERGE - THE RESULTS MUST NOT BE USED';
     push @s, $j{areas} ? sprintf('DESIGN AREA %s GOVERNS, OF %d AREAS SOLVED', $j{design_area}, scalar @{ $j{areas} })
            : defined $j{design_area} ? "DESIGN AREA $j{design_area}, CHOSEN BY OPTION DESIGN_AREA" : ();
+    # Said only when it is ON, so a total-pressure summary reads as it always has.
+    push @s, 'VELOCITY PRESSURE INCLUDED: IN-LINE SPRINKLERS DISCHARGE ON NORMAL PRESSURE (AS 2118.1 CL 14.15)'
+        if $net->{opts}{vel_press};
     if ($go) {
         my ($g) = grep { $_->{id} eq $go->{id} } @outlets;
         push @s, sprintf('GOVERNING OUTLET %s: %.1f %s AGAINST %.1f REQUIRED, MARGIN %.1f %s', $go->{id},
-            $g->{pressure}, uc $u->{pressure}, $g->{required_pressure}, $g->{margin}, uc $u->{pressure}) if $g;
+            $g->{discharge_pressure} // $g->{pressure}, uc $u->{pressure}, $g->{required_pressure}, $g->{margin},
+            uc $u->{pressure}) if $g;
     }
-    push @s, sprintf('FAIL: %s AT %s %.1f %s AGAINST %.1f REQUIRED', $_->{type}, $_->{id}, $_->{pressure},
+    push @s, sprintf('FAIL: %s AT %s %.1f %s AGAINST %.1f REQUIRED', $_->{type}, $_->{id},
+                     $_->{discharge_pressure} // $_->{pressure},
                      uc $u->{pressure}, $_->{required_pressure}) for @fail;
     push @s, @fail ? scalar(@fail) . ' OUTLET' . (@fail == 1 ? '' : 'S') . ' FAIL' : 'EVERY OUTLET PASSES'
         if @outlets;

@@ -164,6 +164,12 @@ sub write_report {
     $out .= sprintf " %-26s %g m/s  (%s)\n", 'Velocity limit', $o->{vel_limit} // 6,
         $o->{vel_limit_set} ? 'set in the model OPTIONS'
                             : 'program default - not set in the model, not from a standard';
+    # The pressure every outlet discharges on: OPTION VELOCITY_PRESSURE.
+    $out .= sprintf " %-26s %s\n", 'Outlet discharge',
+        $o->{vel_press}
+            ? 'q = K x sqrt(Pn), Pn = Pt - Pv, in-line sprinklers (AS 2118.1 Cl 14.15); '
+              . 'end sprinklers and other outlets on Pt'
+            : 'q = K x sqrt(Pt), total pressure, every outlet (velocity pressure not included)';
     $out .= sprintf " %-26s %s\n", 'Result',
         $ok ? sprintf('CONVERGED in %d iterations, %d loops', $net->{iters},
                       scalar @{ $net->{loops} })
@@ -281,6 +287,19 @@ sub write_report {
     push @notes, 'ELECTION: calculated to the published Standard alone. AS 2118.1 Table '
         . '14.11.1 is applied unmodified and the diameter modifier was NOT applied.'
         if ($o->{fitting_basis} // '') eq 'STANDARD';
+    if ($o->{vel_press}) {
+        my @spk = grep { $_->{kind} eq 'DISCHARGE' && uc($_->{otype} // '') eq 'SPRINKLER' }
+                  @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+        my $inl = grep { $_->{pv} } @spk;
+        push @notes, 'ELECTION: velocity pressures included (OPTION VELOCITY_PRESSURE ON), at the '
+            . 'discretion of the designer under AS 2118.1:2017 Clause 14.15, for range pipes and '
+            . 'distribution mains alike.  An in-line sprinkler discharges on the normal pressure '
+            . 'Pn = Pt - Pv, Pv = rho v^2 / 2 in the pipe bringing the most water into its node.  An '
+            . 'end sprinkler (no pipe carrying water on beyond it), hydrants, hose reels and fixed '
+            . 'flows discharge on total pressure.  No normal pressure is taken at a branch take-off: '
+            . 'every branch is solved in full.  ' . scalar(@spk) . " sprinkler(s), $inl in-line "
+            . 'and on Pn.';
+    }
     for my $e (grep { $_->{kind} eq 'PIPE' && $_->{ptype} && $_->{c_given} }
                @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
         my $tc = HardyCross::PipeData::pipe_type($e->{ptype})->{c};
@@ -446,11 +465,18 @@ sub write_report {
             . "first pipe that reaches it; '-' means no outlet, or one already shown.");
         $out .= wrap(' ', 'Check: TL = L + F.   Pf = FRI-LOSS x TL.   Pt END = Pt BEG - Pe - Pf.   '
             . 'Pn = Pt BEG - Pv.');
-        $out .= wrap(' ', 'Pv, the velocity pressure (rho v^2 / 2), and Pn, the normal pressure, are '
-            . 'shown in the NFPA manner for reference only.  This calculation works in TOTAL pressure '
-            . 'throughout, as FM Global DS 3-0 does: every outlet discharge is q = K x sqrt(Pt), not '
-            . 'K x sqrt(Pn).  Fittings are equivalent lengths from the pipe and fitting database; '
-            . 'see Section 3.');
+        $out .= wrap(' ', $o->{vel_press}
+            ? 'Pv, the velocity pressure (rho v^2 / 2), and Pn, the normal pressure, are shown for '
+              . 'every pipe.  Velocity pressures are INCLUDED (OPTION VELOCITY_PRESSURE ON, AS 2118.1 '
+              . 'Clause 14.15): an in-line sprinkler discharges on q = K x sqrt(Pn), with Pv from the '
+              . 'pipe bringing the most water into its node - Section 7 gives each one.  Pipe friction '
+              . 'and every other pressure in this report are total pressure.  Fittings are equivalent '
+              . 'lengths from the pipe and fitting database; see Section 3.'
+            : 'Pv, the velocity pressure (rho v^2 / 2), and Pn, the normal pressure, are '
+              . 'shown in the NFPA manner for reference only.  This calculation works in TOTAL pressure '
+              . 'throughout, as FM Global DS 3-0 does: every outlet discharge is q = K x sqrt(Pt), not '
+              . 'K x sqrt(Pn).  Fittings are equivalent lengths from the pipe and fitting database; '
+              . 'see Section 3.');
     }
 
     #-------------------------------------------------- 7. outlet compliance
@@ -461,30 +487,39 @@ sub write_report {
     my @fix = grep { defined $_->{preq} } @{ $net->{fixed} || [] };
     if (@dis || @fix) {
         $out .= title('7. OUTLET COMPLIANCE');
-        $out .= sprintf " %-12s %-8s %9s %11s %11s %11s %11s   %s\n",
-            'OUTLET', 'NODE', 'K', 'REQ Q', 'ACT Q', 'REQ P', 'ACT P', 'RESULT';
+        # With velocity pressure ON, ACT P is the pressure each outlet
+        # discharges on, and the total pressure and the Pv taken off it are
+        # given beside it.  OFF, the table is as it always was.
+        my $vp  = $o->{vel_press};
+        my $vpx = sub { $vp ? sprintf(' %9s %9s', @_) : '' };
+        $out .= sprintf " %-12s %-8s %9s %11s %11s %11s %11s%s   %s\n",
+            'OUTLET', 'NODE', 'K', 'REQ Q', 'ACT Q', 'REQ P', 'ACT P', $vpx->('PT', 'PV'), 'RESULT';
         $out .= thin();
         my $fails = 0;
         for my $e (@dis) {
             my $q = abs $e->{q};
-            my $p = $net->{nodes}[ $e->{n1} ]{h} - $GW * $e->{z};
+            my $p = HardyCross::outlet_pressure($net, $e);
             my $pass = $q >= $e->{qreq} - 1e-6 && $p >= $e->{preq} - 1e-6;
             $fails++ unless $pass;
             my ($pd, $qd) = (pdp($net->{u_pres}), qdp($net->{u_flow}));
-            $out .= sprintf " %-12s %-8s %9.3f %11.*f %11.*f %11.*f %11.*f   %s\n",
+            $out .= sprintf " %-12s %-8s %9.3f %11.*f %11.*f %11.*f %11.*f%s   %s\n",
                 $e->{id}, $net->{nodes}[ $e->{n1} ]{id},
                 $e->{k} * sqrt($up) / $uf, $qd, $e->{qreq} / $uf, $qd, $q / $uf,
-                $pd, $e->{preq} / $up, $pd, $p / $up, $pass ? 'PASS' : '*** FAIL';
+                $pd, $e->{preq} / $up, $pd, $p / $up,
+                $vpx->(sprintf('%.*f', $pd, ($net->{nodes}[ $e->{n1} ]{h} - $GW * $e->{z}) / $up),
+                       $e->{pv} ? sprintf('%.*f', $pd + 1, $e->{pv} / $up) : '-'),
+                $pass ? 'PASS' : '*** FAIL';
         }
         for my $f (@fix) {
             my $p = $net->{nodes}[ $f->{n1} ]{h} - $GW * $f->{z};
             my $pass = $p >= $f->{preq} - 1e-6;
             $fails++ unless $pass;
             my ($pd, $qd) = (pdp($net->{u_pres}), qdp($net->{u_flow}));
-            $out .= sprintf " %-12s %-8s %9s %11.*f %11.*f %11.*f %11.*f   %s\n",
+            $out .= sprintf " %-12s %-8s %9s %11.*f %11.*f %11.*f %11.*f%s   %s\n",
                 $f->{id}, $net->{nodes}[ $f->{n1} ]{id}, 'fixed',
                 $qd, $f->{qreq} / $uf, $qd, $f->{q} / $uf,
-                $pd, $f->{preq} / $up, $pd, $p / $up, $pass ? 'PASS' : '*** FAIL';
+                $pd, $f->{preq} / $up, $pd, $p / $up,
+                $vpx->(sprintf('%.*f', $pd, $p / $up), '-'), $pass ? 'PASS' : '*** FAIL';
         }
         $out .= thin();
         $out .= " Check: ACT Q = K x sqrt(ACT P) on every row (AS 2118.1 Appendix B, eqn B1).\n"
@@ -492,6 +527,9 @@ sub write_report {
         $out .= " Check: ACT Q = K x sqrt(ACT P) on every row with a K (AS 2118.1 Appendix B,\n"
               . " eqn B1).  A fixed flow's Q is set by the model; only its pressure is checked.\n"
             if @fix;
+        $out .= wrap(' ', 'Velocity pressure included: ACT P is the pressure each outlet discharges on - '
+            . 'ACT P = PT - PV for an in-line sprinkler, PV from the pipe bringing the most water into '
+            . "its node; ACT P = PT, PV '-', for an end sprinkler and every other outlet.") if $vp;
         $out .= $fails ? " *** $fails OUTLET(S) BELOW REQUIREMENT ***\n" : " All outlets meet their requirement.\n";
     }
 
@@ -562,6 +600,16 @@ sub write_report {
                     . "Discharge %.1f %s, fixed.\n",
                     $gov->{id}, $pgo / $up, sym($net->{u_pres}), $gov->{preq} / $up,
                     ($pgo - $gov->{preq}) / $up, $gov->{q} / $uf, sym($net->{u_flow});
+            } elsif ($gov->{pv}) {
+                # An in-line sprinkler under OPTION VELOCITY_PRESSURE ON: the
+                # path lands on its total pressure, and it discharges on Pn.
+                my $pn = $pgo - $gov->{pv};
+                $out .= sprintf " Outlet %s: total pressure Pt %.1f %s, velocity pressure Pv %.2f (pipe %s), "
+                    . "normal pressure Pn %.1f, required %.1f, margin %.1f.\n"
+                    . " Discharge %.1f %s = K %.3f x sqrt(Pn %.1f).\n",
+                    $gov->{id}, $pgo / $up, sym($net->{u_pres}), $gov->{pv} / $up, $gov->{pv_pipe},
+                    $pn / $up, $gov->{preq} / $up, ($pn - $gov->{preq}) / $up,
+                    abs($gov->{q}) / $uf, sym($net->{u_flow}), $gov->{k} * sqrt($up) / $uf, $pn / $up;
             } else {
                 $out .= sprintf " Outlet %s: pressure %.1f %s, required %.1f, margin %.1f.   "
                     . "Discharge %.1f %s = K %.3f x sqrt(%.1f).\n",
@@ -569,6 +617,13 @@ sub write_report {
                     ($pgo - $gov->{preq}) / $up, abs($gov->{q}) / $uf, sym($net->{u_flow}),
                     $gov->{k} * sqrt($up) / $uf, $pgo / $up;
             }
+            # The basis, said on the worksheet either way: a checker working
+            # the discharge by hand needs to know which pressure to use.
+            $out .= !$o->{vel_press}
+                ? " Discharge basis: total pressure; velocity pressure not included (OPTION VELOCITY_PRESSURE OFF).\n"
+                : $gov->{pv} ? ''
+                : " Velocity pressure included (OPTION VELOCITY_PRESSURE ON); this outlet discharges on total\n"
+                . " pressure, being an end sprinkler or not a sprinkler.\n";
             $out .= " Check: P TO = P FROM - PF - PE on every row.  PF = PF/M x T.\n";
             $out .= sprintf " Check: P TO worked by hand agrees with P SOLVED at every node, "
                 . "worst difference %.1e %s.\n", $worst / $up, sym($net->{u_pres});
@@ -873,6 +928,9 @@ sub cover_sheet {
         [ 'Area per sprinkler',  defined $aps ? sprintf('%.1f m2', $aps) : 'not stated' ],
         [ 'Area of operation',   $aoo_txt ],
         [ 'Sprinklers flowing',  $so->{nspk} ],
+        # Whether velocity pressure was included is a designer's election
+        # (AS 2118.1 Cl 14.15), so the cover states it either way.
+        [ 'Velocity pressure',   $net->{opts}{vel_press} ? 'INCLUDED, Cl 14.15' : 'NOT INCLUDED' ],
         [ 'Pipe data',           $uses_db ? HardyCross::PipeData::dataset() : ($pj->{DATA_SOURCE} // 'not stated') ],
         [ 'Program',             "PHCP $HardyCross::VERSION" ],
     );

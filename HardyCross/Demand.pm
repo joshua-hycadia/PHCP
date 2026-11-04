@@ -31,9 +31,16 @@ sub gauge {
 }
 
 # The pressure an outlet has to spare: actual minus required, kPa.
+#
+# Measured against the pressure the outlet discharges on: with OPTION
+# VELOCITY_PRESSURE ON, an in-line sprinkler's normal pressure Pn = Pt - Pv,
+# since that is what its q = K sqrt(P) is worked on.  With it OFF no outlet
+# carries a pv and this is the gauge pressure, as it always was.
 sub outlet_margin {
     my ($net, $e) = @_;
-    return gauge($net, $e->{n1}) - $e->{preq};
+    my $m = gauge($net, $e->{n1}) - $e->{preq};
+    $m -= $e->{pv} if $e->{pv};
+    return $m;
 }
 
 #------------------------------------------------------------------------------

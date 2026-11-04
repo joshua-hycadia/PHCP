@@ -24,6 +24,7 @@ perl tools/test_dbedit.pl                # verify database editing and the team 
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
 perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
 perl tools/test_sizing.pl                # verify auto pipe sizing
+perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand check, OFF unchanged, ON vs OFF)
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
@@ -78,7 +79,7 @@ line that uses it.  Every pipe name is unique.
 | `PROJECT` | FIELD text - any cover field: COMPANY, JOB, DESIGNER, DENSITY ... |
 | `UNITS` | QUANTITY UNIT - see Units |
 | `METHOD` | `HW` or `DW` |
-| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA SIZING_GOAL SIZING_MARGIN SIZING_TRIALS` |
+| `OPTION` | NAME value: `HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA SIZING_GOAL SIZING_MARGIN SIZING_TRIALS VELOCITY_PRESSURE` |
 | `USE` (`U`) | PIPETYPE [C] - a type from the database, and its C (under `METHOD DW`, its roughness in mm; blank, the database's for the type); or `BORE` [C] (blank under `METHOD DW`: 0.045 mm, assumed and flagged) |
 | `PIPE` (`P`) | NAME START END LENGTH SIZE [FITTINGS ...] - SIZE 0: PHCP sizes the pipe (Auto pipe sizing) |
 | `PC` | SOURCE, then NAME START END for each copy - copies of a pipe |
@@ -544,7 +545,8 @@ Page 1 is a submittal cover modelled on the NFPA style, adapted for Australia:
   job name, project, job number, location, model file.
 - **Design data** - standard, hazard class, design density (mm/min), area per
   sprinkler (m2), area of operation (m2, or sprinklers x area if not entered),
-  sprinklers flowing, pipe data source.
+  sprinklers flowing, whether velocity pressure is included (see Velocity
+  pressure), pipe data source.
 - **Flow data** - total sprinkler flow, hydrant and hose reel flow where the
   model has any, total water required at the supply, base of riser flow and
   pressure, pressure at the supply connection.
@@ -605,9 +607,11 @@ the form fire authorities are used to reading:
 Each pipe is written in the direction of flow, so BEG is upstream and Pt falls
 by Pe + Pf.  q and K are an outlet's discharge and K-factor, printed once, beside
 the node it belongs to - on the END line for a terminal head.  Pv and Pn are
-shown in the NFPA manner for reference only: PHCP works in total pressure, as FM
-DS 3-0 does, so every discharge is q = K sqrt(Pt), not K sqrt(Pn), and the
-report says so under the table.
+the pipe's own velocity and normal pressure.  By default they are shown for
+reference only: PHCP works in total pressure, as FM DS 3-0 does, so every
+discharge is q = K sqrt(Pt), not K sqrt(Pn).  With `OPTION VELOCITY_PRESSURE
+ON` in-line sprinklers discharge on Pn instead (see Velocity pressure).  The
+report says which under the table.
 
 In the PDF each four-line pipe block moves to a new page whole, under repeated
 headings, so a pipe's two end pressures are never on different pages.
@@ -806,8 +810,10 @@ something to read.  Abridged, for example 07:
                  "velocity" : 6.871, "friction_loss" : 144.8598, ... }, ... ],
    "elements" : [ { "id" : "SUP", "kind" : "WATER", "from" : null, "to" : "SUP", ... } ],
    "nodes" : [ { "id" : "R1", "elevation" : 4.5, "pressure" : 461.0082 }, ... ],
+   "velocity_pressure" : false,
    "outlets" : [ { "id" : "H2", "type" : "SPRINKLER", "required_pressure" : 50,
-                   "pressure" : 182.2904, "margin" : 132.2904, "pass" : true, ... } ],
+                   "pressure" : 182.2904, "velocity_pressure" : 0,
+                   "discharge_pressure" : 182.2904, "margin" : 132.2904, "pass" : true, ... } ],
    "governing" : { "id" : "H2", "margin" : 132.2904 },
    "demand" : { "supply" : "SUP", "flow" : 1889.5674, "pressure" : 223.864,
                 "available" : 650, "margin" : 426.136, "meets" : true },
@@ -969,6 +975,55 @@ in validation and the report.
 It is a setting, not a requirement of AS 2118.1, and the report prints the value
 in force and whether it was set in the model or is the program default.
 
+## Velocity pressure
+
+`OPTION VELOCITY_PRESSURE ON` (VELOCITY PRESSURE in the PROJECT tab) makes
+in-line sprinklers discharge on the normal pressure instead of the total
+pressure.  The default is OFF: every outlet discharges on total pressure,
+q = K sqrt(Pt), and every result is exactly what it was before the option
+existed (`tools/test_velocity_pressure.pl` checks this against results frozen
+from the earlier solver).
+
+AS 2118.1:2017 Clause 14.15 leaves the inclusion of velocity pressures to the
+designer, and requires that where they are included they are calculated for
+both range pipes and distribution mains.  It gives no method.  PHCP's rule:
+
+- **Sprinklers only.**  Hydrants, hose reels and fixed flows stay on total
+  pressure.
+- **In-line sprinklers** discharge on q = K sqrt(Pn), Pn = Pt - Pv, with
+  Pv = rho v^2 / 2 (0.5 v^2 kPa) in the pipe carrying water into the head's
+  node.  Where more than one pipe feeds the node (a grid or a loop), the one
+  bringing the most water sets Pv.
+- **End sprinklers** - no pipe carrying water on beyond the head: the end of a
+  range, a drop or an armover - discharge on total pressure.
+- **All pipework at once.**  PHCP does not tag what a pipe is for, so range
+  pipes and distribution mains are treated alike, as the clause requires.
+  There is no normal pressure at a branch take-off: every branch is solved in
+  full, in total pressure.
+- **Solving.**  Pv depends on the solved flows, so it is set from a converged
+  solve and held while the network is solved again, until no Pv moves by more
+  than the loop tolerance (the same outer loop as orifice sizing, pump check
+  valves and pressure ratio valves).  Flow directions are read again on every
+  pass, so a head that becomes an end head goes back to total pressure.  If
+  the passes run out first, the report warns.
+
+Friction, elevation and every node pressure stay total pressure.  The option
+changes only what an in-line sprinkler discharges on, and so the flows and
+pressures that follow from it.  Outlet compliance, margins, the governing
+outlet and the demand point are all measured on the pressure each outlet
+discharges on.
+
+The report states the basis either way: on the cover sheet (Velocity pressure:
+INCLUDED or NOT INCLUDED), in Section 1 (Outlet discharge), as an ELECTION in
+Section 4 when ON, under the pipe schedule, in Section 7 (with PT and PV
+columns when ON), and beside the governing outlet in Section 8.  The JSON
+carries `velocity_pressure` true or false, and each outlet's
+`velocity_pressure` and `discharge_pressure`.
+
+On the examples at their own supplies, ON lowers the total sprinkler flow by
+0 % (no in-line heads) to 3.9 % (example 07, where the range pipe runs at over
+12 m/s).
+
 ## The report
 
 132-column monospace, 7-bit ASCII only - it survives printing, email, pasting
@@ -996,6 +1051,7 @@ others on the page, and the report says which check to make.
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |
+| velocity pressure: hand-checked range, OFF against the earlier solver, ON against OFF (`tools/test_velocity_pressure.pl`) | 85 / 85 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |
