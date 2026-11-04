@@ -1,0 +1,371 @@
+{
+ "schema": "phcp.benchmark.model/2",
+ "id": "T099",
+ "family": "tree",
+ "seed": 20261202,
+ "params": {
+  "ranges": 3,
+  "heads_per_range": 2,
+  "centre_fed": false,
+  "head_spacing_m": 3.6,
+  "range_spacing_m": 2.7,
+  "elevation_m": 7.6,
+  "feed_m": 35.1
+ },
+ "basis": {
+  "method": "Hazen-Williams",
+  "c_factor": 120.0,
+  "k_factor_lpm_kpa05": 8.0,
+  "min_head_pressure_kpa": 50.0,
+  "fittings": "equivalent lengths from AS 2118.1 Table 14.11.1, the same length to every program",
+  "bores": "AS 1074 Medium, explicit"
+ },
+ "counts": {
+  "heads": 6,
+  "nodes": 18,
+  "pipes": 17,
+  "loops": 0
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "kind": "supply",
+   "x": 0,
+   "y": 0,
+   "z": 0
+  },
+  {
+   "id": 2,
+   "kind": "junction",
+   "x": -35.1,
+   "y": 0,
+   "z": 0
+  },
+  {
+   "id": 3,
+   "kind": "junction",
+   "x": -35.1,
+   "y": 0,
+   "z": 7.6
+  },
+  {
+   "id": 4,
+   "kind": "junction",
+   "x": -35.1,
+   "y": 1.0,
+   "z": 7.6
+  },
+  {
+   "id": 5,
+   "kind": "junction",
+   "x": -35.1,
+   "y": 3.7,
+   "z": 7.6
+  },
+  {
+   "id": 6,
+   "kind": "junction",
+   "x": -35.1,
+   "y": 6.4,
+   "z": 7.6
+  },
+  {
+   "id": 7,
+   "kind": "junction",
+   "x": -33.3,
+   "y": 1.0,
+   "z": 7.6
+  },
+  {
+   "id": 8,
+   "kind": "head",
+   "x": -33.3,
+   "y": 1.0,
+   "z": 7.3
+  },
+  {
+   "id": 9,
+   "kind": "junction",
+   "x": -29.7,
+   "y": 1.0,
+   "z": 7.6
+  },
+  {
+   "id": 10,
+   "kind": "head",
+   "x": -29.7,
+   "y": 1.0,
+   "z": 7.3
+  },
+  {
+   "id": 11,
+   "kind": "junction",
+   "x": -33.3,
+   "y": 3.7,
+   "z": 7.6
+  },
+  {
+   "id": 12,
+   "kind": "head",
+   "x": -33.3,
+   "y": 3.7,
+   "z": 7.3
+  },
+  {
+   "id": 13,
+   "kind": "junction",
+   "x": -29.7,
+   "y": 3.7,
+   "z": 7.6
+  },
+  {
+   "id": 14,
+   "kind": "head",
+   "x": -29.7,
+   "y": 3.7,
+   "z": 7.3
+  },
+  {
+   "id": 15,
+   "kind": "junction",
+   "x": -33.3,
+   "y": 6.4,
+   "z": 7.6
+  },
+  {
+   "id": 16,
+   "kind": "head",
+   "x": -33.3,
+   "y": 6.4,
+   "z": 7.3
+  },
+  {
+   "id": 17,
+   "kind": "junction",
+   "x": -29.7,
+   "y": 6.4,
+   "z": 7.6
+  },
+  {
+   "id": 18,
+   "kind": "head",
+   "x": -29.7,
+   "y": 6.4,
+   "z": 7.3
+  }
+ ],
+ "pipes": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 35.1,
+   "role": "feed",
+   "fittings": {
+    "GV": 1,
+    "CV": 1,
+    "E": 2
+   },
+   "eq_m": 6.7
+  },
+  {
+   "id": 2,
+   "from": 2,
+   "to": 3,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 7.6,
+   "role": "riser",
+   "fittings": {
+    "E": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 3,
+   "from": 3,
+   "to": 4,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 1.0,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  },
+  {
+   "id": 4,
+   "from": 4,
+   "to": 5,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 2.7,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  },
+  {
+   "id": 5,
+   "from": 5,
+   "to": 6,
+   "dn": 50,
+   "bore_mm": 53.0,
+   "length_m": 2.7,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  },
+  {
+   "id": 6,
+   "from": 7,
+   "to": 8,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 7,
+   "from": 4,
+   "to": 7,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 1.8,
+   "role": "takeoff",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 8,
+   "from": 9,
+   "to": 10,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 9,
+   "from": 7,
+   "to": 9,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 3.6,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  },
+  {
+   "id": 10,
+   "from": 11,
+   "to": 12,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 11,
+   "from": 5,
+   "to": 11,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 1.8,
+   "role": "takeoff",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 12,
+   "from": 13,
+   "to": 14,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 13,
+   "from": 11,
+   "to": 13,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 3.6,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  },
+  {
+   "id": 14,
+   "from": 15,
+   "to": 16,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 15,
+   "from": 6,
+   "to": 15,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 1.8,
+   "role": "takeoff",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 16,
+   "from": 17,
+   "to": 18,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 0.3,
+   "role": "drop",
+   "fittings": {
+    "T": 1
+   },
+   "eq_m": 1.5
+  },
+  {
+   "id": 17,
+   "from": 15,
+   "to": 17,
+   "dn": 25,
+   "bore_mm": 27.3,
+   "length_m": 3.6,
+   "role": "run",
+   "fittings": {},
+   "eq_m": 0
+  }
+ ],
+ "suite": "A"
+}

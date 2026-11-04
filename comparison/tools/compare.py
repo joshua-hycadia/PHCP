@@ -1,10 +1,12 @@
 """Compare every engine against PHCP and write the tables and plots.
 
-    python tools/compare.py
+    python tools/compare.py          round 1: models/ and results/
+    python tools/compare.py A        round 2 suite A: models_A/ and results_A/
+    python tools/compare.py B        round 2 suite B: models_B/ and results_B/
 
-Reads models/*.json and results/<engine>.jsonl.gz (one normalised result per
+Reads the models and <results>/<engine>.jsonl.gz (one normalised result per
 model: requirement, total flow, every head pressure, every pipe flow) and
-writes results/results.csv, results/summary.md and the two plots.
+writes results.csv, summary.md and the two plots beside them.
 """
 
 from __future__ import annotations
@@ -18,19 +20,24 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "results"
+SUITE = sys.argv[1].upper() if len(sys.argv) > 1 else ""
+SFX = f"_{SUITE}" if SUITE else ""
+OUT = ROOT / f"results{SFX}"
 REF = "phcp"
-ENGINES = ["phcp", "au", "us1", "us2", "us3", "epanet"]
+# suite B (devices) is run only by the programs that take a BFP, a fixed-drop PRV and a
+# fixed-bore orifice plate natively
+ENGINES = ["phcp", "au", "epanet"] if SUITE == "B" else ["phcp", "au", "us1", "us2", "us3", "epanet"]
 LABEL = {"phcp": "PHCP 1.0.0", "au": "AU Calc Program", "us3": "US Calc Program 3",
          "us1": "US Calc Program 1", "us2": "US Calc Program 2", "epanet": "EPANET 2.2"}
 FAM = ["tree", "loop", "grid"]
 
 
 def load():
-    models = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in sorted((ROOT / "models").glob("*.json"))}
+    models = {p.stem: json.loads(p.read_text(encoding="utf-8"))
+              for p in sorted((ROOT / f"models{SFX}").glob("*.json"))}
     res = {e: {} for e in ENGINES}
     for e in ENGINES:
-        with gzip.open(ROOT / "results" / f"{e}.jsonl.gz", "rt", encoding="utf-8") as f:
+        with gzip.open(OUT / f"{e}.jsonl.gz", "rt", encoding="utf-8") as f:
             for line in f:
                 r = json.loads(line)
                 res[e][r["model"]] = r
@@ -123,7 +130,9 @@ def plots(rs, out):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     mk = {"tree": "o", "loop": "s", "grid": "^"}
-    fig, axs = plt.subplots(1, 5, figsize=(20, 4.2), sharey=True)
+    n = len(ENGINES) - 1
+    fig, axs = plt.subplots(1, n, figsize=(4 * n, 4.2), sharey=True, squeeze=False)
+    axs = axs[0]
     for ax, e in zip(axs, ENGINES[1:]):
         for f in FAM:
             pts = [(r["heads"], r["d_supply_pct"]) for r in rs if r["engine"] == e and r["family"] == f
