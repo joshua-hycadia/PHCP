@@ -12,7 +12,7 @@
 #   +------------------------------------------------------------------+
 #   | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 #   +------------------------------------------------------------------+
-#   | NETWORK | PROJECT                                                 |
+#   | NETWORK | ISOMETRIC | PROJECT                                    |
 #   |  USE PIPE PC ... | NODE NC WATER ... | PUMP BP BFP ...  (strip)   |
 #   |  +----+---------------------------------------+ +--------------+ |
 #   |  |  1 | WATER     SUP 0 650                   | | ERRORS       | |
@@ -50,6 +50,7 @@
 #                              lists, the status bar, the command strip,
 #                              proposals, the pick list; VALIDATE and
 #                              CALCULATE (F4, F5); files; start
+#   Window/Isometric.pm        ISOMETRIC tab: the network drawn on a 30-degree grid
 #   Window/Project.pm          PROJECT tab: title, details, units, method, options
 #   Window/Graph.pm            GRAPH tab: a Q^1.85 water supply graph
 #   Window/Tools.pm            QUICK TOOLS tab: the calculators
@@ -76,6 +77,8 @@ use HardyCross::DbEdit;
 use HardyCross::Graph;
 use HardyCross::Tools;
 # The window, one file to a tab (all in package main).
+use HardyCross::Isometric;
+use HardyCross::Window::Isometric;
 use HardyCross::Window::Project;
 use HardyCross::Window::Tools;
 use HardyCross::Window::Graph;
@@ -165,7 +168,7 @@ sub dpi_aware {
 our ($mw, $ed, $gutter, $report, $statusbar, $strip, $pill, $vtable);
 our (%list, %list_lines, %list_head);   # ERRORS, WARNINGS, NODES: listbox, entries, heading
 our (%table);                    # PIPES, NODES, OUTLETS: { hlist, data, sort, desc }
-our ($toptabs, $restabs);        # the NETWORK / PROJECT / GRAPH / QUICK TOOLS / DATABASE tabs; the results tabs
+our ($toptabs, $restabs);        # NETWORK / ISOMETRIC / PROJECT / GRAPH / QUICK TOOLS / DATABASE; the results tabs
 our (%btn, %form, %checks);      # toolbar buttons; PROJECT tab fields; HIDE boxes
 our $project_canvas;             # the PROJECT tab's scrolling canvas
 our %dbv;                        # the DATABASE tab: { db, editing, kind, sel, ... }
@@ -471,9 +474,13 @@ sub build_window {
     my $vp = divider($mw, 'vertical');
     my $top = $mw->Frame(-background => $C{paper});
     my $bottom = $mw->Frame(-background => $C{paper});
-    $toptabs = make_tabs($top, [ 'NETWORK', 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'DATABASE' ],
-                         sub { tools_refresh() if $_[0] eq 'QUICK TOOLS' });
+    $toptabs = make_tabs($top, [ 'NETWORK', 'ISOMETRIC', 'PROJECT', 'GRAPH', 'QUICK TOOLS', 'DATABASE' ],
+                         sub {
+                             tools_refresh() if $_[0] eq 'QUICK TOOLS';
+                             iso_show() if $_[0] eq 'ISOMETRIC';
+                         });
     build_network($toptabs->{page}{NETWORK});
+    build_isometric($toptabs->{page}{ISOMETRIC});
     build_project($toptabs->{page}{PROJECT});
     build_graph($toptabs->{page}{GRAPH});
     build_tools($toptabs->{page}{'QUICK TOOLS'});
@@ -746,6 +753,7 @@ sub set_buffer {
     $saved_text = full_text();
     $ed->markSet('insert', '1.0');
     ($solved, $validation, $valid_text) = (undef, undef, undef);
+    iso_invalidate();          # a new buffer is a new drawing
     fill_results();
     fill_validation();
     recolour();
@@ -840,6 +848,9 @@ sub recolour {
         $list_head{$name}->configure(-text => @e ? "$name  " . scalar(@e) : $name,
             -foreground => !@e ? $C{muted} : $name eq 'ERRORS' ? $C{error} : $name eq 'WARNINGS' ? $C{warn} : $C{ink});
     }
+    # The drawing reads the same text.  While that tab is showing, a change
+    # made elsewhere (a calculation writing //AS, an undo) is drawn.
+    iso_show() if $toptabs && ($toptabs->{current} || '') eq 'ISOMETRIC';
     return $res;
 }
 

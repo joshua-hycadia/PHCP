@@ -357,7 +357,7 @@ expected value must be re-derived by hand - never just changed to match.
 +------------------------------------------------------------------+
 | NEW OPEN SAVE | VALIDATE  CALCULATE | WRITE REPORT    [ status ] |
 +------------------------------------------------------------------+
-| NETWORK | PROJECT | GRAPH | QUICK TOOLS | DATABASE                |
+| NETWORK | ISOMETRIC | PROJECT | GRAPH | QUICK TOOLS | DATABASE  |
 |  USE PIPE ... | NODE NC ... | PUMP BP ... | AREA ...  (strip)      |
 |  +----+--------------------------------------+ +---------------+ |
 |  |  1 | WATER     SUP 0 650                  | | ERRORS        | |
@@ -417,13 +417,14 @@ there and selects it.
 | GRAPH tab | a Q^1.85 water supply graph from figures typed in, independent of the model.  See Water supply graph |
 | QUICK TOOLS tab | velocity, fittings, K-factor, K-factor converter and pressure loss calculators.  See Quick tools |
 | DATABASE tab | the pipe and fitting database: view, filter, and - once EDIT THE DATABASE is ticked - change; choose a team folder for it.  See Pipe and fitting database |
+| ISOMETRIC tab | the network drawn on a 30-degree grid, as another way to enter it.  A click places a supply, a point, an outlet or a pipe, and the drawing writes the `.phc`.  See The isometric drawing |
 | dividers | the grey bands between the editor, the lists and the results can be dragged |
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
 The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
-other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
-QUICK TOOLS, DATABASE, and the results tables).
+other tab in a file of its own under `HardyCross/Window/` (ISOMETRIC, PROJECT,
+GRAPH, QUICK TOOLS, DATABASE, and the results tables).
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
@@ -441,6 +442,36 @@ only.
 
 The spreadsheet front end it replaces, `phcp_gui.pl`, is retired with its
 tests, and Tk::TableMatrix is no longer needed.
+
+## The isometric drawing
+
+The ISOMETRIC tab draws the network instead of having it typed.  It is the
+same model as the NETWORK tab: points, pipes, pumps and fixed flows, on a
+30-degree grid with the elevation on the vertical axis.  A click with a tool
+places a supply, a plain point, a sprinkler, a hydrant, a hose reel, a pipe,
+a pump or a fixed flow.  A pipe runs along one grid axis.  SELECT drags a
+point; its pipes then take their length from the grid, in the model's length
+unit.  Until a point is moved, a length or an elevation stays as it was typed.
+
+The drawing writes the `.phc` the editor already calculates.  Where each
+point sits is a comment the reader ignores:
+
+```
+//ISO GRID 1
+//ISO N1 0 0 0
+//ISO N2 6 0 4.5
+```
+
+`GRID` is the metres of one step.  The three numbers are the two plan steps
+and the vertical.  A file with no such lines is laid out from its pipes and
+its elevations.  FIT scales that layout into the canvas, including a long run.
+VALIDATE and CALCULATE are unchanged, and run on the text.
+AREA, PUMPDUTY, SUPPLYGRAPH and any other comment are kept.  A copied pipe or
+point (`PC`, `NC`) is written out as the pipe or point it means, and a
+`CHANGEPIPE` stays applied to the one pipe it names, which is what the reader
+does.  `tools/test_isometric.pl` checks the drawing headless, including that
+every example written back from it solves to the same flows and pressures.
+`tools/test_editor_window.pl` drives the tab.
 
 ## Water supply graph
 

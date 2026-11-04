@@ -18,7 +18,10 @@ number changes; example 04's MAXITER raised from 20000 to 30000, because the
 2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
 Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
 changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).
+(`release_notes/v1.2.0.md`).  Open: the isometric drawing
+(`HardyCross/Isometric.pm`, the ISOMETRIC tab).  The network is drawn on a
+30-degree grid and written as `.phc`; the text editor remains.  No solved
+number changes.
 
 This plan replaces the spreadsheet front end with a plain-text command file
 (`.phc`) and a text editor built around it.  The solver, the report, the PDF
@@ -502,3 +505,4 @@ proposed).  Default OFF: every example solves exactly as before.
 - [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
+- [x] Isometric drawing: the ISOMETRIC tab draws the network on a 30-degree grid and writes the `.phc`; `tools/test_isometric.pl`
