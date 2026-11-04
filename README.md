@@ -867,14 +867,19 @@ exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 `revit/PHCP.extension` is a pyRevit extension for Revit 2022 to 2027.  It
 walks the pipework, writes a `.phc`, and runs `phcp.exe --json` on it.  See
 `revit/REVIT.md`.  Shared parameters hold the markup (a supply, a design
-area, pipe type and DN, fitting codes, equivalent length and a fixed
-pressure loss) and the results written back.  The join tolerance is how far
-apart two unconnected ends may be and still be one node.  Families map to
-fitting codes from the pipe and fitting database.  The view can be coloured
-by velocity, by flow, and by whether an outlet can flow, and nodes can be
-tagged.  SUGGEST asks the engine to size pipes (size 0) and stores the DN it
-would use; the modelled diameter is left as drawn.  EXPORT writes a `.phc`.
-There is no separate export file type.
+area, outlets, pipe type and DN, fitting codes, equivalent length, a fixed
+pressure loss, and one device in a pipe: a booster, a loss curve, a pressure
+reducing valve, an orifice plate or a ratio valve) and the results written
+back.  The join tolerance is how far apart two unconnected ends may be and
+still be one node.  Families map to fitting codes from the pipe and fitting
+database.  The view can be coloured by velocity, by flow, and by whether an
+outlet can flow, with the key placed on the view; nodes and pipes can be
+tagged; the outlets that fail, and the pipes over the velocity limit, can be
+selected.  SUGGEST asks the engine to size pipes (size 0) and stores the DN
+it would use.  APPLY copies that DN onto the pipe's PHCP DN.  The modelled
+diameter is left as drawn.  Copied elements can be given new ids; the
+original keeps its name.  EXPORT writes a `.phc`.  There is no separate
+export file type.
 
 `python3 tools/test_revit.py` checks the walk, the file it writes, and that
 every button calls a command that exists.  It builds the network of example

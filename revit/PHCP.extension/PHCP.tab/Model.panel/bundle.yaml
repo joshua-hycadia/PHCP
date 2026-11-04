@@ -1,8 +1,11 @@
 title: MODEL
-tooltip: Supply, design areas, pipe data and overrides.
+tooltip: Supply, outlets, pipe data, devices and overrides.
 layout:
   - Supply
   - Area
+  - Outlets
   - Pipes
+  - Device
   - Override
+  - Renumber
   - Info

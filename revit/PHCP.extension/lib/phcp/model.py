@@ -77,7 +77,8 @@ class Pipe(object):
 
     def __init__(self, key, a, b, length_m, revit_id=None, pid=None, ptype=None,
                  dn=None, diameter_mm=None, c=None, fit_override=None, eqv_m=None,
-                 loss_kpa=None, length_override_m=None, system=None):
+                 loss_kpa=None, length_override_m=None, system=None,
+                 device=None, device_data=None, duty_text=None):
         self.key = key
         self.revit_id = revit_id
         self.pid = pid
@@ -88,6 +89,12 @@ class Pipe(object):
         self.fit_override = fit_override
         self.eqv_m = eqv_m
         self.loss_kpa = loss_kpa
+        # One device in the pipe, at its start: a booster, a loss, a plate or
+        # a ratio valve.  The fixed pressure loss above is that device when
+        # it does not vary with flow.  The two are not combined.
+        self.device = (device or "").strip().upper() or None
+        self.device_data = device_data
+        self.duty_text = duty_text
         self.length_m = length_m
         self.length_override_m = length_override_m
         self.system = system
@@ -1128,6 +1135,30 @@ def _check_values(pipes, outlets, supplies, net, result):
         if pipe.loss_kpa is not None and pipe.loss_kpa < 0:
             result.issues.append(Issue(
                 "error", "pipe %s: pressure loss cannot be negative" % pipe.pid, _ids(pipe)))
+        if pipe.device and pipe.loss_kpa:
+            result.issues.append(Issue(
+                "error",
+                "pipe %s has a pressure loss and a %s; a pipe holds one device"
+                % (pipe.pid, pipe.device),
+                _ids(pipe)))
+        if pipe.device:
+            try:
+                parse_device(pipe.device, pipe.device_data)
+            except ValueError as err:
+                result.issues.append(Issue(
+                    "error", "pipe %s: %s" % (pipe.pid, err), _ids(pipe)))
+        if pipe.duty_text:
+            if pipe.device != "BP":
+                result.issues.append(Issue(
+                    "error",
+                    "pipe %s: a pump duty belongs on a booster" % pipe.pid,
+                    _ids(pipe)))
+            else:
+                try:
+                    parse_duty(pipe.duty_text)
+                except ValueError as err:
+                    result.issues.append(Issue(
+                        "error", "pipe %s: %s" % (pipe.pid, err), _ids(pipe)))
         length = _length_of(pipe)
         if length is None or length < 0.0005:
             result.issues.append(Issue(
@@ -1396,9 +1427,20 @@ def write_phc(result):
         if pipe.eqv_m:
             lines.append(_cmd("EQV") + "%s %s" % (pipe.pid, fmt(pipe.eqv_m)))
     for pipe in sorted(result.pipes, key=lambda p: p.pid or ""):
-        if pipe.loss_kpa:
-            # One pair at flow 0 is a loss that does not vary with flow.
-            lines.append(_cmd("BFP") + "%s 0 %s" % (pipe.pid, fmt(pipe.loss_kpa)))
+        if pipe.omit or not pipe.loss_kpa:
+            continue
+        # One pair at flow 0 is a loss that does not vary with flow.
+        lines.append(_cmd("BFP") + "%s 0 %s" % (pipe.pid, fmt(pipe.loss_kpa)))
+    for pipe in sorted(result.pipes, key=lambda p: p.pid or ""):
+        if pipe.omit or not pipe.device:
+            continue
+        tokens = parse_device(pipe.device, pipe.device_data)
+        lines.append(_cmd(pipe.device) + pipe.pid + " " + " ".join(tokens))
+    for pipe in sorted(result.pipes, key=lambda p: p.pid or ""):
+        if pipe.omit or pipe.device != "BP" or not pipe.duty_text:
+            continue
+        flow, pressure = parse_duty(pipe.duty_text)
+        lines.append(_cmd("PUMPDUTY") + "%s %s %s" % (pipe.pid, fmt(flow), fmt(pressure)))
     lines.append("")
     return "\n".join(lines)
 
@@ -1453,6 +1495,169 @@ def zero_pipe_sizes(text, pipe_ids):
     if text.endswith("\n"):
         text_out += "\n"
     return text_out
+
+
+_DEVICES = ("BP", "BFP", "PRV", "OPP", "OFD", "PRA")
+_RATIO_RE = re.compile(r"^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$")
+_COPY_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
+
+
+def _float_tokens(text):
+    nums = []
+    for bit in (text or "").replace(",", " ").split():
+        try:
+            nums.append(float(bit))
+        except ValueError:
+            raise ValueError("'%s' is not a number" % bit)
+    return nums
+
+
+def _ratio_of(token):
+    """A ratio as a number, and the token to write.
+
+    3:1 is kept as 3:1.  A plain number is written like any other figure.
+    """
+    m = _RATIO_RE.match((token or "").strip())
+    if m:
+        den = float(m.group(2))
+        if den <= 0:
+            raise ValueError("a ratio needs a denominator more than 0")
+        return float(m.group(1)) / den, m.group(1) + ":" + m.group(2)
+    try:
+        value = float(token)
+    except (TypeError, ValueError):
+        raise ValueError("'%s' is not a ratio" % token)
+    return value, fmt(value)
+
+
+def parse_duty(text):
+    """'2000 600' to (flow, pressure).  Both have to be more than zero."""
+    nums = _float_tokens(text)
+    if len(nums) != 2 or nums[0] <= 0 or nums[1] <= 0:
+        raise ValueError("a pump duty is a flow and a pressure, both more than 0")
+    return nums
+
+
+def parse_device(kind, data):
+    """The figures of one device, as the tokens written after the pipe name.
+
+    This checks that the line is the command the engine reads.  It does not
+    decide whether the device is large enough for the pipe; the engine does.
+    """
+    kind = (kind or "").strip().upper()
+    if kind not in _DEVICES:
+        raise ValueError("%s is not a device" % (kind or "a blank device"))
+    raw = (data or "").strip()
+    if not raw:
+        raise ValueError("a %s needs its figures" % kind)
+    if kind == "PRA":
+        bits = raw.replace(",", " ").split()
+        ratio, token = _ratio_of(bits[0])
+        if ratio <= 1:
+            raise ValueError("a pressure ratio valve reduces pressure, so the ratio is more than 1")
+        rest = _float_tokens(" ".join(bits[1:])) if len(bits) > 1 else []
+        if len(rest) > 2:
+            raise ValueError("a pressure ratio valve takes a ratio, a minimum inlet and a band")
+        if rest and rest[0] < 0:
+            raise ValueError("the minimum inlet cannot be negative")
+        if len(rest) == 2 and rest[1] < 0:
+            raise ValueError("the band cannot be negative")
+        if len(rest) == 2 and rest[1] / 100.0 >= 1.0 / ratio:
+            raise ValueError("the band is wider than the valve passes")
+        return [token] + [fmt(n) for n in rest]
+    nums = _float_tokens(raw)
+    if kind == "BP":
+        if len(nums) < 3 or len(nums) % 2 == 0:
+            raise ValueError("a booster needs its churn pressure, then flow and pressure pairs")
+        if any(n < 0 for n in nums):
+            raise ValueError("a booster curve cannot be negative")
+        return [fmt(n) for n in nums]
+    if kind in ("BFP", "PRV"):
+        if len(nums) < 2 or len(nums) % 2:
+            raise ValueError("a loss is flow and loss, in pairs")
+        if any(n < 0 for n in nums):
+            raise ValueError("a loss cannot be negative")
+        if len(nums) == 2:
+            if nums[0] != 0:
+                raise ValueError("one pair is a fixed loss, so its flow is 0")
+            if nums[1] <= 0:
+                raise ValueError("a fixed loss must be more than 0")
+        return [fmt(n) for n in nums]
+    if kind == "OPP":
+        if not 1 <= len(nums) <= 2:
+            raise ValueError("an orifice sized for a drop takes the drop, and a discharge coefficient")
+        if nums[0] <= 0:
+            raise ValueError("the drop must be more than 0")
+    else:
+        if not 1 <= len(nums) <= 2:
+            raise ValueError("an orifice of a known bore takes the bore, and a discharge coefficient")
+        if nums[0] <= 0:
+            raise ValueError("the bore must be more than 0")
+    if len(nums) == 2 and not (0 < nums[1] <= 1):
+        raise ValueError("the discharge coefficient is more than 0 and not more than 1")
+    return [fmt(n) for n in nums]
+
+
+def renumber_copies(records, only_ids=None):
+    """New names for elements that repeat a name.
+
+    records are (revit id, name, parameter).  Pipe names, outlet names and
+    supply names are one list, which is how the walk reads them.  The lowest
+    Revit id keeps the name: a copy is given a higher id than the element it
+    was copied from.  only_ids, when set, limits which copies are renamed;
+    the element that keeps the name is never renamed.
+
+    Returns [(revit id, parameter, new name), ...] in id order.
+    """
+    used = set()
+    groups = {}
+    for rid, name, param in records:
+        name = clean_name(name or "")
+        if not name:
+            continue
+        used.add(name)
+        groups.setdefault(name, []).append((rid, param))
+    wanted = None if only_ids is None else set(only_ids)
+    changes = []
+    for name, holders in groups.items():
+        if len(holders) < 2:
+            continue
+        holders.sort(key=lambda hp: hp[0])
+        match = _COPY_RE.match(name)
+        prefix = match.group(1) if match else name
+        for rid, param in holders[1:]:
+            if wanted is not None and rid not in wanted:
+                continue
+            n = 1
+            while "%s%d" % (prefix, n) in used:
+                n += 1
+            fresh = "%s%d" % (prefix, n)
+            used.add(fresh)
+            changes.append((rid, param, fresh))
+    changes.sort(key=lambda row: (row[0], row[1]))
+    return changes
+
+
+def note_positions(nodes, pipes):
+    """(x, y, z, text) in mm for the node names and the pipe names.
+
+    A node note sits 200 mm in +X.  A pipe note sits 200 mm in +Y at the
+    middle of the pipe, so the two are not drawn on top of each other.
+    """
+    notes = []
+    for node in nodes:
+        if node.name:
+            notes.append((node.x + 200.0, node.y, node.z, node.name))
+    for pipe in pipes:
+        if pipe.omit or not pipe.pid:
+            continue
+        notes.append((
+            (pipe.a.x + pipe.b.x) / 2.0,
+            (pipe.a.y + pipe.b.y) / 2.0 + 200.0,
+            (pipe.a.z + pipe.b.z) / 2.0,
+            pipe.pid,
+        ))
+    return notes
 
 
 def parse_curve(text):
