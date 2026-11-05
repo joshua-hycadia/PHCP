@@ -11,8 +11,9 @@
 # the file read, so each calculation still says exactly which data it used.
 # Unset, the program uses its own database.
 #
-# FAST_DARK is the fast-entry window's ground (1 for dark).  The text editor
-# does not read it.  It is not part of a model.
+# EDITOR_THEME, SHEET_THEME and ISO_THEME remember each window's ground
+# (LIGHT or DARK).  The three windows use the same colours and do not read
+# each other's key.  None of them is part of a model.
 #
 # The settings live in a small KEY=VALUE text file:
 #   Windows    %APPDATA%\PHCP\settings.ini
