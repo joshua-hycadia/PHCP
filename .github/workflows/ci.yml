@@ -1,11 +1,11 @@
 # PHCP continuous integration and release.
 #
 #   test-linux      every test suite, including the Revit extension without
-#                   Revit, and the editor, spreadsheet, isometric, drawn-network
-#                   and fast-entry windows under a virtual display
+#                   Revit, and the editor, spreadsheet and isometric windows
+#                   under a virtual display
 #   build-windows   build_windows.bat on a Windows runner, exactly as on a PC:
-#                   phcp.exe, phcp_editor.exe, phcp_sheet.exe, phcp_isometric.exe
-#                   and phcp_fast.exe, the smoke test, the icon read back out
+#                   phcp.exe, phcp_editor.exe, phcp_sheet.exe and
+#                   phcp_isometric.exe, the smoke test, the icon read back out
 #                   of each, then the test suites that need no display,
 #                   including the Revit extension; the programs are kept as
 #                   the run's artefacts
@@ -42,7 +42,7 @@ jobs:
         run: |
           set -e
           for t in test_curves test_phc test_pipedata test_report_checks test_pdf test_json \
-                   test_editor test_sheet test_flow test_fast test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp stress_resolver; do
+                   test_editor test_sheet test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp stress_resolver; do
             echo "== $t"
             perl tools/$t.pl
           done
@@ -54,10 +54,6 @@ jobs:
         run: perl tools/test_sheet_window.pl
       - name: Isometric window, under Xvfb
         run: perl tools/test_isometric_window.pl
-      - name: Drawn network window, under Xvfb
-        run: perl tools/test_flow_window.pl
-      - name: Fast entry window, under Xvfb
-        run: perl tools/test_fast_window.pl
       - name: Invariance stress, 60 random networks
         run: perl tools/stress_invariance.pl 60
 
@@ -83,14 +79,13 @@ jobs:
           perl tools\check_exe_icon.pl phcp_editor.exe data\phcp.ico || exit /b 1
           perl tools\check_exe_icon.pl phcp_sheet.exe data\phcp.ico || exit /b 1
           perl tools\check_exe_icon.pl phcp_isometric.exe data\phcp.ico || exit /b 1
-          perl tools\check_exe_icon.pl phcp_fast.exe data\phcp.ico || exit /b 1
       - name: The icon as Windows shows it
         shell: powershell
         run: |
           Add-Type -AssemblyName System.Drawing
           $want = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path data\phcp.ico).Path).ToBitmap()
           $bad = 0
-          foreach ($exe in 'phcp.exe', 'phcp_editor.exe', 'phcp_sheet.exe', 'phcp_isometric.exe', 'phcp_fast.exe') {
+          foreach ($exe in 'phcp.exe', 'phcp_editor.exe', 'phcp_sheet.exe', 'phcp_isometric.exe') {
             $got = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path $exe).Path).ToBitmap()
             $diff = 0
             for ($x = 0; $x -lt $got.Width; $x++) { for ($y = 0; $y -lt $got.Height; $y++) {
@@ -103,7 +98,7 @@ jobs:
         shell: cmd
         run: |
           set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
-          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_sheet test_flow test_fast test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp) do (
+          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_sheet test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure check_lisp) do (
             echo == %%t
             perl tools\%%t.pl || exit /b 1
           )
@@ -119,7 +114,6 @@ jobs:
             phcp_editor.exe
             phcp_sheet.exe
             phcp_isometric.exe
-            phcp_fast.exe
             tk_build.log
           if-no-files-found: warn
 
@@ -144,7 +138,6 @@ jobs:
           [ -f phcp_editor.exe ] && files="$files phcp_editor.exe"
           [ -f phcp_sheet.exe ] && files="$files phcp_sheet.exe"
           [ -f phcp_isometric.exe ] && files="$files phcp_isometric.exe"
-          [ -f phcp_fast.exe ] && files="$files phcp_fast.exe"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           elif [ -f "release_notes/$TAG.md" ]; then

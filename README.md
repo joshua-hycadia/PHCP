@@ -7,18 +7,16 @@ out what the licence does NOT cover: the third-party values reproduced in
 Version 1.2.0
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), windows on that same engine - a text editor, fast
-entry, a spreadsheet, an isometric drawing and a drawn network - and a
+for the model (`.phc`), windows on that same engine - a text editor, a spreadsheet and an isometric
+drawing - and a
 monospace ASCII calculation report.  The solver, the editor and the report
 are Perl.  A pyRevit extension for Revit 2022 to 2027, in Python, walks a
 model and calls that engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
-perl phcp_fast.pl model.phc              # fast entry: one row, Enter adds it (same keys, same file)
 perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
 perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
-perl phcp_flow.pl model.phc              # the drawn network (F4 validates, F5 calculates)
 ./phcp.pl model.phc report.pdf           # solve and write the report as PDF
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
@@ -26,14 +24,10 @@ perl phcp_flow.pl model.phc              # the drawn network (F4 validates, F5 c
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
-perl tools/test_fast.pl                  # verify fast entry's logic
-perl tools/test_fast_window.pl           # drive the fast-entry window (uses xvfb-run if no display)
 perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headless
 perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
 perl tools/test_isometric.pl             # verify the isometric drawing, and the .phc it writes
 perl tools/test_isometric_window.pl      # drive the isometric window (uses xvfb-run if no display)
-perl tools/test_flow.pl                  # the drawn network, without a display
-perl tools/test_flow_window.pl           # drive the drawn window (uses xvfb-run if no display)
 perl tools/test_pipedata.pl              # verify the pipe and fitting database
 perl tools/test_dbedit.pl                # verify database editing and the team folder
 perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
@@ -47,7 +41,7 @@ python3 tools/test_revit.py              # the Revit extension, without Revit
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
-the editor, fast entry, the drawn network, the AutoCAD exporter and the Revit
+the editor, the spreadsheet, the isometric drawing, the AutoCAD exporter and the Revit
 extension all read or write it, and a file of any other type is refused with
 the reason.  (The editor's GRAPH tab,
 which draws a water supply graph from figures typed in rather than from a
@@ -393,7 +387,8 @@ the model, the command strip and the results when those faces are installed.
 Labels and buttons are in capitals.  VIEW, and DARK MODE on the toolbar,
 switches the whole window to the spreadsheet's dark palette.  The choice is
 remembered as EDITOR_THEME in this machine's settings file.  The spreadsheet
-keeps its own choice, SHEET_THEME, and the two windows do not follow each
+keeps SHEET_THEME and the isometric window keeps ISO_THEME.  The three
+windows use the same colours and the same type, and they do not follow each
 other.
 
 **The editor holds the network only.**  The title, project details, units,
@@ -503,7 +498,7 @@ PIPE TYPE and NODE TYPE are lists.  The pipe types are the database's, plus BORE
 
 EDIT inserts a system row, deletes one, and clears the cells of the row that has the focus.  Enter on the last system row adds another row and moves to its pipe cell.  The bottom-right corner of a cell copies it down the rows it is dragged over; CTRL+D copies it into the next row.  FIND and REPLACE work on the grid on screen, or on every grid.  The nodes, supplies and devices are filled from the system grid, so a row is inserted or deleted there.
 
-VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file as SHEET_THEME.  The text editor remembers its own choice as EDITOR_THEME, and the two windows do not follow each other.
+VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file as SHEET_THEME.  The text editor remembers EDITOR_THEME and the isometric window remembers ISO_THEME.  The three windows use the same colours and the same type, and they do not follow each other.
 
 A file saved here is ordinary `.phc`.  `phcp.pl` and the text editor read it.
 VALIDATE and CALCULATE call `HardyCross/Editor.pm`, the same checks and the
@@ -525,7 +520,12 @@ A separate program, forked from the text editor.  `phcp_editor.pl` is not
 changed: it still opens on the NETWORK tab, and this program has no NETWORK
 tab.  It loads the editor for the PROJECT tab, the results, the database and
 the file commands, and the network is drawn instead of typed.  Opening a
-file stays on the drawing.
+file stays on the drawing.  The chrome, the type and both palettes are the
+editor's: Inter for labels and buttons, JetBrains Mono for figures, the same
+blue and the same red.  VIEW, and DARK MODE on the toolbar, switches the
+whole window.  The choice is remembered as ISO_THEME.  The text editor reads
+EDITOR_THEME and the spreadsheet reads SHEET_THEME, so the three windows do
+not follow each other.
 
 Points, pipes, pumps and fixed flows sit on a 30-degree grid, with the
 elevation on the vertical axis.  A click with a tool places a supply, a plain
@@ -578,129 +578,6 @@ every example written back from it solves to the same flows and pressures.
 
 The program is written for Perl 5.44.  The source also runs on Perl 5.38 and
 5.42, which is what the tests and the Windows build use.
-
-## The drawn network
-
-`perl phcp_flow.pl [model.phc]`
-
-A second window, beside the text editor, which is not changed.  The page is
-the network itself.  A water supply, a junction or a head is a block.  A
-line drawn from one block to another is the pipe between them, or a pump
-when that tool is on.  A device sits in the pipe it is given.  A loop is a
-loop: the same block can have more than one pipe.
-
-The file is still ordinary `.phc`.  There is no second format.  CALCULATE
-hands that text to the same reader and the same solver the text editor uses,
-including auto sizing and the governing design area.  VALIDATE (F4) has to
-pass first; any change to the model turns CALCULATE off again.  Moving a
-block does not: a position is only a comment.
-
-```
-+------------------------------------------------------------------+
-| NEW OPEN SAVE | VALIDATE F4  CALCULATE F5 | ARRANGE FIT | DARK   [ status ] |
-+--------+----------------------------------------------+----------+
-| SELECT |                                              |  card    |
-| WATER  |   blocks, and the pipes drawn between them   |          |
-| NODE   |                                              |          |
-| ...    |                                              |          |
-+--------+----------------------------------------------+----------+
-| PLACE A BLOCK, THEN DRAG FROM A PORT TO CONNECT                 |
-+------------------------------------------------------------------+
-```
-
-| feature | behaviour |
-|---|---|
-| place | choose a block on the left, then click the page |
-| connect | drag from a port on one block to another.  With PIPE or PUMP chosen, that is the connection; with SELECT, a drag from a port is a pipe |
-| move | drag a block.  A click that barely moves snaps back |
-| pan, zoom | the middle button or the right button pans; the wheel zooms.  FIT keeps the blocks large enough to read and scrolls a long main.  A network that fits on neither axis at that size is shown whole, as the mesh, with the words left off |
-| arrange | lays the supplies to the left and the rest by how far the water travels.  A filled grid named `N{row}_{column}` is laid out as that grid; a stub beside it stays beside it |
-| card | the file's title, method and units, or the block or pipe that is selected.  Each value sits under its label, in a flat field or a flat menu, and the card scrolls.  A fixed flow is edited on its junction |
-| results | after a calculation that converges, the pressure on each block and the flow on each pipe, in the file's units.  The page shows the amount; the solver's sign is only the direction along the pipe |
-| files | NEW, OPEN, SAVE.  Any file but a `.phc` is refused.  Saving rewrites the file in a fixed order |
-| dark | DARK switches the page, the card and the blocks.  LIGHT switches back.  The file does not change |
-
-What a save keeps, and what it does not.  The note at the top of a file is
-kept.  A position is written as `// FLOW x y` after the node, which the
-reader already ignores.  `NC`, `PC` and `CHANGEPIPE` are expanded when the
-file is opened and written back as ordinary `NODE` and `PIPE` lines, so a
-copy is a node of its own.  Options, design areas and supply graphs stay in
-the file; the card does not edit them.  A comment between commands is not
-kept.
-
-A new drawing uses metres for length, as the examples do, and
-Hazen-Williams.  The office default for a length with no unit line is
-millimetres; this program does not start there.
-
-The window is drawn the same way as the text editor: a white page, one-pixel
-rules, flat buttons, fields and menus, and blue only for the highlight.
-DARK switches that page, the card and the blocks to a dark drawing, and the
-button then reads LIGHT.  A pipe is drawn light so it stays visible.  The
-file does not change.
-Words on a pipe sit on the paper, so the line does not run through them.
-A long number on a block is shortened; the card keeps the full figure.
-
-The window is `phcp_flow.pl`.  What the drawing contains, and whether the
-file it writes calculates, is `HardyCross/Flow.pm`, which has no Tk in it.
-`tools/test_flow.pl` checks that without a display: every example written
-back solves to the same flows and pressures, and a copy with a changed pipe
-solves as the original does.  The 1000-node grid is read back and not
-solved.  Opened in the window it is laid out as its 20 by 50 grid and drawn
-as the mesh, so the page is the grid rather than a corner of it.  `tools/test_flow_window.pl` drives the window under a virtual
-display (it runs itself under `xvfb-run` when there is no display, and says
-SKIPPED when there is neither).  Both have been run on Linux with Tk
-804.036.  The window has not been run on Windows, and `build_windows.bat`
-does not package it.  It keeps Tk's own icon.  Continuous integration runs
-`test_flow.pl` on Linux and on Windows, and the window suite on Linux only.
-
-## Fast entry
-
-`perl phcp_fast.pl [model.phc]`
-
-The same `.phc` file, entered as a row instead of as a line of text.  The
-text editor is unchanged: this is a second window, `phcp_fast.pl`, and it
-decides nothing of its own about the language.  A row becomes ordinary
-command lines, checked by the same reader, and either window opens what the
-other saved.
-
-Most of a model is the same command many times.  The command is chosen once
-(a click, or Alt and its letter) and stays.  Enter adds the row.  A value
-that usually repeats - a pipe's length, size and fittings, a head's
-elevation, minimum and K - is already filled in; typing replaces it, Enter
-accepts it.  The next pipe starts where the last one ended and the names
-step, the same offer the text editor makes, with the fittings put back
-because a run usually keeps them.
-
-| | |
-|---|---|
-| the row | one field per part of the command.  Tab moves.  Enter, or Down, adds the row.  A field that is not filled in is the one the message names |
-| a run | the name `P1-P12` or `P1X12` (also `P1x12`, `P1*12`, `P1..P12`) adds every line.  Each pipe starts where the one before it ended.  `N1-N20` adds each node at the one elevation.  `H1-H15` adds each head the same.  On a fixed flow the node steps with the name, or a node run of the same length is taken in pairs.  A range of outlets on an AREA, or of names on an NC, stays on the one line.  A run is at most 500.  A run is not written over a line being edited |
-| ditto | apostrophe copies that field from the previous line of the same command |
-| pick list | Ctrl+Space on the pipe type or on fittings.  A prefix that matches one code is completed; S2 is S20 |
-| USE | the type and C at the top apply to lines added at the end.  Enter there writes a USE line only when it differs from the type in force.  Before any USE the type is BORE, and C 120 needs no line.  Fittings need a pipe type, as they do in the file |
-| editing | a click on a line loads it into the row.  Enter writes it back.  A run is refused there: it is added at the end.  Escape cancels.  Remove deletes the selected line |
-| undo | Ctrl+Z and Ctrl+Y, for an added row, an edit, a removed line, and a change to the title, the units or the details |
-| details | TITLE, METHOD, the units and the cover-sheet fields, hidden until DETAILS.  A file opened from the text editor keeps them |
-| validate, calculate | F4, then F5, the same rule as the editor: Calculate only on the text that just passed Validate.  The pipes, nodes, outlets and the report are shown underneath.  Ctrl+R writes the report |
-| a whole line | LINE (Alt+I) takes one line as it will stand in the file, including a comment.  A setting typed there is refused: settings belong in the bar |
-
-A value the row is offering, which Enter would accept, is drawn quieter than
-a value that was typed.  DARK, on the toolbar and under VIEW, switches to a
-dark ground for a long session.  The choice is kept on this machine
-(`FAST_DARK` in the settings file, the same file as the database folder) and
-is not written into the model.  The text editor does not read it.
-
-The letters are P pipe, N node, S sprinkler, H hydrant, R hose reel, W water,
-F fixed flow, M pump, and the rest on the buttons.  Alt+U goes to the pipe
-type.
-
-`HardyCross/FastEntry.pm` makes every one of those decisions and has no Tk in
-it.  `tools/test_fast.pl` checks them, including a branch built only from
-rows solving to the same pipe flow as `examples/01_single_branch.phc`.
-`tools/test_fast_window.pl` drives the window under a virtual display, the
-same way as the editor's window test.  Both have been run on Linux with Tk
-804.036.  The window has not been run on Windows.  Continuous integration
-runs the logic on Linux and Windows, and the window on Linux only.
 
 ## Water supply graph
 
@@ -992,11 +869,10 @@ not evidence; this is.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe`, `phcp_fast.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
+`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
 on a Windows PC with Strawberry Perl installed: it fetches Tk and PAR::Packer
 from CPAN, packages the programs with the pipe and fitting database inside,
-and runs a smoke test on the `.phc` examples.  `phcp_fast.exe` is packed the
-same way as the editor.  It has not been run on Windows.
+and runs a smoke test on the `.phc` examples.
 
 The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
 with the same module lists: from an empty folder the packaged `phcp` solved
@@ -1014,20 +890,19 @@ The script also packs Win32::API, which the editor uses to be sharp on a
 scaled display.
 
 **The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
-pipe network and a red sprinkler at the far node.  The editor and fast entry
+pipe network and a red sprinkler at the far node.  The text editor, the spreadsheet and the isometric window
 set it on the window and taskbar button themselves, so it shows whether run
 from source or built.  On Windows each hands the window `data/phcp.ico`
 (beside the script, or packed inside the `.exe`): Perl/Tk is Tk 8.4, which has no
 `wm iconphoto`, and a Tk picture set as the icon changes neither the title
 bar nor the taskbar there, so up to v1.0.0 the editor showed Tk's own icon.
-On other systems the pictures are the PNG data held in `phcp_editor.pl`; fast
-entry reads them from that file, so there is one copy.  For the `.exe` files the build
+On other systems the pictures are the PNG data held in `phcp_editor.pl`, and the
+spreadsheet and the isometric window load that same file, so there is one copy.  For the `.exe` files the build
 uses `tools/pack_with_icon.pl`: PAR::Packer removed its `--icon` option, and
 rewriting a finished program's resources would disturb the archive appended
 to it, so the icon is set where pp used to set it - on a copy of the
 packager's loader (`parl.exe`), before the program is added (the program
-packed as a `.par` archive, then written out by that loader).  For the editor
-and for fast entry the same copy is also marked as a windowed program.  The loader carries its
+packed as a `.par` archive, then written out by that loader).  For each window the same copy is also marked as a windowed program.  The loader carries its
 own core modules appended after its program image, which rewriting its
 resources would drop, so they are taken off first and put back after the
 icon is set.  Windows itself writes the icon into the loader (its resource
@@ -1056,8 +931,8 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, including the Revit extension without Revit, the editor, fast-entry, spreadsheet, isometric and drawn-network windows under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_fast.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
+| test-linux | every test suite, including the Revit extension without Revit, and the text editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
+| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
 | release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
@@ -1356,10 +1231,6 @@ others on the page, and the report says which check to make.
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
 | text editor window, under Xvfb | 154 / 154 |
-| fast entry logic, headless | 109 / 109 |
-| fast entry window, under Xvfb | 45 / 45 |
-| drawn network, headless (`tools/test_flow.pl`) | 95 / 95 |
-| drawn network window, under Xvfb (`tools/test_flow_window.pl`) | 35 / 35 |
 | quick tools | 58 / 58 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |

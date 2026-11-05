@@ -38,7 +38,7 @@ require HardyCross::Window::Isometric;
 
 # Declared in the editor and the drawing window.  strict in this file needs
 # its own names for the same package variables.
-our ($mw, $ed, $toptabs, $path, $SCALE, $saved_text, $iso_cv, $UI, %C, %iso);
+our ($mw, $ed, $toptabs, $path, $SCALE, $saved_text, $iso_cv, $UI, %C, %iso, $theme);
 
 # The editor's own recolour and set_buffer do not know about the drawing.
 # These wrappers are the fork: the editor file stays as it is.
@@ -75,6 +75,18 @@ our ($mw, $ed, $toptabs, $path, $SCALE, $saved_text, $iso_cv, $UI, %C, %iso);
         $n = 'ISOMETRIC' if defined $n && $n eq 'NETWORK' && $t && $t->{page}
             && !$t->{page}{NETWORK} && $t->{page}{ISOMETRIC};
         return $select_tab->($t, $n);
+    };
+    # The toolbar's DARK MODE is the editor's.  Here it paints the drawing
+    # too, and it remembers ISO_THEME rather than the editor's key.
+    my $apply_theme = \&apply_theme;
+    *apply_theme = sub {
+        my $res = $apply_theme->(@_);
+        iso_follow_theme() if defined &iso_follow_theme;
+        return $res;
+    };
+    *toggle_theme = sub {
+        apply_theme($theme eq 'dark' ? 'light' : 'dark');
+        eval { HardyCross::Settings::set('ISO_THEME', uc $theme) };
     };
 }
 
@@ -128,6 +140,10 @@ sub iso_editor_window {
     update_status();
     iso_show();
     iso_focus_drawing();
+    # A palette remembered from last time, this window's own key.  The
+    # widgets are built light and then repainted, the same way as the editor.
+    my $saved = eval { lc(HardyCross::Settings::get('ISO_THEME') // '') } // '';
+    apply_theme('dark') if $saved eq 'dark';
     return $mw;
 }
 

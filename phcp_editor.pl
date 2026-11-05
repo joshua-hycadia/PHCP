@@ -90,13 +90,14 @@ use File::Spec;
 #------------------------------------------------------------------------------
 # Colours.
 #
-# The same flat palette as the spreadsheet: white paper, a grey band for the
-# toolbar and the headings, one blue, and a soft shadow under a bar.  Blue
-# marks a command word, the current field, the active tab and CALCULATE; red
-# marks what is wrong.  Every colour is named once here.  Dark mode is the
-# same roles in the spreadsheet's dark palette.  %C is the palette on screen.
-# EDITOR_THEME remembers the choice.  The spreadsheet uses SHEET_THEME, so
-# the two windows do not follow each other.
+# The same flat palette as the spreadsheet and the isometric drawing: white
+# paper, a grey band for the toolbar and the headings, one blue, and a soft
+# shadow under a bar.  Blue marks a command word, the current field, the
+# active tab and CALCULATE; red marks what is wrong.  Every colour is named
+# once here.  Dark mode is the same roles, darker.  %C is the palette on
+# screen.  EDITOR_THEME remembers the choice.  The spreadsheet uses
+# SHEET_THEME and the isometric drawing uses ISO_THEME, so the three windows
+# do not follow each other.
 #------------------------------------------------------------------------------
 our %THEME_LIGHT = (
     paper      => '#FFFFFF',     # editor, tables, form fields
