@@ -62,11 +62,26 @@ print "2. THE DRAWING WINDOW\n";
 main::build_window();
 $main::mw->update;
 is('the window is the isometric program', $main::mw->title eq 'PHCP ISOMETRIC - UNTITLED.PHC', $main::mw->title);
-is('DARK sits at the top right',
-   $main::iso{btn}{DARK} && $main::pill && $main::btn{VALIDATE}
-   && $main::iso{btn}{DARK}->rootx > $main::pill->rootx + $main::pill->width - 4
-   && abs($main::iso{btn}{DARK}->rooty - $main::btn{VALIDATE}->rooty) < 8,
-   join(' ', map { $_->rootx . ',' . $_->rooty } $main::btn{VALIDATE}, $main::pill, $main::iso{btn}{DARK}));
+is('DARK MODE sits left of the status, the same place as the other windows',
+   $main::btn{THEME} && $main::pill && $main::btn{VALIDATE}
+   && $main::btn{THEME}->cget('-text') eq 'DARK MODE'
+   && $main::btn{THEME}->rootx + $main::btn{THEME}->width <= $main::pill->rootx + 8
+   && abs($main::btn{THEME}->rooty - $main::btn{VALIDATE}->rooty) < 8
+   && !$main::iso{btn}{DARK},
+   ($main::btn{THEME} ? $main::btn{THEME}->cget('-text') . ' ' : '')
+   . join(' ', map { $_->rootx . ',' . $_->rooty } grep { $_ } $main::btn{VALIDATE}, $main::btn{THEME}, $main::pill));
+{
+    my $face = lc $main::mw->fontActual($main::btn{NEW}->cget('-font'), '-family');
+    my $weight = $main::mw->fontActual($main::btn{NEW}->cget('-font'), '-weight');
+    is('buttons are the editor chrome face, 10 point bold',
+       $main::UI_B && $main::UI_B->[1] == 10 && $main::UI_B->[2] eq 'bold'
+       && $face eq lc $main::UI_B->[0] && $weight eq 'bold',
+       "$face $weight spec @$main::UI_B");
+    is('the toolbar is the shared grey, and the ink is the shared ink',
+       lc $main::btn{NEW}->parent->cget('-background') eq '#f4f6f9'
+       && lc $main::btn{NEW}->cget('-foreground') eq '#1c1f24',
+       $main::btn{NEW}->parent->cget('-background') . ' ' . $main::btn{NEW}->cget('-foreground'));
+}
 is('there is no NETWORK tab',
    join(' ', @{ $main::toptabs->{names} }) eq 'ISOMETRIC PROJECT GRAPH QUICK TOOLS DATABASE'
    && $main::toptabs->{current} eq 'ISOMETRIC',
@@ -115,8 +130,14 @@ $main::mw->update;
 my $dark = lc $main::iso_cv->cget(-background);
 my $cell = lc $main::vtable->{styles}{muted}->cget(-background);
 my $head = lc $main::vtable->{hlist}->header('cget', 0, '-headerbackground');
-is('dark mode repaints the drawing', $dark ne $paper && $dark eq '#1b1e24', "$paper -> $dark");
-is('dark mode repaints the results table', $cell eq '#1b1e24' && $head eq '#252a33', "$cell $head");
+is('dark mode repaints the drawing in the shared palette', $dark ne $paper && $dark eq '#1f232b', "$paper -> $dark");
+is('dark mode repaints the results table in the shared palette', $cell eq '#1f232b' && $head eq '#282d37', "$cell $head");
+is('DARK MODE is labelled the same as the other windows, and the choice is ISO_THEME',
+   $main::btn{THEME}->cget('-text') eq 'LIGHT MODE'
+   && (HardyCross::Settings::get('ISO_THEME') // '') eq 'DARK'
+   && !defined HardyCross::Settings::get('EDITOR_THEME')
+   && !defined HardyCross::Settings::get('SHEET_THEME'),
+   $main::btn{THEME}->cget('-text') . ' ISO=' . (HardyCross::Settings::get('ISO_THEME') // ''));
 main::iso_apply_theme('LIGHT');
 $main::mw->update;
 is('light mode puts the paper back', lc $main::iso_cv->cget(-background) eq '#ffffff');

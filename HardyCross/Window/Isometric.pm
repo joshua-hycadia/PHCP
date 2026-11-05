@@ -24,7 +24,7 @@ use warnings;
 use HardyCross::Isometric;
 use HardyCross::Phc;
 
-our ($UI, $UI_B, $UI_S, $MONO, %C, $mw, $ed, $gutter, $statusbar, $settings, $toptabs, $POINTER, %checks);
+our ($UI, $UI_B, $UI_S, $MONO, %C, $theme, $mw, $ed, $gutter, $statusbar, $settings, $toptabs, $POINTER, %checks);
 
 our ($iso_cv, %iso);
 
@@ -88,14 +88,9 @@ sub build_isometric {
     $iso{btn}{OUT}  = flat_button($bar2, 'ZOOM OUT', sub { iso_zoom(1 / 1.25) })->pack(-side => 'left', -padx => px(4));
     $iso{lock} = 1;
     $iso{btn}{LOCK} = flat_button($bar2, 'LOCK', sub { iso_set_lock() })->pack(-side => 'left', -padx => px(4));
-    # DARK is the right-hand control on the main toolbar.  The status stays
-    # just to its left.  The drawing tools stay the things you click to place
-    # a pipe.
-    $iso{btn}{DARK} = flat_button($main::btn{VALIDATE}->parent, 'DARK',
-        sub { iso_apply_theme(($iso{theme} || '') eq 'DARK' ? 'LIGHT' : 'DARK') });
-    $main::pill->packForget if $main::pill;
-    $iso{btn}{DARK}->pack(-side => 'right', -padx => px([8, 0]));
-    $main::pill->pack(-side => 'right') if $main::pill;
+    # Dark mode is the toolbar's DARK MODE, the same button and the same
+    # palette as the text editor and the spreadsheet.  The drawing tools stay
+    # the things you click to place a pipe.
     $iso{labels} = { map { $_ => ($_ =~ /^(POINTS|PIPES|DEVICES)\z/ ? 1 : 0) } @LABELS };
     require Tk::Menubutton;
     my $labels = $bar2->Menubutton(-text => 'LABELS', -font => $UI_B, -relief => 'flat', -borderwidth => 0,
@@ -243,7 +238,6 @@ sub iso_set_tool {
         iso_mark($iso{tools}{ $t->[0] }, $t->[0] eq $kind);
     }
     iso_mark($iso{btn}{LOCK}, $iso{lock}) if $iso{btn}{LOCK};
-    iso_mark($iso{btn}{DARK}, ($iso{theme} || '') eq 'DARK') if $iso{btn}{DARK};
     my ($hint) = map { $_->[2] } grep { $_->[0] eq $kind } @TOOLS;
     iso_status($hint || '');
     $iso_cv->configure(-cursor => $kind eq 'SELECT' ? $POINTER : 'crosshair') if $iso_cv;
@@ -874,113 +868,25 @@ sub iso_set_field {
 }
 
 #------------------------------------------------------------------------------
-# Dark mode.  The light palette is whatever the editor built with.  Switching
-# replaces those colours on every widget, then the drawing is painted again
-# from the palette, so a canvas item cannot keep the old ink.
+# Dark mode.  The drawing uses the editor's palettes, so a dark isometric
+# window is the same blue, the same red and the same paper as the text editor
+# and the spreadsheet.  apply_theme paints the widgets.  This paints the
+# canvas again, because a canvas item keeps the ink it was given.
 #------------------------------------------------------------------------------
-my (%LIGHT, %DARK, $palette_ready);
-sub iso_palettes {
-    return if $palette_ready;
-    %LIGHT = %C;
-    %DARK = (
-        %LIGHT,
-        paper     => '#1B1E24',
-        panel     => '#252A33',
-        line      => '#3A4150',
-        hover     => '#323846',
-        ink       => '#E7EAF0',
-        muted     => '#9AA3B5',
-        faint     => '#6E7788',
-        accent    => '#6BA3F0',
-        accent_dk => '#4E86D4',
-        accent_bg => '#243044',
-        select    => '#2C4468',
-        curline   => '#242A34',
-        number    => '#8EB4F0',
-        error     => '#F07178',
-        error_bg  => '#3A2428',
-        fault_bg  => '#4A2C30',
-        warn      => '#E0B15A',
-        proposal  => '#7D8796',
-        sash      => '#32363E',
-    );
-    $palette_ready = 1;
-}
-
-sub iso_apply_theme {
-    my $name = shift || 'LIGHT';
-    $name = $name eq 'DARK' ? 'DARK' : 'LIGHT';
-    iso_palettes();
-    my $from = ($iso{theme} || 'LIGHT') eq 'DARK' ? \%DARK : \%LIGHT;
-    my $to = $name eq 'DARK' ? \%DARK : \%LIGHT;
-    my %map;
-    $map{ uc $from->{$_} } = $to->{$_} for keys %$from;
-    if ($name eq 'DARK') {
-        $map{'#CDD2D9'} = '#4A5160';
-        $map{'#B4BBC5'} = '#6A7384';
-    } else {
-        $map{'#4A5160'} = '#CDD2D9';
-        $map{'#6A7384'} = '#B4BBC5';
-    }
-    $C{$_} = $to->{$_} for keys %$to;
-    iso_paint($mw, \%map) if $mw;
-    # The menu bar is not one of the window's children, so the walk misses it.
-    my $menu = eval { $mw->cget('-menu') };
-    iso_paint($menu, \%map) if $menu;
-    $iso{theme} = $name;
-    iso_retint_tags();
-    select_tab($toptabs, $toptabs->{current}) if $toptabs && $toptabs->{current};
-    iso_set_tool($iso{tool} || 'SELECT');
-    for my $c (values %checks) { $c->{draw}->() if $c && $c->{draw} }
-    eval { fill_results() };
-    restyle_validation();
-    {
-        no warnings 'once';    # the database and the graph declare these
-        db_fill() if $main::dbv{kind};
-        graph_draw() if $main::gv{canvas} && eval { $main::gv{canvas}->width } > 50 && $main::gv{check};
-    }
-    iso_props();
+sub iso_follow_theme {
+    $iso{theme} = ($theme || '') eq 'dark' ? 'DARK' : 'LIGHT';
+    return unless $iso_cv;
     iso_redraw();
-    iso_status($name eq 'DARK' ? 'DARK' : 'LIGHT');
+    iso_props() if $iso{props};
 }
 
-sub iso_paint {
-    my ($w, $map) = @_;
-    return unless $w;
-    for my $opt (qw(-background -foreground -highlightbackground -highlightcolor
-                    -activebackground -activeforeground -insertbackground
-                    -selectbackground -selectforeground -troughcolor -disabledforeground)) {
-        my $v = eval { $w->cget($opt) };
-        next unless defined $v && $v ne '';
-        next if $opt =~ /foreground/ && uc $v eq '#FFFFFF';
-        my $n = $map->{ uc $v };
-        next unless defined $n && uc $n ne uc $v;
-        eval { $w->configure($opt => $n) };
-    }
-    my @kids = eval { $w->children };
-    iso_paint($_, $map) for @kids;
-}
-
-sub iso_retint_tags {
-    return unless $ed;
-    eval {
-        $ed->tagConfigure('curline', -background => $C{curline});
-        $ed->tagConfigure('command', -foreground => $C{accent});
-        $ed->tagConfigure('keyword', -foreground => $C{accent});
-        $ed->tagConfigure('name',    -foreground => $C{ink});
-        $ed->tagConfigure('ref',     -foreground => $C{ink});
-        $ed->tagConfigure('number',  -foreground => $C{number});
-        $ed->tagConfigure('comment', -foreground => $C{muted});
-        $ed->tagConfigure('error',   -background => $C{error_bg});
-        $ed->tagConfigure('fault',   -background => $C{fault_bg}, -foreground => $C{error});
-        $ed->tagConfigure('proposal', -foreground => $C{proposal});
-        $gutter->tagConfigure('cur', -foreground => $C{ink}) if $gutter;
-        $gutter->tagConfigure('bad', -foreground => $C{error}) if $gutter;
-        $statusbar->tagConfigure('current', -foreground => $C{accent}) if $statusbar;
-        $statusbar->tagConfigure('muted', -foreground => $C{muted}) if $statusbar;
-        $statusbar->tagConfigure('bad', -foreground => $C{error}) if $statusbar;
-        $statusbar->tagConfigure('good', -foreground => $C{accent}) if $statusbar;
-    };
+# iso_apply_theme -- 'DARK' or 'LIGHT'.  The toolbar's DARK MODE calls
+# toggle_theme, which comes here through apply_theme.  The window test calls
+# this directly.  ISO_THEME is this window's own key.
+sub iso_apply_theme {
+    my $want = uc(shift // 'LIGHT') eq 'DARK' ? 'dark' : 'light';
+    apply_theme($want);
+    eval { HardyCross::Settings::set('ISO_THEME', uc $theme) };
 }
 
 1;

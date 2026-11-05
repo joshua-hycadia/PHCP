@@ -80,10 +80,12 @@ use HardyCross::Window::Database;
 use HardyCross::Window::Results;
 
 #------------------------------------------------------------------------------
-# Colours and type.  The same flat palette as the text editor: a white
-# surface, a grey header band, one blue, and a shadow line under the toolbar.
-# DARK MODE swaps in the second palette.  %C is the one on screen.  Each
-# window remembers its own choice.
+# Colours and type.  The same flat palette as the text editor and the
+# isometric drawing: a white surface, a grey header band, one blue, and a
+# shadow line under the toolbar.  DARK MODE swaps in the second palette.
+# %C is the one on screen.  SHEET_THEME remembers this window's choice.
+# The text editor uses EDITOR_THEME and the isometric drawing uses
+# ISO_THEME, so the three windows do not follow each other.
 # The two hashes stay as they were defined, so a toggle can map every colour
 # a widget was given back to the other palette.  scroll is the scrollbar
 # thumb.  shadow is the soft edge under a bar.
