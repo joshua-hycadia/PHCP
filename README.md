@@ -4,14 +4,17 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-Version 1.2.0
+The latest release is 1.2.0 (`release_notes/v1.2.0.md`).  The source since
+that tag adds the spreadsheet, the isometric window, the pyRevit extension
+and the redrawn icon, and drops fast entry and the drawn network.  The
+solver is unchanged since 1.2.0.
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
-for the model (`.phc`), windows on that same engine - a text editor, a spreadsheet and an isometric
-drawing - and a
-monospace ASCII calculation report.  The solver, the editor and the report
-are Perl.  A pyRevit extension for Revit 2022 to 2027, in Python, walks a
-model and calls that engine; see Revit.
+for the model (`.phc`), three windows on that same engine - a text editor, a
+spreadsheet and an isometric drawing - and a monospace ASCII calculation
+report.  The solver, the editor and the report are Perl.  A pyRevit
+extension for Revit 2022 to 2027, in Python, walks a model and calls that
+engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
@@ -385,7 +388,7 @@ band, a shadow under the bar, white chips for the buttons, and one blue.
 Red is what is wrong.  Inter is used for the chrome and JetBrains Mono for
 the model, the command strip and the results when those faces are installed.
 Labels and buttons are in capitals.  VIEW, and DARK MODE on the toolbar,
-switches the whole window to the spreadsheet's dark palette.  The choice is
+switches the whole window to the shared dark palette.  The choice is
 remembered as EDITOR_THEME in this machine's settings file.  The spreadsheet
 keeps SHEET_THEME and the isometric window keeps ISO_THEME.  The three
 windows use the same colours and the same type, and they do not follow each
@@ -864,8 +867,8 @@ font files are missing the PDF falls back to Courier rather than fail.
 `tools/test_pdf.pl` checks each file the way the specification says a reader
 should: every cross-reference offset landing on its object, stream lengths
 exact, the page count true, every line of the text report present and every
-rule drawn, the typeface embedded, and the graph as above.  Readers silently repair broken PDFs, so "it opened" is
-not evidence; this is.
+rule drawn, the typeface embedded, and the graph as above.  Readers silently
+repair broken PDFs, so a file that opens is not evidence that it is well formed.
 
 ## Windows
 
@@ -881,12 +884,16 @@ packaged `phcp_editor` opened its window with a model loaded.  That run found
 and fixed a defect - the packaged editor exited without opening a window.  It
 was run again after the editor's layout changed, with the new Tk modules in
 the list.
+
 The Windows build was run on 28 October 2026 (Strawberry Perl 5.42.3, GCC
-13.2.0): Tk compiled from the patched release, both programs built, and the
-smoke test solved the examples and wrote a PDF.  The editor ran on Windows 11
-at 150 % display scaling; what that run showed - blurred text, dividers too
-thin to drag, the mouse wheel scrolling the wrong pane - is fixed as below.
-The script also packs Win32::API, which the editor uses to be sharp on a
+13.2.0): Tk compiled from the patched release, `phcp.exe` and
+`phcp_editor.exe` were built, and the smoke test solved the examples and
+wrote a PDF.  The editor ran on Windows 11 at 150 % display scaling; what
+that run showed - blurred text, dividers too thin to drag, the mouse wheel
+scrolling the wrong pane - is fixed as below.  The spreadsheet and the
+isometric window are built by the same script.  They have been run from
+source on Linux.  They have not been run as Windows programs.
+The script also packs Win32::API, which the windows use to be sharp on a
 scaled display.
 
 **The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
@@ -933,7 +940,7 @@ perl tools/check_exe_icon.pl program.exe other.ico
 |---|---|
 | test-linux | every test suite, including the Revit extension without Revit, and the text editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
 | build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
-| release | on a version tag (`v1.1.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
+| release | on a version tag (`v1.2.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
 then publish a release on GitHub with the new tag `vX.Y.Z` on `main`.  The
@@ -1223,15 +1230,20 @@ others on the page, and the report says which check to make.
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | pipe and fitting database | 39 / 39 |
-| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 310 / 310 |
+| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 314 / 314 |
 | AutoCAD exporter, structure | 5 / 5 |
+| Revit extension, without Revit (`tools/test_revit.py`) | 88 / 88 |
 | JSON interface | 99 / 99 |
-| supply, pump and loss curves, and supplies combined | 18 / 18 |
+| supply, pump and loss curves, supplies combined, and a CD on an orifice plate | 24 / 24 |
 | report hand-checks, 10 models | 615 / 615 |
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
 | text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 154 / 154 |
-| quick tools | 58 / 58 |
+| text editor window, under Xvfb | 167 / 167 |
+| spreadsheet grids, headless | 107 / 107 |
+| spreadsheet window, under Xvfb | 62 / 62 |
+| isometric drawing, headless | 42 / 42 |
+| isometric window, under Xvfb | 29 / 29 |
+| quick tools, including the orifice plate | 76 / 76 |
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |
 | velocity pressure: hand-checked range, OFF against the earlier solver, ON against OFF (`tools/test_velocity_pressure.pl`) | 85 / 85 |

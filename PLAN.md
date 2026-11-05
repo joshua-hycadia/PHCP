@@ -1,44 +1,23 @@
 # PHCP execution plan - command-file input and text editor
 
-Status: PR 1, PR 2 (`.phc` language, positional layout) and PR 3 (text editor)
-merged.  Open for review: the editor fixes from the Windows run, the drawn
-supply graph and PDF typeface, the DATABASE tab, PR 4 (one file type) and
-PR 5 (the JSON interface).  Also open: the 300-model benchmark against other
-calculation programs (`comparison/`), which adds files only and changes no
-solved number; the orifice plate fix, in which a CD given on `OPP` or `OFD`
-now scales the plate's differential as 1/CD^2 (engine change, approved
-4 November 2026; results move only where a CD is given); and the icon fix:
-the PHCP icon on the editor's window on Windows and on both `.exe` files,
-which v1.0.0 lacked, with CI reading it back out of the built programs.
-Released together as v1.1.0 (`release_notes/v1.1.0.md`).  Since v1.1.0:
-benchmark round 2 (`comparison/ROUND2.md`) - the same networks with fittings,
-and with a BFP, a fixed-drop PRV and an orifice plate; files only, no solved
-number changes; example 04's MAXITER raised from 20000 to 30000, because the
-1000-node grid needs 24 820 iterations (example file only, approved 4 November
-2026; no other example moves); and `OPTION VELOCITY_PRESSURE` (AS 2118.1
-Cl 14.15), default OFF - an engine change approved 4 November 2026; OFF
-changes no solved number.  Released together as v1.2.0
-(`release_notes/v1.2.0.md`).  The windows are the text editor, the
-spreadsheet (`phcp_sheet.pl`, `HardyCross/Sheet.pm`) and the isometric
-drawing (`phcp_isometric.pl`, a fork of the text editor; `phcp_editor.pl`
-is unchanged).  The three share one palette and one set of type: Inter for
-the chrome, JetBrains Mono for figures, the same blue and the same red.
-Each remembers its own ground (EDITOR_THEME, SHEET_THEME, ISO_THEME).  The
-spreadsheet is SYSTEM, NODES, SUPPLIES and PRESSURE DEVICES, with the
-existing PROJECT, GRAPH, QUICK TOOLS and DATABASE tabs.  The isometric
-network is drawn on a 30-degree grid and written as `.phc`.  A pipe is two
-clicks, or a known length, size, fittings and C with the click choosing the
-direction.  No solved number changes.  Written for Perl 5.44; the same
-source runs on the 5.38 and 5.42 the tests and the Windows build use.  The
-fast-entry window and the drawn-network window have been removed.  Also
-open: a pyRevit extension for Revit 2022 to 2027 (`revit/`,
-`revit/REVIT.md`).  It walks a model and calls the engine; it changes no
-engine file and no solved number.  The walk and the `.phc` it writes are
-checked by `tools/test_revit.py`.  It has not been run inside Revit.
+Status, 5 November 2026.  Released: v1.0.0, v1.1.0 and v1.2.0
+(`release_notes/`).  v1.2.0 is the latest tag.  The solver has not changed
+since that tag.
 
-This plan replaces the spreadsheet front end with a plain-text command file
-(`.phc`) and a text editor built around it.  The solver, the report, the PDF
-writer and the pipe and fitting database are NOT changed by this work.
+The source has three windows on the same `.phc` file and the same engine:
+the text editor (`phcp_editor.pl`), the spreadsheet (`phcp_sheet.pl`) and
+the isometric drawing (`phcp_isometric.pl`).  They share one palette and one
+set of type.  Each remembers its own ground (EDITOR_THEME, SHEET_THEME,
+ISO_THEME).  Fast entry and the drawn network have been removed.  A pyRevit
+extension for Revit 2022 to 2027 is in `revit/`.  `tools/test_revit.py`
+checks it without Revit.  It has not been run inside Revit.  The AutoCAD
+exporter has not been run inside AutoCAD.
+
+This plan, as first written, replaces the earlier spreadsheet front end with
+a plain-text command file (`.phc`) and a text editor built around it.  The
+spreadsheet window above is a later front end on that same file.  The
+solver, the report, the PDF writer and the pipe and fitting database are
+not changed by the window work.
 
 Read `CONTRIBUTING.md` before starting.  Its rules are binding.
 
@@ -515,7 +494,7 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] v1.1 - .phc reference manual, checked against the program by tools/test_manual.pl
 - [x] v1.1 - auto pipe sizing: SIZE 0 sized for the smallest pipes or least volume, with a margin under the supply; //AS comments (engine files Phc, Report, Json)
 - [x] v1.1 - sizing trials (SIZING_TRIALS, default 5) and a COMPUTING indicator while a calculation runs
-- [ ] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
+- [x] v1.1 - orifice plates: a CD given scales the differential as 1/CD^2; CD checked (more than 0, not more than 1) (engine change, approved 4 November 2026; `tools/test_curves.pl` section 6)
 - [x] v1.1 - icon fix: the PHCP icon on the editor window and taskbar on Windows, and on both .exe files in Explorer; checked in each built .exe by tools/check_exe_icon.pl, in the build and in CI
 - [x] v1.1 - velocity pressure: `OPTION VELOCITY_PRESSURE` (AS 2118.1 Cl 14.15), default OFF, sprinklers only, end heads on Pt (engine change, approved 4 November 2026)
 - [x] Spreadsheet window: `phcp_sheet.pl` and `HardyCross/Sheet.pm`, a second front end.  The text editor, `phcp_editor.pl`, is unchanged
