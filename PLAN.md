@@ -1,8 +1,8 @@
 # PHCP execution plan - command-file input and text editor
 
-Status, 5 November 2026.  Released: v1.0.0, v1.1.0 and v1.2.0
-(`release_notes/`).  v1.2.0 is the latest tag.  The solver has not changed
-since that tag.
+Status, 8 November 2026.  Released: v1.0.0, v1.1.0, v1.2.0 and v1.3.0
+(`release_notes/`).  v1.3.0 is the latest tag.  The solver has not changed
+since v1.2.0.
 
 The source has three windows on the same `.phc` file and the same engine:
 the text editor (`phcp_editor.pl`), the spreadsheet (`phcp_sheet.pl`) and
