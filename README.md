@@ -4,9 +4,8 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.2.0 (`release_notes/v1.2.0.md`).  The source since
-that tag adds the spreadsheet, the isometric window, the pyRevit extension
-and the redrawn icon, and drops fast entry and the drawn network.  The
+The latest release is 1.3.0 (`release_notes/v1.3.0.md`): the spreadsheet,
+the isometric window, the pyRevit extension and the redrawn icon.  The
 solver is unchanged since 1.2.0.
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
