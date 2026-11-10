@@ -45,6 +45,7 @@ perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its 
 perl tools/test_results.pl               # verify the results saved back into the .phc
 perl tools/test_drytime.pl               # verify the estimated trip and transit times, the formula by hand
 perl tools/test_acceptance.pl            # verify the false positives found in the audit of 11 November 2026 are refused
+perl tools/test_benchmarks.pl            # verify PHCP against reference values it did not compute (published forms, nodal Newton)
 perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
@@ -1370,6 +1371,29 @@ No result of a valid model changed: the examples solve to the same flows and
 pressures (`tools/test_phc.pl`, `tools/test_velocity_pressure.pl`,
 `tools/test_report_checks.pl`).
 
+### Independent benchmarks
+
+`HardyCross::Validate` shows that a solved network satisfies PHCP's own
+element equations - consistency, since the check and the solver share them.
+`tools/test_benchmarks.pl` checks the equations themselves against values
+worked without any PHCP function: Hazen-Williams against the NFPA 13 US-unit
+form (within 0.02 %), Darcy-Weisbach against Colebrook-White iterated to
+convergence (0.18 %, the density of 1000 PHCP's conventional metre of water
+implies against 998.2 kg/m3 at 20 C) and a Moody chart point, elevation
+against the conventional metre of water, equivalent lengths, K-factors, the
+orifice plate against ISO 5167-2, pump and supply curves against the N^1.85
+form, and dry pipe valve losses against a flow coefficient's definition and
+the US-unit form.  Six networks - series, branched, looped, gridded, two
+supplies on a static and a curve with a fixed flow, and a pump - are solved
+again by a nodal Newton method written in the test, a different set of
+unknowns and a different iteration: they agree to within 2e-8 L/min and
+5e-9 kPa, and at PHCP's default tolerances within the 0.1 kPa verification
+limit.  It found that examples/01's comment gave its closed-form resistance
+as 1.5689E-4, 0.08 % high; it is 1.5677E-4, and PHCP's answer matched the
+correct one.  This is evidence that PHCP solves the published equations as
+published; it is not evidence that the equations describe a real
+installation, nor external certification.
+
 ## Results saved in the model
 
 The results of a solve are kept in the `.phc` itself, not in a file beside
@@ -1520,6 +1544,7 @@ others on the page, and the report says which check to make.
 | results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
 | estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
 | the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
+| independent benchmarks: element equations against their published forms, six networks against a nodal Newton solve (`tools/test_benchmarks.pl`) | 26 / 26 |
 | impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 18 / 18 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
