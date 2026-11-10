@@ -4,12 +4,11 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.4.0 (`release_notes/v1.4.0.md`): every calculation
-validated and reported ACCEPTED, NONCOMPLIANT, REJECTED or INDETERMINATE;
-several water supplies, each on its own terms; the dry pipe valve, with
-Reliable, Tyco, Viking and Victaulic valves in the database; and the
-results saved back into the `.phc`.  No result of a valid 1.3.0 model
-changed.
+The latest release is 1.5.0 (`release_notes/v1.5.0.md`): ESTIMATED trip,
+transit and delivery times for a dry pipe valve, from `DPVAIR` and the new
+`DPVTRIP` - the trip time by the FM Global formula published in the SFPE
+Handbook, the transit a rudimentary lower bound that ignores the air.  No
+steady-state result changed since 1.4.0.
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a

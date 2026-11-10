@@ -518,3 +518,4 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] Manufacturer dry pipe valve data: Reliable, Tyco, Viking and Victaulic in `data/pipes.dat` (DRYVALVE), `DPV ... VALVE <MAKER> <MODEL>` (database change requested by the maintainer 10 November 2026)
 - [x] Results saved back into the `.phc` (`--save`, editor SAVE after CALCULATE; `HardyCross/Results.pm`, `tools/test_results.pl`)
 - [x] v1.4.0 - release notes `release_notes/v1.4.0.md`
+- [x] v1.5.0 - release notes `release_notes/v1.5.0.md`
