@@ -60,10 +60,11 @@ use HardyCross::PipeData;
 # is an error, so a setting that does nothing cannot look as if it works.
 our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
                   VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA
-                  SIZING_GOAL SIZING_MARGIN SIZING_TRIALS VELOCITY_PRESSURE);
+                  SIZING_GOAL SIZING_MARGIN SIZING_TRIALS VELOCITY_PRESSURE
+                  SUPPLY_MARGIN SUPPLY_SCENARIOS JOINT_BASIS);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
-                                    RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE);
+                                    RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE SUPPLY_MARGIN);
 
 #------------------------------------------------------------------------------
 # Units.  One UNITS line per quantity; anything not set takes the office
@@ -159,6 +160,27 @@ my %CMD = (
     PUMPDUTY  => { kind => 'duty', fixed => [ [ 'PUMP', 'pipe' ], [ 'FLOW', 'flow' ], [ 'PRESSURE', 'pressure' ] ] },
     PRA       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'RATIO', 'ratio' ] ],
                    opt => [ [ 'MININLET', 'pressure' ], [ 'BAND', 'num' ] ] },
+    # A dry pipe valve in a pipe, solved as tripped and fully open.  The trip
+    # is set by a differential RATIO (water to air, 5.5:1) or an air-side TRIP
+    # pressure; the accelerator is ON or OFF.  Neither the trip nor the
+    # accelerator changes the steady-state solve: they are kept for the
+    # report and for a future water delivery time calculation.  What follows
+    # is the valve's loss: the manufacturer's FLOW LOSS points, or EQL and an
+    # equivalent length of its pipe.
+    DPV       => { kind => 'device', fixed => [ [ 'PIPE', 'pipe' ], [ 'SIZE', 'size' ],
+                   [ 'RATIO|TRIP', 'tripmode' ], [ 'SETTING', 'tripvalue' ], [ 'ON|OFF', 'onoff' ] ],
+                   rest => 'dpvloss' },
+    # The make and model of a dry pipe valve, as free text: the rest of the line.
+    DPVMODEL  => { kind => 'dpvdata', fixed => [ [ 'PIPE', 'pipe' ], [ 'TEXT', 'text' ] ] },
+    # The air pressure a dry system is set to.  Reserved for a water delivery
+    # time calculation; the steady-state solve does not use it.
+    DPVAIR    => { kind => 'dpvdata', fixed => [ [ 'PIPE', 'pipe' ], [ 'PRESSURE', 'pressure' ] ] },
+    # A water supply scenario: the supplies named run at the percentage of
+    # their pressure given (0 is out of service, 100 as modelled), the rest
+    # as modelled.  Each is solved and validated on its own; one that does
+    # not give an ACCEPTED result fails the design (HardyCross::Supplies).
+    SCENARIO  => { kind => 'scenario', fixed => [ [ 'NAME', 'new' ], [ 'SUPPLY', 'node' ], [ 'PERCENT', 'num' ] ],
+                   rest => 'shares' },
     # A water supply graph made in the GRAPH tab (.phg), added to the report:
     # the rest of the line is its file, from the model's folder.
     SUPPLYGRAPH => { kind => 'graph', fixed => [ [ 'FILE', 'text' ] ] },
@@ -176,8 +198,8 @@ our @COMMAND_GROUPS = (
     [qw(TITLE PROJECT UNITS METHOD OPTION)],
     [qw(USE PIPE PC CHANGEPIPE EQV)],
     [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
-    [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA)],
-    [qw(AREA SUPPLYGRAPH)],
+    [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA DPV DPVMODEL DPVAIR)],
+    [qw(AREA SUPPLYGRAPH SCENARIO)],
 );
 our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
 
@@ -192,7 +214,8 @@ sub command_spec {
 # shows them: "PIPE <NAME> <START> <END> <LENGTH> <SIZE> [FITTINGS ...]".
 #------------------------------------------------------------------------------
 my %REST_LABEL = (fittings => 'FITTINGS ...', pairs => 'FLOW PRESSURE ...',
-                  copies => 'NAME START END ...', names => 'NAME ...', outlets => 'OUTLET ...');
+                  copies => 'NAME START END ...', names => 'NAME ...', outlets => 'OUTLET ...',
+                  dpvloss => 'FLOW LOSS ... | EQL LENGTH', shares => 'SUPPLY PERCENT ...');
 sub template_fields {
     my $c = shift;
     my @f = map { $_->[0] } @{ $c->{fixed} };
@@ -331,13 +354,20 @@ sub analyse {
 
     #---------------------------------------------------------- TITLE, PROJECT
     # The value is the rest of the raw line, so a title keeps its spacing.
-    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT' || $a{key} eq 'SUPPLYGRAPH') {
+    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT' || $a{key} eq 'SUPPLYGRAPH' || $a{key} eq 'DPVMODEL') {
         (my $t = $code) =~ s/^\s*\S+\s*//;
         if ($a{key} eq 'PROJECT') {
             return $more->('FIELD') unless @tk > 1;
             push @{ $a{pos} }, uc $tk[1];
             # END is a reserved word, never a name or a field.
             return $bad->('END CANNOT BE A PROJECT FIELD') if uc $tk[1] eq 'END';
+            $t =~ s/^\S+\s*//;
+        }
+        # DPVMODEL names its pipe, then the make and model as typed.
+        if ($a{key} eq 'DPVMODEL') {
+            return $more->('PIPE') unless @tk > 1;
+            my $err = check_field('pipe', $tk[1], \%a, 'PIPE');
+            return $bad->('%s', $err) if defined $err;
             $t =~ s/^\S+\s*//;
         }
         $t =~ s/\s+\z//;
@@ -396,6 +426,36 @@ sub analyse {
             my $err = check_field('new', $_, {}, 'NAME');
             return $bad->('%s', $err) if defined $err;
         }
+    } elsif ($rest eq 'dpvloss') {
+        # A dry pipe valve's loss: nothing (refused when the model is
+        # validated, never assumed), EQL and one length, or flow/loss pairs.
+        if (@f && uc $f[0] eq 'EQL') {
+            return $more->('THE EQUIVALENT LENGTH') if @f == 1;
+            return $bad->("UNEXPECTED FIELD '%s' AFTER THE EQUIVALENT LENGTH", $f[2]) if @f > 2;
+            my $m = length_metres($f[1], 'M');
+            return $bad->("EQL '%s' IS NOT A LENGTH", $f[1]) unless defined $m;
+            return $bad->('AN EQUIVALENT LENGTH MUST BE MORE THAN 0') if $m <= 0;
+            $a{rest} = [ 'EQL', $f[1] ];
+        } else {
+            for (@f) {
+                return $bad->("'%s' IS NOT A NUMBER: GIVE FLOW LOSS PAIRS, OR EQL AND A LENGTH", $_)
+                    unless HardyCross::Parse::is_num($_);
+                return $bad->('FLOWS AND LOSSES CANNOT BE NEGATIVE') if $_ < 0;
+            }
+            return $more->('THE LOSS TO PAIR WITH FLOW %s', $f[-1]) if @f % 2;
+        }
+    } elsif ($rest eq 'shares') {
+        return $more->('THE PERCENT FOR SUPPLY %s', $f[-1]) if @f % 2;
+        for my $i (0 .. $#f) {
+            if ($i % 2) {
+                return $bad->("PERCENT '%s' IS NOT A NUMBER", $f[$i]) unless HardyCross::Parse::is_num($f[$i]);
+                return $bad->('A SUPPLY RUNS AT 0 (OUT OF SERVICE) TO 100 PERCENT OF ITS PRESSURE')
+                    if $f[$i] < 0 || $f[$i] > 100;
+            } else {
+                my $err = check_field('node', $f[$i], {}, 'SUPPLY');
+                return $bad->('%s', $err) if defined $err;
+            }
+        }
     } elsif (@f) {
         return $bad->("UNEXPECTED FIELD '%s'", $f[0]);
     }
@@ -433,6 +493,30 @@ sub check_field {
         return "RATIO '$v' IS NOT A RATIO: WRITE IT 3:1 OR 1.5" unless defined $r;
         return 'A PRESSURE RATIO VALVE REDUCES PRESSURE: ITS RATIO MUST BE MORE THAN 1' if $r <= 1;
         return $push->($v);
+    }
+    # A dry pipe valve's trip: by differential RATIO, or by air-side TRIP
+    # pressure.  The setting that follows is read according to it.
+    if ($type eq 'tripmode') {
+        my $m = uc $v;
+        return 'THE TRIP IS SET BY RATIO (DIFFERENTIAL, WATER TO AIR) OR TRIP (AIR-SIDE TRIP PRESSURE)'
+            unless $m eq 'RATIO' || $m eq 'TRIP';
+        return $push->($m);
+    }
+    if ($type eq 'tripvalue') {
+        if (($a->{pos}[-1] // '') eq 'RATIO') {
+            my $r = ratio_value($v);
+            return "RATIO '$v' IS NOT A RATIO: WRITE IT 5.5:1 OR 5.5" unless defined $r;
+            return 'A DIFFERENTIAL TRIP RATIO MUST BE MORE THAN 1:1' if $r <= 1;
+            return $push->($v);
+        }
+        return "TRIP PRESSURE '$v' IS NOT A NUMBER" unless $is_num;
+        return 'AN AIR-SIDE TRIP PRESSURE MUST BE MORE THAN 0' if $v <= 0;
+        return $push->($v);
+    }
+    if ($type eq 'onoff') {
+        my $m = uc $v;
+        return 'THE ACCELERATOR IS ON OR OFF' unless $m eq 'ON' || $m eq 'OFF';
+        return $push->($m);
     }
     return $push->(uc $v) if $type eq 'field';
     if ($type eq 'quantity') {
@@ -479,6 +563,20 @@ sub check_field {
                 unless $g eq 'ON' || $g eq 'OFF';
             return $push->($g);
         }
+        # The supply failure scenarios, and the basis of the joint demand of
+        # several supplies (HardyCross::Supplies).
+        if ($o eq 'SUPPLY_SCENARIOS') {
+            my $g = uc $v;
+            return 'SUPPLY_SCENARIOS IS ON (EACH SUPPLY ALONE AND EACH OUT OF SERVICE) OR OFF'
+                unless $g eq 'ON' || $g eq 'OFF';
+            return $push->($g);
+        }
+        if ($o eq 'JOINT_BASIS') {
+            my $g = uc $v;
+            return 'JOINT_BASIS IS DERATE (EVERY SUPPLY LOWERED BY ONE PRESSURE) OR SCALE (BY ONE FACTOR)'
+                unless $g eq 'DERATE' || $g eq 'SCALE';
+            return $push->($g);
+        }
         if ($o eq 'SIZING_TRIALS') {
             return "SIZING_TRIALS '$v' IS A WHOLE NUMBER OF TRIALS, 1 TO 50"
                 unless $v =~ /^\d+\z/ && $v >= 1 && $v <= 50;
@@ -521,6 +619,11 @@ sub nodes_used {
     my @n = map { $a->{pos}[$_] } grep { $fixed[$_][1] eq 'node' } 0 .. $#fixed;
     # An AREA names its outlets.
     push @n, @{ $a->{rest} } if $a->{key} eq 'AREA';
+    # A SCENARIO names supplies, each followed by its percentage.
+    if ($a->{key} eq 'SCENARIO') {
+        my @r = @{ $a->{rest} };
+        push @n, map { $r[$_] } grep { $_ % 2 == 0 } 0 .. $#r;
+    }
     # A PC copy names its start and end nodes.
     if ($a->{key} eq 'PC') {
         my @r = @{ $a->{rest} };
@@ -619,6 +722,7 @@ sub translate {
     # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
     # before or after the thing it refers to.
     my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty, %area, @area_order, @graphs);
+    my (%dpvdata, %scenario, @scenario_order);
     my $use = { type => 'BORE' };
     my $define_node = sub {
         my ($name, $n, $def) = @_;
@@ -689,6 +793,20 @@ sub translate {
         } elsif ($k eq 'PUMPDUTY') {
             $at->($n, 'PUMP %s ALREADY HAS A DUTY, ON LINE %d', $p[0], $duty{ $p[0] }{line}) if $duty{ $p[0] };
             $duty{ $p[0] } = { line => $n, q => $p[1], p => $p[2] };
+        } elsif ($k eq 'DPVMODEL' || $k eq 'DPVAIR') {
+            my $slot = $k eq 'DPVMODEL' ? 'model' : 'air';
+            $at->($n, 'PIPE %s ALREADY HAS A %s, ON LINE %d', $p[0], $k, $dpvdata{ $p[0] }{"${slot}_line"})
+                if $dpvdata{ $p[0] }{$slot};
+            $dpvdata{ $p[0] }{$slot} = $k eq 'DPVMODEL' ? $a->{text} : $p[1];
+            $dpvdata{ $p[0] }{"${slot}_line"} = $n;
+        } elsif ($k eq 'SCENARIO') {
+            $at->($n, 'SCENARIO %s IS ALREADY DEFINED ON LINE %d', $p[0], $scenario{ $p[0] }{line})
+                if $scenario{ $p[0] };
+            my @share = ([ $p[1], $p[2] ]);
+            my @r = @{ $a->{rest} };
+            push @share, [ splice @r, 0, 2 ] while @r;
+            $scenario{ $p[0] } = { name => $p[0], line => $n, shares => \@share };
+            push @scenario_order, $p[0];
         } elsif (command_spec($k)->{kind} eq 'device') {
             $at->($n, 'PIPE %s ALREADY HAS A DEVICE, %s ON LINE %d', $p[0],
                   $device{ $p[0] }{key}, $device{ $p[0] }{line}) if $device{ $p[0] };
@@ -783,6 +901,42 @@ sub translate {
         %open = map { $_ => 1 } @{ $area{$want}{outlets} };
     }
     my $shut = sub { $design && $in_area{ $_[0] } && !$open{ $_[0] } };
+
+    #---------------------------------------------------- dry pipe valve data
+    # DPVMODEL and DPVAIR describe a dry pipe valve, so their pipe must have one.
+    for my $pname (sort keys %dpvdata) {
+        my $d = $dpvdata{$pname};
+        my $ln = $d->{model_line} // $d->{air_line};
+        $at->($ln, 'PIPE %s HAS NO DRY PIPE VALVE (DPV) FOR THIS TO DESCRIBE', $pname)
+            unless $device{$pname} && $device{$pname}{key} eq 'DPV';
+    }
+
+    #---------------------------------------------------- supply scenarios
+    # Each supply a SCENARIO names must be a water supply (WATER, or a copy of
+    # one), named once in that scenario.  A scenario needs more than one
+    # supply: with one, there is nothing for it to share out.
+    my $is_water = sub {
+        my $d = $node{ shift() };
+        for (1 .. 50) { last unless $d && $d->{kind} eq 'COPY'; $d = $node{ $d->{source} } }
+        return $d && $d->{kind} eq 'WATER';
+    };
+    my $nsup = grep { $is_water->($_) } keys %node;
+    $at->($scenario{ $scenario_order[0] }{line}, 'SCENARIO NEEDS MORE THAN ONE WATER SUPPLY: THE MODEL HAS %d', $nsup)
+        if @scenario_order && $nsup < 2;
+    for my $name (@scenario_order) {
+        my $sc = $scenario{$name};
+        my %once;
+        for my $s (@{ $sc->{shares} }) {
+            my $d = $node{ $s->[0] } or $at->($sc->{line}, 'SCENARIO %s: %s IS NOT DEFINED', $name, $s->[0]);
+            my $src = $d;
+            for (1 .. 50) { last unless $src->{kind} eq 'COPY'; $src = $node{ $src->{source} } or last }
+            $at->($sc->{line}, 'SCENARIO %s: %s IS NOT A WATER SUPPLY', $name, $s->[0])
+                unless $src && $src->{kind} eq 'WATER';
+            $at->($sc->{line}, 'SCENARIO %s NAMES %s TWICE', $name, $s->[0]) if $once{ $s->[0] }++;
+            $at->($sc->{line}, 'SCENARIO %s: A SUPPLY RUNS AT 0 (OUT OF SERVICE) TO 100 PERCENT OF ITS PRESSURE, '
+                             . 'NOT %s', $name, $s->[1]) if $s->[1] < 0 || $s->[1] > 100;
+        }
+    }
 
     #---------------------------------------------------- auto sizing
     # A size of 0 under a pipe type asks for the pipe to be sized
@@ -889,7 +1043,8 @@ sub translate {
                 @elems);
     my $areas = { list => [ map { { name => $_, line => $area{$_}{line}, outlets => $area{$_}{outlets} } } @area_order ],
                   design => $design ? $design->[0] : undef, graphs => \@graphs,
-                  auto => \@auto, sizing => \%sizing };
+                  auto => \@auto, sizing => \%sizing,
+                  scenarios => [ map { $scenario{$_} } @scenario_order ], dpvdata => \%dpvdata };
     return (\@built, \%units, $areas);
 }
 
@@ -976,6 +1131,27 @@ sub device_row {
                                 (defined $mi && $mi > 0 ? "MININLET=$mi" : ()),
                                 (defined $band ? "BAND=$band" : ())), $n);
     }
+    if ($k eq 'DPV') {
+        # The valve's nominal size, as a DN; the trip, kept for the report;
+        # its loss: EQL and a length (in metres, as every row length is), or
+        # the flow/loss points, or nothing at all.  HOST names the pipe, whose
+        # bore and C an equivalent length is worked at.
+        my ($size, $mode, $set, $acc) = @{ $a->{pos} }[1 .. 4];
+        my $dn = size_dn($size, $units->{SIZE});
+        $at->($n, 'DPV %s: %s IS NOT A NOMINAL SIZE IN INCHES', $pname, $size) unless defined $dn;
+        my @row = ($id, $s, $x, 'DPV', "SIZE=$dn", "MODE=$mode",
+                   ($mode eq 'RATIO' ? 'RATIO=' . fmt(ratio_value($set)) : "TRIP=$set"),
+                   "ACC=$acc", "HOST=$pname");
+        if (@r && $r[0] eq 'EQL') {
+            push @row, 'EQL=' . fmt(length_metres($r[1], $units->{LENGTH}));
+        } elsif (@r) {
+            # A single pair at flow zero is a loss that does not vary with
+            # flow, as for BFP; a curve needs two points or more.
+            $at->($n, 'DPV WITH ONE FLOW/LOSS PAIR IS A FIXED LOSS: ITS FLOW MUST BE 0') if @r == 2 && $r[0] != 0;
+            push @row, @r == 2 ? ('FIXED=' . $r[1]) : @r;
+        }
+        return ('DEVICES', join(' ', @row), $n);
+    }
     die "device_row: no translation for $k\n";    # a programming error
 }
 
@@ -1029,6 +1205,17 @@ sub read_string {
     # (OPTION DESIGN_AREA), if any: HardyCross::Areas.
     $net->{areas}       = $areas->{list} if @{ $areas->{list} };
     $net->{design_area} = $areas->{design};
+    # The supply scenarios (SCENARIO), solved by HardyCross::Supplies.
+    $net->{scenarios} = $areas->{scenarios} if @{ $areas->{scenarios} || [] };
+    # The make, model and set air pressure of each dry pipe valve (DPVMODEL,
+    # DPVAIR), on the valve itself.
+    for my $pname (keys %{ $areas->{dpvdata} || {} }) {
+        my ($e) = grep { $_->{id} eq "$pname.DPV" } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+        next unless $e;
+        my $d = $areas->{dpvdata}{$pname};
+        $e->{model} = $d->{model} if defined $d->{model};
+        $e->{transient}{air_initial} = $d->{air} * $net->{f_pres} if defined $d->{air};
+    }
     # Pipes to be sized (size 0) and how (HardyCross::Sizing).
     $net->{auto_sizing} = $areas->{auto} if @{ $areas->{auto} };
     $net->{sizing_opts} = $areas->{sizing};

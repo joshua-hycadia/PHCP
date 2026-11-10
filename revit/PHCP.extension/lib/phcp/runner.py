@@ -29,6 +29,17 @@ class RunResult(object):
     def converged(self):
         return self.code == 0 and bool(self.data.get("converged"))
 
+    @property
+    def acceptance(self):
+        """ACCEPTED, NONCOMPLIANT, REJECTED, INDETERMINATE or ERROR."""
+        return self.data.get("acceptance") or "ERROR"
+
+    @property
+    def usable(self):
+        """A valid solution: numerically and physically sound.  The design
+        may still fail (NONCOMPLIANT); the summary says so."""
+        return self.code == 0 and self.acceptance in ("ACCEPTED", "NONCOMPLIANT")
+
 
 def run(command, text, report_path=None, cwd=None):
     """Run PHCP on the model text.
@@ -38,9 +49,12 @@ def run(command, text, report_path=None, cwd=None):
     passed as --report and the engine writes the PDF there as well as the
     JSON this returns.
 
-    Exit 0 is a solved, converged model.  Exit 1 solved but did not converge:
-    the numbers are returned and must not be used.  Exit 2 is a model the
-    engine refused; the reason is in the JSON.
+    Exit 0 is a valid solution, ACCEPTED or NONCOMPLIANT.  Exit 1 did not
+    converge or its device states did not settle (INDETERMINATE): the numbers
+    are returned and must not be used.  Exit 2 is a model the engine refused;
+    the reason is in the JSON.  Exit 3 converged but is REJECTED: a pump
+    running backwards, a reverse discharge, continuity not holding.  Its
+    numbers must not be used either.
     """
     if not command:
         raise ResultError("PHCP was not found")

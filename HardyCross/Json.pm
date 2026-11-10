@@ -8,18 +8,54 @@
 # Other programs -- the AutoCAD exporter now, possibly Revit later -- run
 # phcp.exe and read what it prints (decided 28 October 2026: a program to call,
 # not a DLL).  `phcp.exe --json model.phc` prints one JSON object, described
-# below, and the exit status says how it went: 0 converged, 1 solved but did
-# not converge, 2 the model could not be read or solved.  The JSON is written
-# in every case, so a caller always has something to read -- on an error, the
-# message and its .phc line.
+# below, and the exit status says how it went:
 #
-# The contract is versioned: "interface" is 1.  A field is never renamed or
+#   0  ACCEPTED or NONCOMPLIANT: a valid solution, numerically and
+#      physically; "acceptance" says whether the design passes
+#   1  INDETERMINATE: did not converge, or the device states did not settle
+#   2  the model could not be read or solved
+#   3  REJECTED: converged, but the network fails a numerical or physical
+#      check -- not a valid answer to the model, and not to be used
+#
+# The JSON is written in every case, so a caller always has something to
+# read -- on an error, the message and its .phc line.
+#
+# The contract is versioned: "interface" is 2.  A field is never renamed or
 # given a different meaning under the same number; new fields may be added.
+# Interface 2 (introduced after PHCP 1.3.0) changed from 1: outlet "flow" is signed (it was
+# the magnitude, which showed a backward discharge as a forward one), "pass"
+# needs a forward flow, exit status 3 is new, and a converged solve may now
+# exit 1 when its device states did not settle.  Everything else is as in
+# interface 1, with the fields marked [2] added.
 #
-#   interface      1
+#   interface      2
 #   program        "PHCP 1.3.0"
 #   model          the model file's name, or "-" for standard input
-#   status         "converged", "not_converged" or "error"
+#   status         "converged", "not_converged" or "error": how the
+#                  iteration ended, and nothing more
+#   acceptance     [2] "ACCEPTED", "NONCOMPLIANT", "REJECTED",
+#                  "INDETERMINATE" or "ERROR" (HardyCross::Validate): whether
+#                  the results may be used
+#   validation     [2] { numerical, physical, design: { status, errors,
+#                  warnings }, residuals: { continuity, balance, loop,
+#                  element: { value, tolerance, unit, at, pass } }, solver: {
+#                  method, algorithm, hc_converged, outer_settled,
+#                  outer_passes, outer_stop, iterations, maxiter, tol_flow,
+#                  tol_loop, diagnosis, loops }, findings: [ { code,
+#                  category, severity, item, value, limit, unit, message } ] }
+#   validation_errors [2] [ "CODE: message" ] every error finding
+#   supplies       [2] with more than one supply: { operating, supply_sum,
+#                  net_demand, balance, governing, conditional, joint,
+#                  scenarios } (HardyCross::Supplies); absent with one
+#   dry_pipe_valves [2] [ { id, pipe, from, to, nominal_size, model,
+#                  trip_method, trip_ratio, trip_pressure, accelerator,
+#                  loss_basis, equivalent_length, flow, loss, state,
+#                  initial_air_pressure, delivery_time (null: not
+#                  calculated), delivery_time_calculated (false),
+#                  validation, findings } ]
+#   traceability   [2] { program, version, model_sha256, database { name,
+#                  sha256 }, method, algorithm, tolerances, assumptions,
+#                  scenarios }
 #   converged      true / false
 #   iterations     Hardy Cross iterations taken
 #   units          { flow, pressure, length, elevation, size, velocity }: the
@@ -47,6 +83,8 @@
 #                  velocity_pressure, what flow = k sqrt(P) is worked on, and
 #                  what margin and pass are measured on.  Fixed flows
 #                  included, with type FIXEDFLOW and k null
+#                  flow is signed [2]: negative for an outlet discharging
+#                  backwards, which never passes
 #   governing      { id, margin } the outlet with least pressure to spare, or null
 #   demand         { supply, flow, pressure, available, margin, meets } at the
 #                  demand point, or null with demand_reason saying why
@@ -75,7 +113,14 @@ use HardyCross::Demand;
 use HardyCross::PipeData;
 use HardyCross::Report;
 
-our $INTERFACE = 1;
+our $INTERFACE = 2;
+
+# exit_code -- the exit status for a solve, from its acceptance (see the head
+# of this module).  phcp.pl uses it with and without --json, so the two agree.
+sub exit_code {
+    my $acc = shift // 'INDETERMINATE';
+    return { ACCEPTED => 0, NONCOMPLIANT => 0, INDETERMINATE => 1, ERROR => 2, REJECTED => 3 }->{$acc} // 1;
+}
 # An element's kind in the language's own words.
 my %KIND = (PUMP => 'PUMP', BFP => 'LOSS CURVE', FIXED_DROP => 'FIXED DROP', ORIFICE => 'ORIFICE PLATE',
             ORIFICE_REQUIRED => 'ORIFICE PLATE', RATIO => 'PRA');
@@ -137,12 +182,16 @@ sub results {
         # was; discharge_pressure is what q = K sqrt(P) is worked on -- the
         # normal pressure of an in-line sprinkler with velocity pressure ON,
         # the same as pressure otherwise.  margin and pass are on the latter.
+        # flow is SIGNED (interface 2): an outlet discharging backwards has a
+        # negative flow and never passes.  Interface 1 printed |q|, which
+        # showed water entering the network through a sprinkler as a
+        # positive discharge.
         my $p  = ($node->($e->{n1})->{h} - $GW * $e->{z}) / $up;
         my $pd = HardyCross::outlet_pressure($net, $e) / $up;
-        my $pass = abs($e->{q}) >= $e->{qreq} - 1e-6 && $pd >= $e->{preq} / $up - 1e-6;
+        my $pass = $e->{q} >= $e->{qreq} - 1e-6 && $pd >= $e->{preq} / $up - 1e-6;
         push @outlets, { id => $e->{id}, node => $node->($e->{n1})->{id},
             type => $e->{otype} eq 'HOSEREEL' ? 'HREEL' : $e->{otype}, k => r4($e->{k}),
-            required_flow => r4($e->{qreq} / $uf), flow => r4(abs($e->{q}) / $uf),
+            required_flow => r4($e->{qreq} / $uf), flow => r4($e->{q} / $uf),
             required_pressure => r4($e->{preq} / $up), pressure => r4($p),
             velocity_pressure => r4(($e->{pv} // 0) / $up), discharge_pressure => r4($pd),
             margin => r4($pd - $e->{preq} / $up), pass => $pass ? JSON::PP::true : JSON::PP::false };
@@ -184,8 +233,36 @@ sub results {
     );
 
     my $u = $j{units};
+
+    # The validation (HardyCross::Validate::assess): the same result the
+    # report prints.  acceptance decides whether the results may be used;
+    # status and converged say only how the iteration ended.
+    require HardyCross::Validate;
+    my $as = HardyCross::Validate::assess($net, $ok, demand => $o{demand} // 1);
+    my $va = $as->{validation};
+    $j{acceptance} = $va->{acceptance};
+    $j{validation} = {
+        numerical => $va->{numerical}, physical => $va->{physical}, design => $va->{design},
+        residuals => { map { my $r = $va->{residuals}{$_};
+                             $_ => { value => 0 + sprintf('%.6e', $r->{value}), tolerance => 0 + sprintf('%.6e', $r->{tolerance}),
+                                     unit => HardyCross::Report::sym($r->{unit}), at => $r->{at},
+                                     pass => $r->{pass} ? JSON::PP::true : JSON::PP::false } }
+                       grep { $va->{residuals}{$_} } keys %{ $va->{residuals} || {} } },
+        solver => { %{ $va->{solver} }, map { $_ => $va->{solver}{$_} ? JSON::PP::true : JSON::PP::false }
+                                          qw(hc_converged outer_settled) },
+        findings => [ map { my $f = $_; +{ map { $_ => $f->{$_} } grep { defined $f->{$_} }
+                          qw(code category severity item value limit unit message outlet_type) } }
+                      @{ $va->{findings} } ],
+    };
+    # Errors and warnings as data, from the validation: a caller can act on
+    # the code without reading the sentence.  The plain warnings above stay.
+    $j{validation_errors}   = [ map { "$_->{code}: $_->{message}" } grep { $_->{severity} eq 'error' } @{ $va->{findings} } ];
+    $j{supplies}        = supplies_json($net, $as->{supplies}) if $as->{supplies};
+    $j{dry_pipe_valves} = dpv_json($net, $va);
+    $j{traceability}    = traceability($net, $va);
+
     if (($o{demand} // 1) && $ok) {
-        my $dm = HardyCross::Demand::demand_point($net);
+        my $dm = $as->{demand};
         if ($dm->{reason}) {
             ($j{demand}, $j{demand_reason}) = (undef, $dm->{reason});
         } else {
@@ -200,8 +277,11 @@ sub results {
 
     # The summary: what a caller shows a user in a few lines.
     my @s;
+    push @s, 'CALCULATION ' . uc HardyCross::Validate::acceptance_text($va->{acceptance});
     push @s, $ok ? "CONVERGED IN $j{iterations} ITERATIONS"
                  : 'DID NOT CONVERGE - THE RESULTS MUST NOT BE USED';
+    push @s, map { uc "MANDATORY: $_->{code} - $_->{message}" }
+             grep { $_->{severity} eq 'error' && $_->{category} ne 'design' } @{ $va->{findings} };
     push @s, $j{areas} ? sprintf('DESIGN AREA %s GOVERNS, OF %d AREAS SOLVED', $j{design_area}, scalar @{ $j{areas} })
            : defined $j{design_area} ? "DESIGN AREA $j{design_area}, CHOSEN BY OPTION DESIGN_AREA" : ();
     # Said only when it is ON, so a total-pressure summary reads as it always has.
@@ -232,6 +312,118 @@ sub results {
 }
 
 #------------------------------------------------------------------------------
+# supplies_json -- the multiple-supply schedule (HardyCross::Supplies), in the
+# model's units.
+#------------------------------------------------------------------------------
+sub supplies_json {
+    my ($net, $s) = @_;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($Q, $P) = (sub { r4(defined $_[0] ? $_[0] / $uf : undef) }, sub { r4(defined $_[0] ? $_[0] / $up : undef) });
+    my $j = {
+        operating => [ map { { id => $_->{id}, node => $_->{node}, elevation => r4($_->{z}), type => $_->{kind},
+                               flow => $Q->($_->{flow}), pressure => $P->($_->{pressure}),
+                               supply_pressure => $P->($_->{supply_pressure}), share_percent => r4($_->{share}),
+                               status => $_->{status},
+                               extrapolated => $_->{extrapolated} ? JSON::PP::true : JSON::PP::false } }
+                       @{ $s->{operating} } ],
+        supply_sum => $Q->($s->{supply_sum}), net_demand => $Q->($s->{net_demand}),
+        balance => 0 + sprintf('%.6e', $s->{balance} / $uf), governing => $s->{governing},
+    };
+    $j->{conditional} = [ map { { id => $_->{id}, status => $_->{status}, reason => $_->{reason},
+                                  basis => 'the other supplies as modelled',
+                                  required_flow => $Q->($_->{flow}), required_pressure => $P->($_->{pressure}),
+                                  available_pressure => $P->($_->{available}), margin => $P->($_->{margin}),
+                                  governing => $_->{governing}, acceptance => $_->{acceptance},
+                                  others_reverse => $_->{others_reverse} } } @{ $s->{conditional} } ]
+        if $s->{conditional};
+    if (my $jd = $s->{joint}) {
+        $j->{joint} = $jd->{reason} ? { reason => $jd->{reason} } : {
+            basis => $jd->{basis}, assumption => $jd->{assumption},
+            ($jd->{basis} eq 'DERATE' ? (derating => $P->($jd->{delta})) : (factor => r4($jd->{factor}))),
+            margin => $P->($jd->{margin}), governing => $jd->{governing}, acceptance => $jd->{acceptance},
+            total_flow => $Q->($jd->{q_total}),
+            supplies => [ map { { id => $_->{id}, flow => $Q->($_->{flow}), pressure => $P->($_->{pressure}),
+                                  available_pressure => $P->($_->{available}), margin => $P->($_->{margin}),
+                                  share_percent => r4($_->{share}), status => $_->{status} } } @{ $jd->{supplies} } ],
+        };
+    }
+    $j->{scenarios} = [ map { my $sc = $_; {
+        name => $sc->{name}, description => $sc->{description},
+        required => $sc->{required} ? JSON::PP::true : JSON::PP::false, line => $sc->{line},
+        definition => { map { $_ => 0 + $sc->{shares}{$_} } keys %{ $sc->{shares} } },
+        acceptance => $sc->{acceptance}, governing => $sc->{governing}, margin => $P->($sc->{margin}),
+        findings => $sc->{findings} || [], error => $sc->{error},
+        supplies => [ map { { id => $_->{id}, percent => 0 + $_->{percent}, flow => $Q->($_->{flow}),
+                              pressure => $P->($_->{pressure}), status => $_->{status} } } @{ $sc->{supplies} } ],
+    } } @{ $s->{scenarios} } ] if $s->{scenarios};
+    return $j;
+}
+
+#------------------------------------------------------------------------------
+# dpv_json -- each dry pipe valve: its configuration, its steady-state
+# hydraulics, and its validation.  delivery_time is always null: it is not
+# calculated.
+#------------------------------------------------------------------------------
+sub dpv_json {
+    my ($net, $va) = @_;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my @out;
+    for my $e (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my ($hf) = HardyCross::elem_hf($e, $e->{q}, $net->{opts});
+        my @err = map { $_->{code} } grep { ($_->{item} // '') eq $e->{id} && $_->{severity} eq 'error' } @{ $va->{findings} };
+        push @out, {
+            id => $e->{id}, pipe => $e->{host_id}, from => $net->{nodes}[ $e->{n1} ]{id},
+            to => $net->{nodes}[ $e->{n2} ]{id}, nominal_size => $e->{size}, model => $e->{model},
+            trip_method => $e->{trip_mode}, trip_ratio => r4($e->{trip_ratio}),
+            trip_pressure => defined $e->{trip_pressure} ? r4($e->{trip_pressure} / $up) : undef,
+            accelerator => $e->{accelerator},
+            loss_basis => $e->{loss}, equivalent_length => r4($e->{eql}),
+            flow => r4($e->{q} / $uf), loss => r4($hf / $up),
+            state => 'TRIPPED_OPEN',
+            initial_air_pressure => defined $e->{transient}{air_initial} ? r4($e->{transient}{air_initial} / $up) : undef,
+            delivery_time => undef, delivery_time_calculated => JSON::PP::false,
+            validation => @err ? 'FAIL' : 'PASS', findings => \@err,
+        };
+    }
+    return \@out;
+}
+
+#------------------------------------------------------------------------------
+# traceability -- what produced these results: the program and its version,
+# the model's fingerprint, the database's, the method, the tolerances, and
+# the assumptions applied.
+#------------------------------------------------------------------------------
+sub traceability {
+    my ($net, $va) = @_;
+    require Digest::SHA;
+    my $text = $net->{source_text};
+    my @assume;
+    push @assume, 'every dry pipe valve tripped and fully open (steady state); no delivery time calculated'
+        if grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    push @assume, 'joint demand of the supplies on the ' . (($net->{opts}{joint_basis} // 'DERATE') eq 'DERATE'
+        ? 'uniform pressure derating' : 'uniform pressure scaling') . ' basis'
+        if HardyCross::Demand::supplies($net) > 1;
+    push @assume, 'pressure ratio valves at the bottom of their band' if grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    push @assume, 'velocity pressure included at in-line sprinklers (AS 2118.1 Cl 14.15)' if $net->{opts}{vel_press};
+    push @assume, 'supply, pump and loss curves extrapolated linearly beyond their last point'
+        if grep { $_->{code} eq 'CURVE_EXTRAPOLATED' } @{ $va->{findings} };
+    return {
+        program => "PHCP $HardyCross::VERSION", version => $HardyCross::VERSION,
+        model_sha256 => defined $text ? Digest::SHA::sha256_hex($text) : undef,
+        database => HardyCross::PipeData::path()
+            ? { name => HardyCross::PipeData::dataset(), sha256 => HardyCross::PipeData::sha256() } : undef,
+        method => $va->{solver}{method} eq 'DW' ? 'Darcy-Weisbach' : 'Hazen-Williams',
+        algorithm => $va->{solver}{algorithm},
+        tolerances => { flow => $va->{solver}{tol_flow}, loop => $va->{solver}{tol_loop},
+                        maxiter => $va->{solver}{maxiter} },
+        assumptions => \@assume,
+        scenarios => [ map { { name => $_->{name}, line => $_->{line},
+                               shares => { map { $_->[0] => 0 + $_->[1] } @{ $_->{shares} } } } }
+                       @{ $net->{scenarios} || [] } ],
+    };
+}
+
+#------------------------------------------------------------------------------
 # error_result -- the JSON object when the model could not be read or solved:
 # status "error", the message, and its .phc line when it has one.
 #------------------------------------------------------------------------------
@@ -242,7 +434,8 @@ sub error_result {
     my $line;
     $line = 0 + $1 if $msg =~ s/^line (\d+): //i;
     return { interface => $INTERFACE, program => "PHCP $HardyCross::VERSION", model => $model,
-             status => 'error', converged => JSON::PP::false, errors => [ { line => $line, message => uc $msg } ],
+             status => 'error', acceptance => 'ERROR', converged => JSON::PP::false,
+             errors => [ { line => $line, message => uc $msg } ],
              summary => [ 'NOT SOLVED: ' . uc($msg) . (defined $line ? " (LINE $line)" : '') ] };
 }
 

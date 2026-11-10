@@ -30,11 +30,20 @@
 # --json, one JSON object is printed instead -- in every case, an error
 # included, so a caller always has something to read.
 #
-# Exit status is the contract other programs rely on:
-#   0  solved and converged        the results can be used
-#   1  ran but did not converge    the results must NOT be used
+# Exit status is the contract other programs rely on.  It follows the
+# calculation's ACCEPTANCE (HardyCross::Validate), not only whether the
+# iteration converged:
+#   0  ACCEPTED or NONCOMPLIANT    a valid solution: numerically and physically
+#                                  sound; the JSON's "acceptance" and the
+#                                  report say whether the design passes
+#   1  INDETERMINATE               did not converge, or the device states did
+#                                  not settle: the results must NOT be used
 #   2  input or topology error     nothing was solved; the reason is on stderr
 #                                  (and in the JSON, with --json)
+#   3  REJECTED                    converged, but the network fails a
+#                                  numerical or physical check (a pump running
+#                                  backwards, a reverse discharge, continuity
+#                                  not holding): the results must NOT be used
 #==============================================================================
 # Command line driver.  Prints element flows and node pressures in the units
 # the MODEL declared -- not the engine's internal ones, because printing
@@ -118,11 +127,17 @@ if (defined $report_path) {
     }
 }
 
+require HardyCross::Json;
+require HardyCross::Validate;
 if ($json) {
-    require HardyCross::Json;
-    print HardyCross::Json::encode(HardyCross::Json::results($net, $ok, $model));
-    exit($ok ? 0 : 1);
+    my $j = HardyCross::Json::results($net, $ok, $model);
+    print HardyCross::Json::encode($j);
+    exit(HardyCross::Json::exit_code($j->{acceptance}));
 }
+# Without --json the acceptance is still worked out (with the demand point
+# only when a report asked for it, as it re-solves the model many times), so
+# the exit status means the same thing either way.
+my $va = HardyCross::Validate::assess($net, $ok, demand => defined $report_path ? 1 : 0)->{validation};
 
 printf "# PHCP - Perl Hydraulic Calculation Program %s\n", $HardyCross::VERSION;
 printf "# converged %s  iterations %d  loops %d  continuity %.4e\n",
@@ -139,5 +154,5 @@ for my $i (1 .. $#{ $net->{nodes} }) {
     printf "P %s %.4f\n", $n->{id},
         ($n->{h} - $HardyCross::GAMMA_W * $n->{z}) / $net->{f_pres};
 }
-exit($ok ? 0 : 1);
+exit(HardyCross::Json::exit_code($va->{acceptance}));
 

@@ -174,6 +174,10 @@ sub write_report {
         $ok ? sprintf('CONVERGED in %d iterations, %d loops', $net->{iters},
                       scalar @{ $net->{loops} })
             : '*** NOT CONVERGED - NOTHING IN THIS REPORT IS USABLE ***';
+    require HardyCross::Validate;
+    my $acc1 = HardyCross::Validate::assess($net, $ok)->{validation}{acceptance};
+    $out .= sprintf " %-26s %s\n", 'Acceptance', ($acc1 eq 'ACCEPTED' ? '' : '*** ')
+        . HardyCross::Validate::acceptance_text($acc1) . ' (Sections 11 and 14)';
     $out .= "\n Node head is total head referred to datum: H = p + 9.80665 z  (kPa, m).\n";
     $out .= " Loops are fundamental loops of a spanning tree; supplies and outlets are\n";
     $out .= " edges to a reference node at datum, so pseudo-loops tie fixed-grade points.\n";
@@ -341,7 +345,7 @@ sub write_report {
         my ($q, $preq, $tag) = ($n->{demand}, 0, '');
         for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
             next unless $e->{kind} eq 'DISCHARGE' && $e->{n1} == $i;
-            $q += abs $e->{q}; $preq = $e->{preq}; $tag = $e->{id};
+            $q += $e->{q}; $preq = $e->{preq}; $tag = $e->{id};
         }
         # A fixed flow's minimum pressure is a requirement at its node too.
         # Its flow is already in the node's demand above.
@@ -402,7 +406,7 @@ sub write_report {
         my %at;
         for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
             next unless $e->{kind} eq 'DISCHARGE';
-            $at{ $e->{n1} } = { q => abs($e->{q}), k => $e->{k} * sqrt($up) / $uf };
+            $at{ $e->{n1} } = { q => $e->{q}, k => $e->{k} * sqrt($up) / $uf };
         }
         for my $i (1 .. $#{ $net->{nodes} }) {
             my $d = $net->{nodes}[$i]{demand} or next;
@@ -497,7 +501,7 @@ sub write_report {
         $out .= thin();
         my $fails = 0;
         for my $e (@dis) {
-            my $q = abs $e->{q};
+            my $q = $e->{q};    # signed: an outlet discharging backwards never passes
             my $p = HardyCross::outlet_pressure($net, $e);
             my $pass = $q >= $e->{qreq} - 1e-6 && $p >= $e->{preq} - 1e-6;
             $fails++ unless $pass;
@@ -642,7 +646,7 @@ sub write_report {
         my @sup = grep { $_->{kind} =~ /^SUPPLY_/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
         for my $s (@sup) {
             $out .= sprintf " %-12s operating at %9.1f %s and %8.1f %s\n", $s->{id},
-                abs($s->{q}) / $uf, sym($net->{u_flow}),
+                $s->{q} / $uf, sym($net->{u_flow}),
                 HardyCross::Demand::gauge($net, $s->{n2}) / $up, sym($net->{u_pres});
         }
         # With more than one supply: what each must give, on one common
@@ -658,9 +662,9 @@ sub write_report {
                 . 'solves that converge with water leaving this supply are plotted.  The operating '
                 . 'point O is where that curve meets the supply.');
             my $q_all = 0;
-            $q_all += abs $_->{q} for @sup;
+            $q_all += $_->{q} > 0 ? $_->{q} : 0 for @sup;
             for my $s (@sup) {
-                $out .= supply_graph($net, { supply => $s, shared => 1, q_oper => abs $s->{q},
+                $out .= supply_graph($net, { supply => $s, shared => 1, q_oper => $s->{q},
                                              p_oper => HardyCross::Demand::gauge($net, $s->{n2}),
                                              q_all => $q_all });
             }
@@ -730,7 +734,7 @@ sub write_report {
     }
 
     #---------------------------------------------- 8. supplies and devices
-    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP|RATIO)/ }
+    my @sup = grep { $_->{kind} =~ /^(SUPPLY_|PUMP|FIXED_DROP|ORIFICE|BFP|RATIO|DPV)/ }
               @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     if (@sup) {
         $out .= title('10. SUPPLIES, PUMPS AND PRESSURE DEVICES');
@@ -739,7 +743,7 @@ sub write_report {
         $out .= thin();
         my %nm = (SUPPLY_STATIC => 'STATIC', SUPPLY_CURVE => 'CURVE', PUMP => 'PUMP',
                   FIXED_DROP => 'PRV', ORIFICE => 'ORIFICE', ORIFICE_REQUIRED => 'ORIFICE_P',
-                  BFP => 'BFP', RATIO => 'PRA');
+                  BFP => 'BFP', RATIO => 'PRA', DPV => 'DPV');
         for my $e (@sup) {
             my ($hf) = $e->{closed} ? (0) : HardyCross::elem_hf($e, $e->{q}, $o);
             my $note = $e->{closed} ? 'CHECK VALVE CLOSED - would run backwards'
@@ -764,29 +768,27 @@ sub write_report {
         $out .= pump_curves($net) if grep { $_->{kind} eq 'PUMP' } @sup;
     }
 
-    #------------------------------------------------------- 9. verification
-    # Loop closure and continuity, worked from the final flows: the two
-    # conditions a Hardy Cross solution has to satisfy.
-    $out .= title('11. VERIFICATION');
-    my $worst = 0;
-    for my $lp (@{ $net->{loops} }) {
-        my $s = 0;
-        for my $st (@$lp) {
-            my ($hf) = HardyCross::elem_hf($net->{elems}[ $st->[0] ],
-                                           $net->{elems}[ $st->[0] ]{q}, $o);
-            $s += $st->[1] * $hf;
-        }
-        $worst = abs $s if abs $s > $worst;
-    }
-    $out .= sprintf " %-44s %12.3e %s\n", 'Worst loop closure, sum of signed losses',
-        $worst / $up, sym($net->{u_pres});
-    $out .= sprintf " %-44s %12.3e %s\n", 'Worst nodal continuity error',
-        HardyCross::continuity_error($net) / $uf, sym($net->{u_flow});
-    $out .= "\n Continuity is exact by construction: every correction circulates around a\n";
-    $out .= " closed loop, so only rounding appears above.\n";
+    #------------------------------------- 11. hydraulic validation summary
+    # Worked again from the final network by HardyCross::Validate, after
+    # every outer-loop adjustment: what a reviewer checks before believing any
+    # number above.  The same result the JSON and the editor give.
+    require HardyCross::Validate;
+    my $as = HardyCross::Validate::assess($net, $ok);
+    my $va = $as->{validation};
+    $out .= validation_summary($net, $va);
 
-    #--------------------------------------------------------- 10. warnings
-    $out .= title('12. NOTES AND WARNINGS');
+    #------------------------------------------ 12. multiple water supplies
+    $out .= supply_schedule($net, $as->{supplies}) if $as->{supplies};
+
+    #------------------------------------------------- 13. dry pipe valves
+    $out .= dry_pipe_valves($net, $va)
+        if grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+
+    #---------------------------------------------- 14. calculation acceptance
+    $out .= acceptance_section($net, $va);
+
+    #--------------------------------------------------------- 15. warnings
+    $out .= title('15. NOTES AND WARNINGS');
     my @w;
     push @w, 'THE SOLUTION DID NOT CONVERGE. Every figure in this report is provisional.'
         unless $ok;
@@ -1035,6 +1037,11 @@ sub cover_sheet {
     $out .= sprintf "   %-44s %10.2f m/s in pipe %s (operating point)\n", 'Maximum velocity', $vmax, $vid;
     $out .= sprintf "   %-44s %10s\n", 'Result',
         $ok ? 'CONVERGED' : '*** NOT CONVERGED - NOTHING IN THIS REPORT IS USABLE ***';
+    # The acceptance, from HardyCross::Validate: converged is not accepted.
+    require HardyCross::Validate;
+    my $acc = HardyCross::Validate::assess($net, $ok)->{validation}{acceptance};
+    $out .= sprintf "   %-44s %s\n", 'CALCULATION ACCEPTANCE',
+        ($acc eq 'ACCEPTED' ? '' : '*** ') . HardyCross::Validate::acceptance_text($acc) . ' (Section 14)';
 
     $out .= "\n";
     $out .= sprintf " %-30s : %-40s  PHONE : %s\n", 'AUTHORITY HAVING JURISDICTION',
@@ -1482,6 +1489,236 @@ sub ratio_band_note {
     return $out . wrap(' ', 'With every valve at the TOP of its band (' . join(', ', @v) . ')'
         . (defined $top ? sprintf(', the highest pressure downstream is %.1f %s at node %s', $top / $up, $pu, $at)
                         : '') . ': the pipes, fittings and heads downstream must be rated for it.');
+}
+
+#------------------------------------------------------------------------------
+# validation_summary -- Section 11, HYDRAULIC VALIDATION SUMMARY: the checks
+# HardyCross::Validate works again from the final network, each with its
+# value and tolerance so a reviewer can see what was measured.
+#------------------------------------------------------------------------------
+my %STATUS_WORD = (PASS => 'PASS', FAIL => '*** FAIL', INDETERMINATE => '*** INDETERMINATE',
+                   NOT_ASSESSED => 'NOT ASSESSED');
+sub validation_summary {
+    my ($net, $va) = @_;
+    my $s = $va->{solver};
+    my $out = title('11. HYDRAULIC VALIDATION SUMMARY');
+    $out .= wrap(' ', 'Every figure below is worked again from the final network - its flows, its node '
+        . 'heads and each element\'s own equation - after every orifice plate, pump check valve, ratio '
+        . 'valve and velocity pressure has been settled.  None is the residual the solver reported '
+        . 'about itself.') . "\n";
+    $out .= sprintf " %-44s %s\n", 'Calculation method', 'sequential Hardy Cross, loop by loop';
+    $out .= sprintf " %-44s %s\n", 'Hardy Cross iteration',
+        $s->{hc_converged} ? sprintf('converged in %d iterations (limit %d)', $s->{iterations}, $s->{maxiter})
+                           : sprintf('*** NOT CONVERGED after %d iterations%s', $s->{iterations},
+                                     $s->{diagnosis} ? " ($s->{diagnosis})" : '');
+    $out .= sprintf " %-44s %s\n", 'Device states (outer loop)',
+        $s->{outer_settled} ? sprintf('settled after %d pass(es)', $s->{outer_passes})
+      : $s->{outer_stop} eq 'inner_not_converged' ? '*** NOT SETTLED - stopped on an unconverged solve'
+      : sprintf('*** NOT SETTLED after %d passes', $s->{outer_passes});
+    $out .= sprintf " %-44s %g %s flow, %g %s loop\n", 'Solver tolerances',
+        $s->{tol_flow}, sym($net->{u_flow}), $s->{tol_loop}, sym($net->{u_pres});
+    $out .= "\n";
+    $out .= sprintf " %-38s %12s %12s %-7s %s\n", 'CHECK', 'WORST', 'TOLERANCE', 'UNIT', 'RESULT';
+    $out .= thin();
+    my %lab = (continuity => 'Continuity at a node', balance => 'Supplies against demands, overall',
+               loop => 'Loop closure, sum of signed losses', element => 'Element pressure equation');
+    for my $k (qw(continuity balance loop element)) {
+        my $r = $va->{residuals}{$k} or next;
+        $out .= sprintf " %-38s %12.3e %12.3e %-7s %s%s\n", $lab{$k}, $r->{value}, $r->{tolerance},
+            sym($r->{unit}), $r->{pass} ? 'PASS' : '*** FAIL', defined $r->{at} ? "  at $r->{at}" : '';
+    }
+    $out .= thin();
+    $out .= sprintf " %-38s %s\n", 'NUMERICAL CONVERGENCE', $STATUS_WORD{ $va->{numerical}{status} };
+    $out .= sprintf " %-38s %s%s\n", 'PHYSICAL VALIDITY (device states)', $STATUS_WORD{ $va->{physical}{status} },
+        $va->{physical}{errors} ? "  ($va->{physical}{errors} error(s))" : '';
+    $out .= sprintf " %-38s %s%s\n", 'DESIGN COMPLIANCE', $STATUS_WORD{ $va->{design}{status} },
+        $va->{design}{errors} ? "  ($va->{design}{errors} error(s))" : '';
+    $out .= "\n";
+    $out .= wrap(' ', 'The element pressure equation is checked on every element: the head difference '
+        . 'between its ends, from the recovered node heads, against what the element gives at its own '
+        . 'flow, elevation heads included.  On a spanning-tree element it is exact, the heads being '
+        . 'recovered along it; on a chord it equals the closure of that chord\'s loop.');
+    my @info = grep { $_->{severity} eq 'info' } @{ $va->{findings} };
+    $out .= wrap('  -  ', $_->{message}) for @info;
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# supply_schedule -- Section 12, MULTIPLE WATER SUPPLIES (HardyCross::Supplies).
+#------------------------------------------------------------------------------
+sub supply_schedule {
+    my ($net, $s) = @_;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($qu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my ($qd, $pd) = (qdp($net->{u_flow}), pdp($net->{u_pres}));
+    my $f = sub { my ($v, $d, $k) = @_; defined $v ? sprintf('%.*f', $d, $v / $k) : '-' };
+    my $out = title('12. MULTIPLE WATER SUPPLIES');
+    $out .= wrap(' ', sprintf('Each supply below keeps its own connection, elevation and curve or static '
+        . 'pressure.  Flows are signed: positive into the network.  Pressures are gauge, at the supply\'s '
+        . 'own elevation.  Units %s and %s.', $qu, $pu)) . "\n";
+
+    # A. Operating.
+    $out .= " A. OPERATING - every supply as modelled\n";
+    $out .= sprintf "   %-10s %-8s %-6s %11s %11s %7s  %s\n", 'SUPPLY', 'NODE', 'TYPE', 'FLOW', 'PRESSURE',
+        'SHARE', 'STATUS';
+    for my $r (@{ $s->{operating} }) {
+        $out .= sprintf "   %-10s %-8s %-6s %11s %11s %6.1f%%  %s%s\n", $r->{id}, $r->{node}, $r->{kind},
+            $f->($r->{flow}, $qd, $uf), $f->($r->{pressure}, $pd, $up), $r->{share},
+            $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status},
+            $r->{extrapolated} ? ', curve extrapolated' : '';
+    }
+    $out .= sprintf "   %-25s %11s   net demand %s, difference %.2e %s\n", 'SIGNED SUM OF SUPPLIES',
+        $f->($s->{supply_sum}, $qd, $uf), $f->($s->{net_demand}, $qd, $uf), $s->{balance} / $uf, $qu;
+    $out .= sprintf "   %-25s %s\n", 'GOVERNING OUTLET', $s->{governing} // '-';
+
+    unless ($s->{conditional}) {
+        $out .= "\n" . wrap('   ', 'The conditional and joint demands are not worked out: the solve did not '
+            . 'converge, or the model has no outlet with a requirement.');
+        return $out;
+    }
+
+    # B. Conditional.
+    $out .= "\n B. CONDITIONAL MINIMUM - each supply on its own, THE OTHERS AS MODELLED\n";
+    $out .= sprintf "   %-10s %-12s %11s %11s %11s %11s  %-8s %s\n", 'SUPPLY', 'RESULT', 'REQ FLOW', 'REQ PRES',
+        'AVAILABLE', 'MARGIN', 'GOVERNS', 'VALIDATION';
+    for my $c (@{ $s->{conditional} }) {
+        if ($c->{status} eq 'NOT_FOUND') {
+            $out .= sprintf "   %-10s %-12s %s\n", $c->{id}, 'NOT FOUND', $c->{reason};
+            next;
+        }
+        $out .= sprintf "   %-10s %-12s %11s %11s %11s %11s  %-8s %s%s\n", $c->{id},
+            $c->{status} eq 'NOT_REQUIRED' ? 'NOT REQUIRED' : 'REQUIRED',
+            $f->($c->{flow}, $qd, $uf), $f->($c->{pressure}, $pd, $up), $f->($c->{available}, $pd, $up),
+            $f->($c->{margin}, $pd, $up), $c->{governing} // '-', $c->{acceptance},
+            @{ $c->{others_reverse} } ? '; reverse flow in ' . join(' ', @{ $c->{others_reverse} }) : '';
+    }
+    $out .= wrap('   ', 'Each conditional minimum is the least pressure at that supply for the governing '
+        . 'outlet to receive exactly its minimum, every OTHER supply on its modelled curve.  It is '
+        . 'conditional on the others: the conditional minima of different supplies are not a condition '
+        . 'they can all be at together, and they are not added.  NOT REQUIRED: the other supplies meet '
+        . 'every outlet with this one giving no water.');
+
+    # C. Joint.
+    my $j = $s->{joint};
+    $out .= "\n C. JOINT DEMAND - every supply together, in ONE solve\n";
+    if (!$j || $j->{reason}) {
+        $out .= wrap('   ', 'Not found: ' . ($j ? $j->{reason} : 'not worked out') . '.');
+    } else {
+        $out .= wrap('   ', sprintf('Basis (OPTION JOINT_BASIS %s): %s.  This is an ASSUMPTION about how the '
+            . 'supplies share the load; another basis gives another split.', $j->{basis}, $j->{assumption}));
+        $out .= sprintf "   %-38s %s\n", $j->{basis} eq 'DERATE' ? 'Common derating D' : 'Common factor F',
+            $j->{basis} eq 'DERATE' ? sprintf('%.*f %s', $pd, $j->{delta} / $up, $pu) : sprintf('%.4f', $j->{factor});
+        $out .= sprintf "   %-38s %s\n", 'Governing outlet at the joint demand', $j->{governing} // '-';
+        $out .= sprintf "   %-38s %s\n", 'Validation of the joint solve', $j->{acceptance};
+        $out .= sprintf "   %-10s %11s %11s %11s %11s %7s  %s\n", 'SUPPLY', 'JOINT FLOW', 'JOINT PRES',
+            'AVAILABLE', 'MARGIN', 'SHARE', 'STATUS';
+        for my $r (@{ $j->{supplies} }) {
+            $out .= sprintf "   %-10s %11s %11s %11s %11s %6.1f%%  %s\n", $r->{id}, $f->($r->{flow}, $qd, $uf),
+                $f->($r->{pressure}, $pd, $up), $f->($r->{available}, $pd, $up), $f->($r->{margin}, $pd, $up),
+                $r->{share}, $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status};
+        }
+        $out .= sprintf "   %-10s %11s\n", 'TOTAL', $f->($j->{q_total}, $qd, $uf);
+        $out .= wrap('   ', 'JOINT PRES is the pressure each supply gives, on the basis above, at its flow in '
+            . 'that solve; AVAILABLE what it gives at that flow as modelled; MARGIN the difference.  '
+            . 'A supply\'s joint contribution is NOT its conditional minimum (B): the two answer different '
+            . 'questions.');
+    }
+
+    # D. Scenarios.
+    if (@{ $s->{scenarios} || [] }) {
+        $out .= "\n D. SUPPLY SCENARIOS - each solved and validated on its own\n";
+        $out .= sprintf "   %-14s %-4s %-13s %-8s %11s  %s\n", 'SCENARIO', 'REQ', 'RESULT', 'GOVERNS', 'MARGIN',
+            'SUPPLIES (FLOW AT PRESSURE)';
+        for my $sc (@{ $s->{scenarios} }) {
+            my $sup = join ' ', map {
+                $_->{status} eq 'OUT_OF_SERVICE' ? "$_->{id} OUT"
+                    : sprintf('%s %s@%s%s', $_->{id}, $f->($_->{flow}, 0, $uf), $f->($_->{pressure}, 0, $up),
+                              $_->{status} eq 'REVERSE' ? '(REV)' : '') } @{ $sc->{supplies} };
+            $out .= sprintf "   %-14s %-4s %-13s %-8s %11s  %s\n", $sc->{name}, $sc->{required} ? 'YES' : 'no',
+                $sc->{acceptance}, $sc->{governing} // '-', $f->($sc->{margin}, $pd, $up), $sup;
+        }
+        $out .= wrap('   ', 'REQ YES: a SCENARIO line of the model, a requirement - one that is not ACCEPTED fails '
+            . 'the design.  The others (each supply alone, each out of service in turn) are for information.  '
+            . 'MARGIN is the governing outlet\'s.');
+    }
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# dry_pipe_valves -- Section 13, DRY PIPE VALVES.
+#------------------------------------------------------------------------------
+sub dry_pipe_valves {
+    my ($net, $va) = @_;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($qu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my $out = title('13. DRY PIPE VALVES');
+    $out .= wrap(' ', 'Each dry pipe valve is solved TRIPPED AND FULLY OPEN: the steady state after it has '
+        . 'operated and the system has filled.  No trip time, transit time or water delivery time is '
+        . 'calculated, and none is implied; the trip setting and the accelerator are recorded for that '
+        . 'later calculation and do not change any figure in this report.') . "\n";
+    for my $e (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my ($hf) = HardyCross::elem_hf($e, $e->{q}, $net->{opts});
+        my @f = grep { $_->{item} && $_->{item} eq $e->{id} && $_->{severity} eq 'error' } @{ $va->{findings} };
+        my $row = sub { $out .= sprintf "   %-30s %s\n", @_ };
+        $out .= " $e->{id}\n";
+        $row->('Location', sprintf('pipe %s, from node %s', $e->{host_id} // '-', $net->{nodes}[ $e->{n1} ]{id}));
+        $row->('Nominal size', sprintf('DN%d', $e->{size} // 0));
+        $row->('Make and model', $e->{model} // 'not given');
+        $row->('Trip method', ($e->{trip_mode} // '') eq 'RATIO'
+            ? sprintf('differential ratio %.2f:1 (water to air pressure at the clapper)', $e->{trip_ratio} // 0)
+            : ($e->{trip_mode} // '') eq 'TRIP'
+            ? sprintf('air-side trip pressure %.1f %s', ($e->{trip_pressure} // 0) / $up, $pu) : 'not given');
+        $row->('Accelerator', ($e->{accelerator} // '-') . ' (no effect on trip time is assumed)');
+        $row->('Set air pressure', defined $e->{transient}{air_initial}
+            ? sprintf('%.1f %s (reserved: not used in a steady-state solve)', $e->{transient}{air_initial} / $up, $pu)
+            : 'not given');
+        my $basis = $e->{loss} // 'NONE';
+        $row->('Loss basis', $basis eq 'CURVE' ? (defined $e->{fixed_loss}
+                    ? sprintf('fixed loss %.2f %s, as entered', $e->{fixed_loss} / $up, $pu)
+                    : sprintf('flow/loss points as entered (%s)', join(', ', map {
+                          sprintf '%g@%g', $e->{curve}{q}[$_] / $uf, $e->{curve}{p}[$_] / $up } 0 .. $#{ $e->{curve}{q} })))
+                           : $basis eq 'EQL' ? sprintf('equivalent length %.2f m of pipe %s (bore %.1f mm, %s)', $e->{eql},
+                                 $e->{host_id}, $e->{host} ? $e->{host}{dia} : 0,
+                                 ($net->{opts}{method} // 'HW') eq 'DW' ? 'its roughness' : sprintf('C %g', $e->{host} ? $e->{host}{c} // 0 : 0))
+                           : '*** NONE GIVEN - the calculation is rejected');
+        $row->('Steady-state flow', sprintf('%.*f %s', qdp($net->{u_flow}), $e->{q} / $uf, $qu));
+        $row->('Hydraulic loss', sprintf('%.*f %s', pdp($net->{u_pres}) + 1, $hf / $up, $pu));
+        $row->('Inlet / outlet pressure', sprintf('%.*f / %.*f %s', pdp($net->{u_pres}),
+            HardyCross::Demand::gauge($net, $e->{n1}) / $up, pdp($net->{u_pres}),
+            HardyCross::Demand::gauge($net, $e->{n2}) / $up, $pu));
+        $row->('Validation', @f ? '*** ' . join('; ', map { $_->{code} } @f) : 'PASS');
+        $out .= "\n";
+    }
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# acceptance_section -- Section 14, CALCULATION ACCEPTANCE: the result and
+# every mandatory failure, listed apart from the ordinary notes.
+#------------------------------------------------------------------------------
+sub acceptance_section {
+    my ($net, $va) = @_;
+    my $out = title('14. CALCULATION ACCEPTANCE');
+    $out .= sprintf " %-26s %s\n", 'RESULT', HardyCross::Validate::acceptance_text($va->{acceptance});
+    $out .= sprintf " %-26s %s\n", 'Numerical convergence', $STATUS_WORD{ $va->{numerical}{status} };
+    $out .= sprintf " %-26s %s\n", 'Physical validity', $STATUS_WORD{ $va->{physical}{status} };
+    $out .= sprintf " %-26s %s\n", 'Design compliance', $STATUS_WORD{ $va->{design}{status} };
+    my @err = grep { $_->{severity} eq 'error' } @{ $va->{findings} };
+    if (@err) {
+        $out .= "\n MANDATORY FAILURES\n";
+        for my $i (0 .. $#err) {
+            $out .= wrap(sprintf(' %2d  %-9s ', $i + 1, uc $err[$i]{category}), "[$err[$i]{code}] $err[$i]{message}");
+        }
+    }
+    my @wn = grep { $_->{severity} eq 'warning' } @{ $va->{findings} };
+    if (@wn) {
+        $out .= "\n FOR CHECKING (do not decide the result)\n";
+        $out .= wrap(sprintf(' %2d  ', $_ + 1), "[$wn[$_]{code}] $wn[$_]{message}") for 0 .. $#wn;
+    }
+    $out .= "\n" . wrap(' ', 'ACCEPTED means the network balances, every device is in a state it can be in, '
+        . 'and the design requirements in the model are met, as checked by PHCP.  It is not an '
+        . 'independent certification of the design.');
+    return $out;
 }
 
 # Hang-indented paragraph wrap, so a long note reads as one item.

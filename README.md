@@ -37,6 +37,9 @@ perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
 perl tools/test_sizing.pl                # verify auto pipe sizing
 perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand check, OFF unchanged, ON vs OFF)
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
+perl tools/test_validate.pl              # verify hydraulic validation and the acceptance of a calculation
+perl tools/test_supplies.pl              # verify several water supplies: operating, conditional, joint, scenarios
+perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -958,15 +961,25 @@ phcp.exe --json model.phc --report out.pdf    ...and the report written too
 phcp.exe model.phc --annotate out.phc         with auto sizing: the model with each size as //AS - <size>
 ```
 
-The exit status says how it went - 0 converged, 1 solved but did not
-converge (the results must not be used), 2 the model could not be read or
-solved - and one JSON object is printed in every case, so a caller always has
+The exit status follows the calculation's acceptance (see Hydraulic
+validation): 0 a valid solution, ACCEPTED or NONCOMPLIANT (the JSON's
+`acceptance` says which); 1 INDETERMINATE, not converged or its device states
+not settled; 2 the model could not be read or solved; 3 REJECTED, converged
+but failing a numerical or physical check.  Results with exit 1 or 3 must not
+be used.  One JSON object is printed in every case, so a caller always has
 something to read.  Abridged, for example 07:
 
 ```
 {
-   "interface" : 1,
+   "interface" : 2,
    "status" : "converged",
+   "acceptance" : "ACCEPTED",
+   "validation" : { "numerical" : { "status" : "PASS", ... }, "physical" : { ... },
+                    "design" : { ... }, "residuals" : { "loop" : { "value" : 3.2e-03,
+                    "tolerance" : 0.01, "unit" : "kPa", "pass" : true }, ... },
+                    "solver" : { ... }, "findings" : [ { "code" : "VELOCITY_LIMIT", ... } ] },
+   "traceability" : { "model_sha256" : "...", "database" : { ... }, "assumptions" : [ ... ], ... },
+   "dry_pipe_valves" : [],
    "converged" : true,
    "iterations" : 15,
    "units" : { "flow" : "L/min", "pressure" : "kPa", "length" : "m", ... },
@@ -988,6 +1001,7 @@ something to read.  Abridged, for example 07:
    "warnings" : [],
    "errors" : [],
    "summary" : [
+      "CALCULATION ACCEPTED - NUMERICALLY VALID, PHYSICALLY VALID AND COMPLIANT WITH THE DESIGN",
       "CONVERGED IN 15 ITERATIONS",
       "GOVERNING OUTLET H2: 182.3 KPA AGAINST 50.0 REQUIRED, MARGIN 132.3 KPA",
       "EVERY OUTLET PASSES",
@@ -1008,8 +1022,12 @@ On an error, `status` is
 is what a caller shows a user, one line to a string; the JSON is written one
 value to a line, so even a caller with no JSON reader can find it line by
 line, as AutoCAD's PHCPSOLVE does.  The contract is versioned - `interface`
-is 1, a field is never renamed or changed in meaning under that number, and
+is 2, a field is never renamed or changed in meaning under that number, and
 new fields may be added - and is described in full in `HardyCross/Json.pm`.
+Interface 2 replaced 1 (after PHCP 1.3.0): an outlet's `flow` is signed (it
+was the magnitude, so a backward discharge looked like a forward one), and
+`acceptance`, `validation`, `supplies` (several supplies), `dry_pipe_valves`
+and `traceability` were added.  The Revit extension reads interface 2.
 `tools/test_json.pl` runs `phcp.pl` as a caller would and checks every
 example's JSON against the plain output of the same solve.
 
@@ -1213,6 +1231,89 @@ On the examples at their own supplies, ON lowers the total sprinkler flow by
 0 % (no in-line heads) to 3.9 % (example 07, where the range pipe runs at over
 12 m/s).
 
+## Hydraulic validation
+
+A converged Hardy Cross iteration is not, by itself, an accepted
+calculation.  `HardyCross/Validate.pm` checks every completed solve again
+from the final network - its flows, its recovered node heads and each
+element's own equation - after every outer-loop adjustment, and keeps three
+results apart:
+
+- NUMERICAL: every value finite; the iteration converged and every device
+  state (orifice plates, pump check valves, ratio valves, velocity pressures)
+  settled; continuity at every node and overall; every loop closed; the
+  pressure across every element agreeing with its equation, elevation heads
+  included.  Each with its worst value and its tolerance.
+- PHYSICAL: no pump, backflow preventer, ratio valve or dry pipe valve passing
+  water backwards; no outlet discharging backwards; no supply taking water
+  in; supply and pump curves falling with flow, loss curves rising; orifice
+  plates that fit their pipe and meet their duty; every operating demand
+  reachable from a supply in the direction water can flow; no pressure below
+  the vapour pressure of water.  Curves used beyond their last point are
+  flagged as extrapolated.
+- DESIGN: every outlet's flow (signed) and pressure, fixed-flow minimum
+  pressures, a velocity limit set in the model, pump duties, the supply
+  against the demand with any `OPTION SUPPLY_MARGIN`, and every SCENARIO
+  line.
+
+From them the calculation is ACCEPTED, NONCOMPLIANT (valid, but the design
+fails), REJECTED (converged, but not a valid answer) or INDETERMINATE (no
+settled, converged solution).  The cover sheet, Sections 1, 11 and 14 of the
+report, the JSON and the editor's WARNINGS all give the same result, from
+one assessment (`HardyCross::Validate::assess`).  Mandatory failures are
+listed on their own in Section 14, not among the ordinary notes.  ACCEPTED is
+PHCP's own check of the conditions above; it is not an independent
+certification of a design.
+
+The solver's outer loop was corrected with it (10 November 2026): no device
+is adjusted on an unconverged solve, a solve whose device states have not
+settled is not converged, and reverting a pump check valve that would
+isolate part of the network now leaves a network that balances (it used to
+leave the pump's flow at zero, out of continuity, and report it converged).
+An orifice plate's bore is no longer rounded up to its pipe's bore.  No
+result of a valid model changed: `tools/test_velocity_pressure.pl` checks
+every example against flows and pressures frozen before, and
+`tools/test_phc.pl` against the baselines.  `tools/test_validate.pl` holds
+each defect found as a model that must now be refused.
+
+## Several water supplies
+
+With more than one supply, Section 12 of the report and the JSON's
+`supplies` give, for each supply on its own connection, elevation and curve
+(`HardyCross/Supplies.pm`):
+
+- OPERATING: its flow and pressure as modelled, its share, and whether it
+  takes water in; the signed sum of the supplies against the net demand;
+- CONDITIONAL MINIMUM: the least pressure and flow at that supply for the
+  governing outlet to receive exactly its minimum, the other supplies as
+  modelled.  Conditional on the others: the minima of different supplies are
+  never added;
+- JOINT DEMAND: one solve with every supply reduced together until the
+  governing outlet receives exactly its minimum - every supply lowered by one
+  pressure (`OPTION JOINT_BASIS DERATE`, the default) or scaled by one factor
+  (`SCALE`).  The basis is an assumption and the report states it;
+- SCENARIOS: each supply alone and each out of service, for information, and
+  each `SCENARIO` line - a requirement - solved and validated on its own.
+
+With one supply the conditional and joint demands are the demand point, and
+`tools/test_supplies.pl` checks that they agree.  The combined supply graph
+of Section 9 is unchanged.
+
+## Dry pipe valves
+
+`DPV <PIPE> <SIZE> RATIO|TRIP <SETTING> ON|OFF`, then the valve's loss
+(the manufacturer's flow/loss points, or `EQL` and an equivalent length),
+puts a dry pipe valve in a pipe.  It is solved TRIPPED AND FULLY OPEN, the
+steady state after it has operated: its loss and the pressures either side
+are in the solve and in Section 13 of the report.  The trip setting
+(differential ratio or air-side trip pressure), the accelerator, `DPVMODEL`
+and `DPVAIR` are recorded for a later water delivery time calculation; PHCP
+calculates no trip, transit or delivery time and does not imply one.  A
+valve with no loss data is refused - no loss is ever assumed for it.  The
+loss model has been checked by hand (`tools/test_dpv.pl`); no
+manufacturer's valve data is included, and no transient behaviour is
+modelled.
+
 ## The report
 
 132-column monospace, 7-bit ASCII only - it survives printing, email, pasting
@@ -1232,7 +1333,7 @@ others on the page, and the report says which check to make.
 | `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 314 / 314 |
 | AutoCAD exporter, structure | 5 / 5 |
 | Revit extension, without Revit (`tools/test_revit.py`) | 88 / 88 |
-| JSON interface | 99 / 99 |
+| JSON interface (interface 2) | 109 / 109 |
 | supply, pump and loss curves, supplies combined, and a CD on an orifice plate | 24 / 24 |
 | report hand-checks, 10 models | 615 / 615 |
 | PDF structure, typeface and graphs, 10 models | 188 / 188 |
@@ -1246,6 +1347,9 @@ others on the page, and the report says which check to make.
 | reference manual against the program, its examples solved | 15 / 15 |
 | auto pipe sizing, checked at the demand point | 43 / 43 |
 | velocity pressure: hand-checked range, OFF against the earlier solver, ON against OFF (`tools/test_velocity_pressure.pl`) | 85 / 85 |
+| hydraulic validation: the examples, each defect found as a model now refused, outer-loop settling, tampering caught, design checks, exit status, report / JSON / editor agreement (`tools/test_validate.pl`) | 58 / 58 |
+| several supplies: operating, one supply against the demand point, conditional, joint (DERATE and SCALE), scenarios, report and JSON (`tools/test_supplies.pl`) | 43 / 43 |
+| dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), validation, report and JSON (`tools/test_dpv.pl`) | 36 / 36 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |

@@ -1,8 +1,12 @@
 # PHCP execution plan - command-file input and text editor
 
-Status, 8 November 2026.  Released: v1.0.0, v1.1.0, v1.2.0 and v1.3.0
-(`release_notes/`).  v1.3.0 is the latest tag.  The solver has not changed
-since v1.2.0.
+Status, 10 November 2026.  Released: v1.0.0, v1.1.0, v1.2.0 and v1.3.0
+(`release_notes/`).  v1.3.0 is the latest tag.  On branch
+`job/hydraulic-validation`, not yet merged: hydraulic validation
+(`HardyCross/Validate.pm`), several supplies (`HardyCross/Supplies.pm`), the
+dry pipe valve (DPV) and JSON interface 2.  The solver's outer loop and pump
+check valve revert changed with it; no solved number of a valid model
+changed (checked against the frozen results and baselines).
 
 The source has three windows on the same `.phc` file and the same engine:
 the text editor (`phcp_editor.pl`), the spreadsheet (`phcp_sheet.pl`) and
@@ -503,3 +507,9 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] Revit: pyRevit extension walks a model, writes `.phc`, calls `phcp --json`; `tools/test_revit.py`. No engine change.
 - [x] Revit: outlets, devices (booster, loss, reducing valve, orifice, ratio valve), renumber copies, colour key, select failures, pipe tags, apply a suggested DN. No engine change.
 - [ ] Revit extension run inside Revit 2022 to 2027
+- [x] Hydraulic validation: every solve checked again from the final network, numerical, physical and design results kept apart, ACCEPTED / NONCOMPLIANT / REJECTED / INDETERMINATE; outer loop stops on an unconverged solve and must settle; pump check valve revert fixed (engine change, requested by the maintainer 10 November 2026; `tools/test_validate.pl`)
+- [x] Several supplies: operating, conditional minimum, joint demand on a stated basis (DERATE or SCALE), supply scenarios and SCENARIO lines (`tools/test_supplies.pl`)
+- [x] DPV: a dry pipe valve, solved tripped and fully open, its loss from points or an equivalent length; trip ratio or trip pressure and accelerator kept for a later delivery time calculation (`tools/test_dpv.pl`)
+- [x] JSON interface 2: acceptance, validation, supplies, dry pipe valves, traceability; outlet flow signed; exit 3 for REJECTED
+- [ ] Water delivery time for dry systems (transient; not started)
+- [ ] Manufacturer dry pipe valve data (none included)

@@ -23,8 +23,8 @@ manual reads and solves.
 5. Settings: TITLE, PROJECT, UNITS, METHOD, OPTION
 6. Pipes: USE, PIPE, PC, CHANGEPIPE, EQV, and auto sizing
 7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW
-8. Pumps and devices: PUMP, PUMPDUTY, BP, BFP, PRV, OPP, OFD, PRA
-9. Design and reporting: AREA, SUPPLYGRAPH
+8. Pumps and devices: PUMP, PUMPDUTY, BP, BFP, PRV, OPP, OFD, PRA, DPV, DPVMODEL, DPVAIR
+9. Design and reporting: AREA, SUPPLYGRAPH, SCENARIO
 10. Fittings
 11. Pipe types
 12. Names PHCP makes itself
@@ -236,8 +236,12 @@ there is one, is in brackets.
 | `OPP` | PIPE DROP [CD] | 8.5 |
 | `OFD` | PIPE BORE [CD] | 8.5 |
 | `PRA` | PIPE RATIO [MININLET] [BAND] | 8.6 |
+| `DPV` | PIPE SIZE RATIO\|TRIP SETTING ON\|OFF [FLOW LOSS ...] or [EQL LENGTH] | 8.7 |
+| `DPVMODEL` | PIPE TEXT | 8.7 |
+| `DPVAIR` | PIPE PRESSURE | 8.7 |
 | `AREA` | NAME OUTLET [OUTLET ...] | 9.1 |
 | `SUPPLYGRAPH` | FILE | 9.2 |
+| `SCENARIO` | NAME SUPPLY PERCENT [SUPPLY PERCENT ...] | 9.3 |
 
 In the syntax lines below, `<FIELD>` must be given and `[FIELD]` may be left
 off. Optional fields go in order: to give the second, give the first.
@@ -345,7 +349,10 @@ name is an error. A numeric option's value must be a number.
 | `SIZING_TRIALS` | 1 to 50 | 5 | For pipes given size 0: how many trials the sizing search makes, each from a different start. |
 | `FITTING_BASIS` | `CORRECTED` or `STANDARD` | `CORRECTED` | CORRECTED corrects fitting lengths for C and for the installed bore. STANDARD uses the AS 2118.1 values unmodified (the "published Standard alone" election), and the report says so. |
 | `VELOCITY_PRESSURE` | `ON` or `OFF` | `OFF` | ON: in-line sprinklers discharge on the normal pressure, q = K sqrt(Pt - Pv), Pv = rho v^2 / 2 in the pipe bringing the most water into the head's node (AS 2118.1 Clause 14.15, at the designer's discretion). End sprinklers, hydrants, hose reels and fixed flows stay on total pressure. OFF: every outlet on total pressure. The report and the JSON state which (Section 5.5.1). |
-| `VEL_LIMIT` | m/s, above 0 | 6 | Pipes faster than this are listed in the warnings. A setting, not a clause of a Standard, and the report says which. |
+| `VEL_LIMIT` | m/s, above 0 | 6 | Given in the model, a design limit: a pipe faster than it fails the design (NONCOMPLIANT). Left at the default of 6 m/s, a pipe faster than that is a warning only. A setting, not a clause of a Standard, and the report says which. |
+| `SUPPLY_MARGIN` | pressure, PRESSURE unit | 0 | The least margin the supply must have over the demand. With one supply, at the demand point; with several, at their joint demand (Section 9.3). Less fails the design. It cannot be negative. |
+| `SUPPLY_SCENARIOS` | `ON` or `OFF` | `ON` | With more than one supply: ON solves and reports, for information, each supply alone and each out of service in turn. SCENARIO lines are solved either way (Section 9.3). |
+| `JOINT_BASIS` | `DERATE` or `SCALE` | `DERATE` | With more than one supply, how they are reduced together to find their joint demand: every supply's pressure lowered by one common amount (DERATE), or multiplied by one common factor (SCALE). An assumption, and the report states it (Section 9.3). |
 | `HW_CONST` | number | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. |
 | `NU` | m2/s, above 0 | 1.004e-6 | Kinematic viscosity of water, for Darcy-Weisbach. The default is water at 20 C. |
 | `TOL_FLOW` | flow, FLOW unit | 0.05 L/min | Convergence tolerance on flow. |
@@ -801,9 +808,54 @@ PRA P2 3:1 300
 PRA P3 2:1 0 3
 ```
 
-**One device to a pipe.** BP, BFP, PRV, OPP, OFD and PRA name the pipe they
-sit in, and a pipe holds one device. A second one is an error naming the
-first.
+### 8.7 DPV, DPVMODEL, DPVAIR - a dry pipe valve
+
+```
+DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> [FLOW LOSS ...]
+DPV <PIPE> <SIZE> TRIP <PRESSURE> <ON|OFF> [FLOW LOSS ...]
+DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> EQL <LENGTH>
+DPVMODEL <PIPE> <TEXT>
+DPVAIR <PIPE> <PRESSURE>
+```
+
+A dry pipe valve in a pipe, at its start. PHCP solves it TRIPPED AND FULLY
+OPEN: the steady state after the valve has operated and the system has
+filled. It calculates no trip time, transit time or water delivery time,
+and none of its results says one has been checked.
+
+| field | meaning |
+|---|---|
+| SIZE | The valve's nominal size, in the SIZE unit (100, or 4 under UNITS SIZE IN). 25 to 300 mm. |
+| RATIO or TRIP | How the valve's trip is set. RATIO: a differential trip ratio, the water pressure to the air pressure at which the clapper is held, `5.5:1` or `5.5`. It must be more than 1:1, and one outside 3:1 to 8:1 is a warning to check. TRIP: the air-side pressure at which the valve trips, in the PRESSURE unit, above 0. Give one, not both. A trip ratio is not a loss coefficient. |
+| ON or OFF | The accelerator. No effect on trip time is assumed or calculated. |
+| FLOW LOSS ... | The manufacturer's loss through the open valve: flow and loss pairs, read as every PHCP curve is, straight in Q^1.85 between the points and continued beyond the last (which is a warning). One pair at flow 0 is a loss that does not vary with flow. |
+| EQL LENGTH | Instead, the valve's equivalent length of its pipe, in the LENGTH unit, worked at that pipe's bore and C (or roughness). |
+
+The loss must be given. A DPV with no loss data is solved with none and the
+calculation is REJECTED: no loss is ever assumed for it, and a check valve's
+is not put in its place.
+
+The trip setting and the accelerator do not change any steady-state figure.
+They are kept, with DPVMODEL (the make and model, free text, the rest of the
+line) and DPVAIR (the air pressure the system is set to, reserved), for a
+later water delivery time calculation. That calculation is not part of
+PHCP.
+
+The report's Section 13 lists each valve: where it is, its size, make,
+trip, accelerator, loss basis, steady-state flow and loss, the pressures
+either side, and its checks. Water backwards through it, a size that is not
+a valve size, or a trip setting that cannot be right REJECTS the calculation.
+
+```
+DPV P12 100 RATIO 5.5:1 ON 1000 15 3000 40
+DPV P14 150 TRIP 140 OFF EQL 6.1
+DPVMODEL P12 MAKER X MODEL D100
+DPVAIR P12 280
+```
+
+**One device to a pipe.** BP, BFP, PRV, OPP, OFD, PRA and DPV name the pipe
+they sit in, and a pipe holds one device. A second one is an error naming
+the first.
 
 ---
 
@@ -862,6 +914,40 @@ the warnings, and the report is written without it.
 ```
 SUPPLYGRAPH town main.phg
 SUPPLYGRAPH C:\JOBS\HC-041\PUMP TEST.phg
+```
+
+### 9.3 SCENARIO - a water supply scenario
+
+```
+SCENARIO <NAME> <SUPPLY> <PERCENT> [SUPPLY PERCENT ...]
+```
+
+With more than one supply, a condition the design must also meet: each
+SUPPLY named runs at PERCENT of its pressure (its static, or every point of
+its curve), 0 to 100. 0 is out of service: the supply is taken out and its
+node stays as a junction. Supplies not named run as modelled.
+
+Each scenario is solved and validated on its own (Section 14 of the
+report). A SCENARIO that is not ACCEPTED fails the design. With `OPTION
+SUPPLY_SCENARIOS ON`, the default, PHCP also solves each supply alone and
+each out of service in turn; those are reported for information only.
+
+With more than one supply, the report's Section 12 gives, for each supply:
+
+- its OPERATING flow and pressure, as modelled, its share, and whether it
+  takes water in (which REJECTS the calculation);
+- its CONDITIONAL MINIMUM: the least pressure at its connection, and the
+  flow, for the governing outlet to receive exactly its minimum with every
+  other supply as modelled. The conditional minima of different supplies are
+  not a condition they can all be at together, and are never added;
+- its flow and pressure at the JOINT DEMAND: one solve with every supply
+  reduced together on the basis `OPTION JOINT_BASIS` names, until the
+  governing outlet receives exactly its minimum. Each supply keeps its own
+  curve and connection; their pressures are not assumed equal.
+
+```
+SCENARIO TOWNLOW TOWN 80
+SCENARIO NOPUMP PUMPSET 0 TOWN 90
 ```
 
 ---
@@ -959,7 +1045,7 @@ current list, with every size's bore.
 
 ## 12. Names PHCP makes itself
 
-A device in a pipe (BP, BFP, PRV, OPP, OFD, PRA) sits at the pipe's start.
+A device in a pipe (BP, BFP, PRV, OPP, OFD, PRA, DPV) sits at the pipe's start.
 PHCP splits the pipe there:
 
 - a new node `<pipe>~`, at the start node's elevation;
