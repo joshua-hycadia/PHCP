@@ -22,7 +22,7 @@ manual reads and solves.
 4. Command summary
 5. Settings: TITLE, PROJECT, UNITS, METHOD, OPTION
 6. Pipes: USE, PIPE, PC, CHANGEPIPE, EQV, and auto sizing
-7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW, NRV, NRVMODEL
+7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW, NRV, NRVMODEL, NRVLOSS
 8. Pumps and devices: PUMP, PUMPDUTY, BP, BFP, PRV, OPP, OFD, PRA, DPV, DPVMODEL, DPVAIR
 9. Design and reporting: AREA, SUPPLYGRAPH, SCENARIO
 10. Fittings
@@ -230,6 +230,7 @@ there is one, is in brackets.
 | `FIXEDFLOW` | NAME NODE FLOW [MINPRESSURE] | 7.5 |
 | `NRV` | SUPPLY CV [CRACK] | 7.6 |
 | `NRVMODEL` | SUPPLY TEXT | 7.6 |
+| `NRVLOSS` | SUPPLY FLOW LOSS [FLOW LOSS ...] | 7.6 |
 | `PUMP` | NAME IN OUT CHURN FLOW PRESSURE [FLOW PRESSURE ...] | 8.1 |
 | `PUMPDUTY` | PUMP FLOW PRESSURE | 8.2 |
 | `BP` | PIPE CHURN FLOW PRESSURE [FLOW PRESSURE ...] | 8.3 |
@@ -679,11 +680,12 @@ shows the shortfall as a FAIL instead.
 FIXEDFLOW HOSE1 J4 450 250
 ```
 
-### 7.6 NRV, NRVMODEL - a check valve at a supply
+### 7.6 NRV, NRVMODEL, NRVLOSS - a check valve at a supply
 
 ```
 NRV      <SUPPLY> <CV> [CRACK]
 NRVMODEL <SUPPLY> <TEXT>
+NRVLOSS  <SUPPLY> <FLOW1> <LOSS1> <FLOW2> <LOSS2> [FLOW LOSS ...]
 ```
 
 A non-return (check) valve at a water supply. Water may pass from the supply
@@ -697,7 +699,27 @@ gives it one: none is assumed.
 | CRACK | The pressure it takes to open the valve. Taken as 0 when not given, and the report says so. |
 | TEXT | NRVMODEL: the make and model, as typed. The data sheet the CV and CRACK came from. |
 
-When open, the valve's loss is CRACK plus the CV loss at the flow through it.
+When open, the valve's loss is CRACK plus either the Cv loss or a documented
+NRVLOSS curve. NRVLOSS is optional and must be based on the exact valve
+identified by NRVMODEL (include its data-sheet reference and revision).
+NRVLOSS is an alternative to Cv, so NRV must specify CV 0.
+The first point must be `0 0`, with increasing flows and nondecreasing
+losses. Losses exclude CRACK, so it is not counted twice.
+PHCP interpolates on its established Q^1.85 scale and refuses operating
+flows beyond the last documented flow point. No product figures are invented.
+
+The following is an input-syntax example only, NOT a verified valve:
+
+```
+WATER    TOWN 0 650 1800 560 3600 400
+NRV      TOWN 0 7
+NRVMODEL TOWN MANUFACTURER MODEL SIZE DATA-SHEET REVISION
+NRVLOSS  TOWN 0 0 500 5 1000 18
+```
+
+Use actual manufacturer data when designing. CV 0 *without* NRVLOSS
+continues to mean that flow loss is included in the connected pipework
+(PIPEWORK basis).
 
 The program decides each valve's state from the solved network, after every
 Hardy Cross solve that converges, and solves again when any valve changes:
@@ -720,6 +742,10 @@ supply too: a supply that cannot lift water to its outlets shuts, and the
 model is not accepted. Without a check valve the same model is REJECTED,
 because the supply would take water in.
 
+An isolated section may be reconsidered once through a bounded reopening
+trial when its source could reopen based on local no-flow head. A failed
+trial never becomes an accepted design.
+
 A valve that keeps opening and closing on alternate solves is stopped after
 8 changes. If it is still in the wrong state, the calculation is
 INDETERMINATE (SUPPLY_CHECK_UNRESOLVED).
@@ -730,8 +756,9 @@ NRV      TOWN 950 7
 NRVMODEL TOWN ACME 150 MM SWING CHECK, DATA SHEET 12
 ```
 
-Section 10 of the report lists every supply's valve, state, flow, pressure
-and loss. The JSON gives the same under `supply_check_valves`.
+Section 10 of the report lists each valve's state, pressure loss and basis.
+JSON includes the valve curve range, and fingerprinted results in `.phc`
+include `CHECKVALVE` state, flow, loss, basis, manufacturer and switches.
 
 ---
 
