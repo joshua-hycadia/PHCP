@@ -258,7 +258,7 @@ sub results {
     # the code without reading the sentence.  The plain warnings above stay.
     $j{validation_errors}   = [ map { "$_->{code}: $_->{message}" } grep { $_->{severity} eq 'error' } @{ $va->{findings} } ];
     $j{supplies}        = supplies_json($net, $as->{supplies}) if $as->{supplies};
-    $j{dry_pipe_valves} = dpv_json($net, $va);
+    $j{dry_pipe_valves} = dpv_json($net, $va, $as->{dry});
     $j{traceability}    = traceability($net, $va);
 
     if (($o{demand} // 1) && $ok) {
@@ -361,14 +361,36 @@ sub supplies_json {
 
 #------------------------------------------------------------------------------
 # dpv_json -- each dry pipe valve: its configuration, its steady-state
-# hydraulics, and its validation.  delivery_time is always null: it is not
-# calculated.
+# hydraulics, and its validation.  delivery_time is always null: no water
+# delivery time is calculated by a listed method.  "estimate" holds the
+# ESTIMATED trip, transit and delivery times (HardyCross::DryTime), in
+# seconds, with what each was worked from, or null.
 #------------------------------------------------------------------------------
 sub dpv_json {
-    my ($net, $va) = @_;
+    my ($net, $va, $dry) = @_;
     my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my %dry = map { $_->{id} => $_ } @{ $dry || [] };
+    my $r1 = sub { defined $_[0] ? 0 + sprintf('%.1f', $_[0]) : undef };
     my @out;
     for my $e (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        my $d = $dry{ $e->{id} };
+        my $est = !$d ? undef : $d->{error} ? { error => $d->{error} } : {
+            basis => 'ESTIMATE - not a water delivery time calculation by a listed method; accelerator not modelled',
+            dry_volume_m3 => r4($d->{volume}),
+            trip => { status => $d->{trip}{status}, reason => $d->{trip}{reason}, seconds => $r1->($d->{trip}{seconds}),
+                      formula => 't = 0.0352 V/(An sqrt T0) ln(pa0/pa), FM Global, SFPE Handbook',
+                      trip_pressure => defined $d->{trip}{trip_gauge} ? r4($d->{trip}{trip_gauge} / $up) : undef,
+                      static_water => defined $d->{trip}{static} ? r4($d->{trip}{static} / $up) : undef,
+                      orifice_mm => r4($d->{trip}{orifice_mm}), open => $d->{trip}{open_count},
+                      air_temperature_c => r4($d->{trip}{air_temp_c}),
+                      choked => defined $d->{trip}{choked} ? ($d->{trip}{choked} ? JSON::PP::true : JSON::PP::false) : undef },
+            transit => { status => $d->{transit}{status}, reason => $d->{transit}{reason},
+                         seconds => $r1->($d->{transit}{seconds}), path_seconds => $r1->($d->{transit}{path_seconds}),
+                         fill_seconds => $r1->($d->{transit}{fill_seconds}), remote_outlet => $d->{transit}{remote},
+                         path => $d->{transit}{path_pipes}, path_length => r4($d->{transit}{path_length}),
+                         flows => $d->{transit}{basis} },
+            delivery_seconds => $r1->($d->{delivery}),
+        };
         my ($hf) = HardyCross::elem_hf($e, $e->{q}, $net->{opts});
         my @err = map { $_->{code} } grep { ($_->{item} // '') eq $e->{id} && $_->{severity} eq 'error' } @{ $va->{findings} };
         push @out, {
@@ -387,7 +409,7 @@ sub dpv_json {
             flow => r4($e->{q} / $uf), loss => r4($hf / $up),
             state => 'TRIPPED_OPEN',
             initial_air_pressure => defined $e->{transient}{air_initial} ? r4($e->{transient}{air_initial} / $up) : undef,
-            delivery_time => undef, delivery_time_calculated => JSON::PP::false,
+            delivery_time => undef, delivery_time_calculated => JSON::PP::false, estimate => $est,
             validation => @err ? 'FAIL' : 'PASS', findings => \@err,
         };
     }

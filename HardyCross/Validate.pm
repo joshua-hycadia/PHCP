@@ -122,6 +122,7 @@ sub validate {
     numerical($net, $ok, $v, $add);
     physical($net, $add);
     design($net, $add, %o);
+    dry_time_checks($net, $add, $o{dry}) if $o{dry};
 
     # The status of each category: FAIL if it has an error.  A numerical
     # failure that comes from there being no settled solution at all is
@@ -882,6 +883,35 @@ sub design {
 }
 
 #------------------------------------------------------------------------------
+# dry_time_checks -- what the trip time estimate (HardyCross::DryTime) finds
+# about a dry pipe valve's setting.  The estimates themselves decide nothing;
+# a set air pressure at or below the trip pressure is a valve that cannot be
+# set, which is a physical failure of the model.
+#------------------------------------------------------------------------------
+sub dry_time_checks {
+    my ($net, $add, $dry) = @_;
+    my $up = $net->{f_pres};
+    for my $d (@$dry) {
+        if ($d->{error}) {
+            $add->(category => 'physical', code => 'DPV_NOT_DRY', item => $d->{id},
+                   message => "dry pipe valve $d->{id}: $d->{error}");
+            next;
+        }
+        my $t = $d->{trip} or next;
+        $add->(category => 'physical', code => 'DPV_AIR_BELOW_TRIP', item => $d->{id},
+               value => ($t->{air_gauge} // 0) / $up, limit => ($t->{trip_gauge} // 0) / $up, unit => $net->{u_pres},
+               message => "dry pipe valve $d->{id}: $t->{reason}")
+            if ($t->{status} // '') eq 'ERROR';
+        $add->(category => 'physical', code => 'DPV_TRIP_NOT_CHOKED', severity => 'warning', item => $d->{id},
+               message => sprintf('dry pipe valve %s: the trip pressure, %.1f %s, is below the 1.893 atmospheres at '
+                                . 'which flow through the orifice stops being choked; the trip time formula assumes '
+                                . 'choked flow, and its estimate is less reliable', $d->{id}, $t->{trip_gauge} / $up,
+                                  $net->{u_pres}))
+            if ($t->{status} // '') eq 'ESTIMATE' && !$t->{choked};
+    }
+}
+
+#------------------------------------------------------------------------------
 # assess -- THE validated result of a solved network: the one the report,
 # the PDF, the JSON and the editor all print, so they cannot disagree.
 #
@@ -914,9 +944,18 @@ sub assess {
         # without the demands, and for an unconverged solve -- marked so.
         $sup = HardyCross::Supplies::analyse($net, 0);
     }
-    my $v = validate($net, $ok, ($dm ? (demand => $dm) : ()), ($sup ? (supplies => $sup) : ()));
+    # The estimated trip and transit times of each dry pipe valve
+    # (HardyCross::DryTime), on a converged solve: the transit at the demand
+    # point's flows where there is one, else the operating point's.
+    my $dry;
+    if ($ok && grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        require HardyCross::DryTime;
+        my $at_demand = $dm && !$dm->{reason} && $dm->{net};
+        $dry = HardyCross::DryTime::analyse($net, $at_demand ? ($dm->{net}, 'demand point') : ($net, 'operating point'));
+    }
+    my $v = validate($net, $ok, ($dm ? (demand => $dm) : ()), ($sup ? (supplies => $sup) : ()), ($dry ? (dry => $dry) : ()));
     return $net->{assessment} = { ok => $ok ? 1 : 0, with_demand => $want_demand && $ok ? 1 : 0,
-                                  demand => $dm, supplies => $sup, validation => $v };
+                                  demand => $dm, supplies => $sup, dry => $dry, validation => $v };
 }
 
 #------------------------------------------------------------------------------

@@ -134,8 +134,8 @@ is('flat: no bevel on the buttons or the editor',
    !grep({ $main::btn{$_}->cget(-relief) ne 'flat' || $main::btn{$_}->cget(-borderwidth) != 0 } keys %main::btn)
    && $main::ed->cget(-borderwidth) == 0);
 my @strip = main::strip_commands();
-is('the command strip lists the 26 network commands (PUMPDUTY, DPV, AREA, SCENARIO among them), no settings',
-   @strip == 26 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' || $_ eq 'DPV' } @strip) == 3 && $strip[0] eq 'USE' && $strip[-1] eq 'SCENARIO' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
+is('the command strip lists the 27 network commands (PUMPDUTY, DPV, AREA, SCENARIO among them), no settings',
+   @strip == 27 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' || $_ eq 'DPV' } @strip) == 3 && $strip[0] eq 'USE' && $strip[-1] eq 'SCENARIO' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
 is('NETWORK, PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
    join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS ORIFICE PLATE DATABASE'
