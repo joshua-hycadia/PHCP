@@ -391,6 +391,8 @@ sub check_valves_json {
             supply_pressure => r4(HardyCross::Demand::avail_of($s, $q > 0 ? $q : 0) / $up),
             loss => $v && !$s->{closed} ? r4($v->{loss} / $up) : undef,
             cv => $v ? 0 + $v->{cv} : undef,
+            loss_basis => $v ? $v->{basis} : undef,
+            loss_curve_max_flow => $v && $v->{curve} ? r4($v->{curve}{qhi} / $uf) : undef,
             opening_pressure => $v ? r4($v->{crack} / $up) : undef,
             opening_pressure_given => $v ? ($v->{crack_given} ? JSON::PP::true : JSON::PP::false) : undef,
             model => $v ? $v->{model} : undef,
