@@ -128,8 +128,12 @@ EOF
     my ($code) = run($HEAD . $d1, '--json');
     is('   phcp.pl exits 3 (REJECTED)', $code == 3, "exit $code");
     my $as = HardyCross::Validate::assess($n, $ok);
-    is('   no supply pressure meets it: the design fails too (DEMAND_NOT_FOUND)',
-       codes($as->{validation})->{DEMAND_NOT_FOUND} && $as->{validation}{design}{status} eq 'FAIL');
+    # Every trial of the demand search is as invalid as the model (the
+    # demands have no supply), so the demand is UNRESOLVED -- not a supply
+    # found too weak -- and the design still fails.
+    is('   no valid supply pressure meets it: the design fails too (SUPPLY_DEMAND_UNRESOLVED)',
+       codes($as->{validation})->{SUPPLY_DEMAND_UNRESOLVED} && $as->{validation}{design}{status} eq 'FAIL',
+       join ',', keys %{ codes($as->{validation}) });
 }
 
 # D2.  A pump whose check valve, closing, would isolate the fixed flow it

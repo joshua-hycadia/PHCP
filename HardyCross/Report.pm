@@ -125,6 +125,7 @@ sub write_report {
     my $o  = $net->{opts};
     my $GW = $HardyCross::GAMMA_W;
     my $out = '';
+    require HardyCross::Validate;
 
     # Whether any pipe takes its data from the pipe database; Sections 2
     # and 4 word their provenance statements on it.
@@ -156,9 +157,20 @@ sub write_report {
     }
     $out .= sprintf " %-26s flow %s, pressure %s, length %s, diameter %s\n", 'Units',
         map { sym($_) } @{$net}{qw(u_flow u_pres u_len u_dia)};
-    $out .= sprintf " %-26s flow %.2g %s, loop %.2g %s, %d iterations maximum\n",
-        'Convergence tolerance', $o->{tol_flow} / $uf, sym($net->{u_flow}),
+    $out .= sprintf " %-26s flow %.2g %s, loop %.2g %s, %d iterations maximum  (when the iteration stops)\n",
+        'Solver tolerance', $o->{tol_flow} / $uf, sym($net->{u_flow}),
         $o->{tol_loop} / $up, sym($net->{u_pres}), $o->{maxiter};
+    # The limits the answer is checked to: PHCP's own, whatever the solver
+    # tolerance (HardyCross::Validate).
+    $out .= sprintf " %-26s loop closure and element equations %.3g %s; continuity %g of the largest flow\n",
+        'Verification limit', $HardyCross::Validate::VERIFY_P / $up, sym($net->{u_pres}),
+        $HardyCross::Validate::VERIFY_Q_REL;
+    $out .= sprintf " %-26s %g %% of the target drop (ORIF_DP_TOL%s)\n", 'Orifice duty tolerance',
+        $o->{orif_dp_tol} // $HardyCross::Validate::ORIF_DP_TOL, $o->{orif_dp_tol_set} ? ', set in the model' : ', default'
+        if grep { $_->{kind} =~ /^ORIFICE/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    $out .= sprintf " %-26s %g x the highest flow of a curve; beyond its points a value is EXTRAPOLATED\n",
+        'Curve extrapolation limit', $HardyCross::Validate::EXTRAP_MAX
+        if grep { $_->{curve} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     # Printed whether or not it was set, and says which: a default the
     # designer never chose must not read as a requirement of the Standard.
     $out .= sprintf " %-26s %g m/s  (%s)\n", 'Velocity limit', $o->{vel_limit} // 6,
@@ -1515,10 +1527,13 @@ sub validation_summary {
         $s->{outer_settled} ? sprintf('settled after %d pass(es)', $s->{outer_passes})
       : $s->{outer_stop} eq 'inner_not_converged' ? '*** NOT SETTLED - stopped on an unconverged solve'
       : sprintf('*** NOT SETTLED after %d passes', $s->{outer_passes});
-    $out .= sprintf " %-44s %g %s flow, %g %s loop\n", 'Solver tolerances',
+    $out .= sprintf " %-44s %g %s flow, %g %s loop  (when the iteration stops)\n", 'Solver tolerances',
         $s->{tol_flow}, sym($net->{u_flow}), $s->{tol_loop}, sym($net->{u_pres});
+    $out .= wrap(' ', 'The LIMIT column is the verification limit the answer is checked to.  It is fixed by '
+        . 'PHCP, not by the solver tolerances: a loose TOL_LOOP lets the iteration stop early, and the answer '
+        . 'is then refused if it is not within the limit.');
     $out .= "\n";
-    $out .= sprintf " %-38s %12s %12s %-7s %s\n", 'CHECK', 'WORST', 'TOLERANCE', 'UNIT', 'RESULT';
+    $out .= sprintf " %-38s %12s %12s %-7s %s\n", 'CHECK', 'WORST', 'LIMIT', 'UNIT', 'RESULT';
     $out .= thin();
     my %lab = (continuity => 'Continuity at a node', balance => 'Supplies against demands, overall',
                loop => 'Loop closure, sum of signed losses', element => 'Element pressure equation');
@@ -1533,6 +1548,13 @@ sub validation_summary {
         $va->{physical}{errors} ? "  ($va->{physical}{errors} error(s))" : '';
     $out .= sprintf " %-38s %s%s\n", 'DESIGN COMPLIANCE', $STATUS_WORD{ $va->{design}{status} },
         $va->{design}{errors} ? "  ($va->{design}{errors} error(s))" : '';
+    my $da = $va->{demand_assessment} || {};
+    $out .= sprintf " %-38s %s%s\n", 'SUPPLY DEMAND', $da->{status} // 'NOT_ASSESSED',
+        $da->{basis} ? "  ($da->{basis})" : '';
+    $out .= wrap('   ', 'UNRESOLVED: the search for the demand failed - a trial solve was physically invalid or '
+        . 'did not converge - so the supplies were neither shown adequate nor found inadequate.  '
+        . ($da->{message} // ''))
+        if ($da->{status} // '') eq 'UNRESOLVED';
     $out .= "\n";
     $out .= wrap(' ', 'The element pressure equation is checked on every element: the head difference '
         . 'between its ends, from the recovered node heads, against what the element gives at its own '
@@ -1582,8 +1604,8 @@ sub supply_schedule {
     $out .= sprintf "   %-10s %-12s %11s %11s %11s %11s  %-8s %s\n", 'SUPPLY', 'RESULT', 'REQ FLOW', 'REQ PRES',
         'AVAILABLE', 'MARGIN', 'GOVERNS', 'VALIDATION';
     for my $c (@{ $s->{conditional} }) {
-        if ($c->{status} eq 'NOT_FOUND') {
-            $out .= sprintf "   %-10s %-12s %s\n", $c->{id}, 'NOT FOUND', $c->{reason};
+        if ($c->{status} eq 'UNRESOLVED' || $c->{status} eq 'INADEQUATE') {
+            $out .= wrap(sprintf('   %-10s %-12s ', $c->{id}, $c->{status}), $c->{reason});
             next;
         }
         $out .= sprintf "   %-10s %-12s %11s %11s %11s %11s  %-8s %s%s\n", $c->{id},
@@ -1596,13 +1618,21 @@ sub supply_schedule {
         . 'outlet to receive exactly its minimum, every OTHER supply on its modelled curve.  It is '
         . 'conditional on the others: the conditional minima of different supplies are not a condition '
         . 'they can all be at together, and they are not added.  NOT REQUIRED: the other supplies meet '
-        . 'every outlet with this one giving no water.');
+        . 'every outlet with this one giving no water.  Every trial solve of the search is validated: '
+        . 'INADEQUATE, every valid solve fell short; UNRESOLVED, a trial was physically invalid (another '
+        . 'supply taking water in, say) or did not converge, so the minimum is not known.');
 
     # C. Joint.
     my $j = $s->{joint};
     $out .= "\n C. JOINT DEMAND - every supply together, in ONE solve\n";
-    if (!$j || $j->{reason}) {
-        $out .= wrap('   ', 'Not found: ' . ($j ? $j->{reason} : 'not worked out') . '.');
+    if (!$j || ($j->{status} // '') ne 'FOUND') {
+        $out .= wrap('   ', sprintf('%s: %s.', $j ? $j->{status} // 'NOT FOUND' : 'NOT WORKED OUT',
+                                   $j ? $j->{reason} // '' : 'not worked out'));
+        $out .= wrap('   ', 'UNRESOLVED is not a supply found too weak: on this basis the supplies reach a state '
+            . 'that cannot exist, or a solve does not converge, before the governing outlet reaches its minimum, '
+            . 'so no joint demand exists on it and the supplies\' adequacy is not demonstrated.  A non-return '
+            . 'valve at a supply that would take water in is not modelled.')
+            if $j && ($j->{status} // '') eq 'UNRESOLVED';
     } else {
         $out .= wrap('   ', sprintf('Basis (OPTION JOINT_BASIS %s): %s.  This is an ASSUMPTION about how the '
             . 'supplies share the load; another basis gives another split.', $j->{basis}, $j->{assumption}));
@@ -1610,16 +1640,22 @@ sub supply_schedule {
             $j->{basis} eq 'DERATE' ? sprintf('%.*f %s', $pd, $j->{delta} / $up, $pu) : sprintf('%.4f', $j->{factor});
         $out .= sprintf "   %-38s %s\n", 'Governing outlet at the joint demand', $j->{governing} // '-';
         $out .= sprintf "   %-38s %s\n", 'Validation of the joint solve', $j->{acceptance};
-        $out .= sprintf "   %-10s %11s %11s %11s %11s %7s  %s\n", 'SUPPLY', 'JOINT FLOW', 'JOINT PRES',
-            'AVAILABLE', 'MARGIN', 'SHARE', 'STATUS';
+        $out .= sprintf "   %-10s %-8s %7s %11s %11s %11s %11s %11s %7s  %s\n", 'SUPPLY', 'NODE', 'ELEV', 'JOINT FLOW',
+            'JOINT PRES', 'NODE PRES', 'AVAILABLE', 'MARGIN', 'SHARE', 'STATUS';
         for my $r (@{ $j->{supplies} }) {
-            $out .= sprintf "   %-10s %11s %11s %11s %11s %6.1f%%  %s\n", $r->{id}, $f->($r->{flow}, $qd, $uf),
-                $f->($r->{pressure}, $pd, $up), $f->($r->{available}, $pd, $up), $f->($r->{margin}, $pd, $up),
-                $r->{share}, $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status};
+            $out .= sprintf "   %-10s %-8s %7.2f %11s %11s %11s %11s %11s %6.1f%%  %s%s\n", $r->{id}, $r->{node} // '-',
+                $r->{z} // 0, $f->($r->{flow}, $qd, $uf), $f->($r->{pressure}, $pd, $up),
+                $f->($r->{node_pressure}, $pd, $up), $f->($r->{available}, $pd, $up), $f->($r->{margin}, $pd, $up),
+                $r->{share}, $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status},
+                $r->{extrapolated} ? ', curve EXTRAPOLATED' : '';
         }
-        $out .= sprintf "   %-10s %11s\n", 'TOTAL', $f->($j->{q_total}, $qd, $uf);
+        $out .= sprintf "   %-10s %-8s %7s %11s   net demand %s, difference %.2e %s%s\n", 'SIGNED SUM', '', '',
+            $f->($j->{q_total}, $qd, $uf), $f->($j->{net_demand}, $qd, $uf), ($j->{balance} // 0) / $uf, $qu,
+            $j->{balance_pass} ? '' : '  *** DOES NOT BALANCE';
         $out .= wrap('   ', 'JOINT PRES is the pressure each supply gives, on the basis above, at its flow in '
-            . 'that solve; AVAILABLE what it gives at that flow as modelled; MARGIN the difference.  '
+            . 'that solve; NODE PRES the gauge pressure at its node in that solve; AVAILABLE what it gives at '
+            . 'that flow as modelled; MARGIN the difference, both at the supply\'s own connection and '
+            . 'elevation.  Every figure is from the one solve.  '
             . 'A supply\'s joint contribution is NOT its conditional minimum (B): the two answer different '
             . 'questions.');
     }
@@ -1689,7 +1725,17 @@ sub dry_pipe_valves {
                                  . '(bore %.2f mm) at C %g, by Hazen-Williams - %s', $e->{db}{maker}, $e->{db}{model},
                                  $e->{db}{dn}, $e->{db}{eql}, lc $e->{db}{eql_unit}, uc($e->{db}{ref}) eq 'S40' ? 'Schedule 40'
                                  : "$e->{db}{ref} bore", $e->{ref_bore}, $e->{ref_c}, $e->{db}{source})
-                           : '*** NONE GIVEN - the calculation is rejected');
+                           : $e->{db} ? sprintf('*** DATA_REQUIRED - the database record for the %s %s DN%d gives no usable '
+                                 . 'loss; the calculation is rejected', $e->{db}{maker}, $e->{db}{model}, $e->{db}{dn})
+                           : '*** NONE GIVEN - DATA_REQUIRED; the calculation is rejected');
+        # Where the loss came from: manufacturer data, or a figure entered in
+        # the model -- a constant loss is said to be a simplification.
+        $row->('Loss source', { MANUFACTURER_DB => 'MANUFACTURER DATA, from the database',
+                                USER_CURVE => 'USER ENTERED flow/loss points - check against the data sheet',
+                                USER_EQL => 'USER ENTERED equivalent length - check against the data sheet',
+                                USER_FIXED => 'USER ENTERED CONSTANT LOSS - a SIMPLIFICATION, valid only near the flow it '
+                                            . 'was taken at',
+                                NONE => 'NONE - DATA_REQUIRED' }->{ $e->{loss_source} // 'NONE' } // $e->{loss_source});
         $row->('Steady-state flow', sprintf('%.*f %s', qdp($net->{u_flow}), $e->{q} / $uf, $qu));
         $row->('Hydraulic loss', sprintf('%.*f %s', pdp($net->{u_pres}) + 1, $hf / $up, $pu));
         $row->('Inlet / outlet pressure', sprintf('%.*f / %.*f %s', pdp($net->{u_pres}),

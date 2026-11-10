@@ -38,6 +38,12 @@ my %PIPE_ID = (15 => 16.1, 20 => 21.7, 25 => 27.3, 32 => 36.0, 40 => 41.9,
 # database publishes none for its type: commercial steel, new.
 our $EPS_DEFAULT = 0.045;
 
+# How far OPTION HW_CONST may be from 6.05E7 (see the OPTIONS below), and the
+# range of a Hazen-Williams C factor (see PIPES).
+our $HW_CONST_BAND = 0.02;
+our @HW_C_RANGE    = (40, 200);
+our @NU_RANGE      = (0.28e-6, 1.8e-6);
+
 #------------------------------------------------------------------------------
 # roughness_defaulted -- the pipes whose roughness is the program default,
 # 0.045 mm, because the model gave none and the database publishes none for
@@ -112,7 +118,10 @@ sub is_num {
     # nan and inf are rejected outright: accepting one puts a non-finite value
     # into the network and every later check becomes meaningless.
     return 0 if $t =~ /^[-+]?(nan|inf)/i;
-    return $t =~ /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/ ? 1 : 0;
+    return 0 unless $t =~ /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+    # Written as a number but too large to be one: 1E999 overflows to
+    # infinity, which is as non-finite as "inf" itself.
+    return abs($t + 0) < 9**9**9 ? 1 : 0;
 }
 
 #------------------------------------------------------------------------------
@@ -250,7 +259,28 @@ sub parse_row {
                          : uc($v) =~ /^(DW|DARCY|DARCY-WEISBACH)$/ ? 'DW'
                          : HardyCross::fail("METHOD must be HW or DW, not %s", $v);
         }
-        elsif ($k eq 'HW_CONST') { $o->{hwk} = num($v) }
+        elsif ($k eq 'HW_CONST') {
+            # The constant of the Hazen-Williams equation in the units the
+            # engine works it in: P kPa/m, Q L/min, d mm.  It is not a free
+            # setting.  Its published forms agree within 0.6 %:
+            #   6.05 x 10^5 bar/m  (AS 2118.1, EN 12845)    = 6.05   x 10^7
+            #   4.52 psi/ft, gpm, in (NFPA 13), converted   = 6.0489 x 10^7
+            #   10.67 m/m, m3/s, m (SI, n 1.852), 100 to 5000 L/min in 100 mm
+            #                                               = 6.04 to 6.08 x 10^7
+            # so a value more than 2 % from 6.05 x 10^7 is not this equation
+            # in these units.  It is almost always a constant for other units
+            # -- 6.05E5 (bar/m) or 4.52 (US) -- which changes every friction
+            # loss a hundredfold or more, and was accepted, as were zero (no
+            # friction at all) and a negative constant (water gaining pressure
+            # along a pipe).
+            my $c = num($v);
+            HardyCross::fail("HW_CONST %s is not the Hazen-Williams constant PHCP works in (6.05E7, for P in kPa/m, "
+                             . "Q in L/min and d in mm; its published forms lie within 2 %% of it).  A constant for "
+                             . "other units, such as 6.05E5 (bar/m) or 4.52 (US units), would change every friction loss",
+                             $v)
+                unless $c > 0 && abs($c / $HardyCross::HWK_DEF - 1) <= $HW_CONST_BAND;
+            $o->{hwk} = $c;
+        }
         # The least margin the supply must have over the demand, a pressure
         # in the model's unit (0 unless given).  A supply short of it fails
         # the design (HardyCross::Validate).
@@ -288,9 +318,30 @@ sub parse_row {
         elsif ($k eq 'NU') {
             $o->{nu} = num($v);
             HardyCross::fail("NU must be greater than zero") if $o->{nu} <= 0;
+            # The kinematic viscosity of WATER: 1.79E-6 m2/s at 0 C, 0.29E-6 at
+            # 100 C.  NU 1 -- a million times water's -- made every pipe
+            # laminar and was accepted; a figure outside the range is not
+            # water, or not in m2/s.
+            HardyCross::fail("NU %s m2/s is not the kinematic viscosity of water, which is %g (100 C) to %g (0 C)",
+                             $v, @NU_RANGE)
+                if $o->{nu} < $NU_RANGE[0] || $o->{nu} > $NU_RANGE[1];
         }
-        elsif ($k eq 'TOL_FLOW') { $o->{tol_flow} = num($v) * $net->{f_flow} }
-        elsif ($k eq 'TOL_LOOP') { $o->{tol_loop} = num($v) * $net->{f_pres} }
+        # The SOLVER's stopping tolerances.  They say when the iteration may
+        # stop; they do not say whether its answer is accepted -- that is
+        # checked afterwards to HardyCross::Validate's own verification
+        # limits, which no setting changes.  Zero or less is a tolerance the
+        # iteration can never meet (it used to run to MAXITER and stop
+        # INDETERMINATE with no reason given).
+        elsif ($k eq 'TOL_FLOW') {
+            $o->{tol_flow} = num($v) * $net->{f_flow};
+            HardyCross::fail("TOL_FLOW must be greater than zero") unless $o->{tol_flow} > 0;
+            $o->{tol_flow_set} = 1;
+        }
+        elsif ($k eq 'TOL_LOOP') {
+            $o->{tol_loop} = num($v) * $net->{f_pres};
+            HardyCross::fail("TOL_LOOP must be greater than zero") unless $o->{tol_loop} > 0;
+            $o->{tol_loop_set} = 1;
+        }
         elsif ($k eq 'MAXITER')  {
             $o->{maxiter} = int num($v);
             # Zero is a legitimate request -- no iterations, report the seed --
@@ -322,7 +373,20 @@ sub parse_row {
                 unless $v2 eq 'CORRECTED' || $v2 eq 'STANDARD';
             $o->{fitting_basis} = $v2;
         }
-        elsif ($k eq 'ORIF_STEP'){ $o->{orif_step} = num($v) * $net->{f_dia} }
+        elsif ($k eq 'ORIF_STEP') {
+            # The step orifice plate bores are made to.  Zero used to mean "no
+            # rounding" by accident, and a negative step rounded every bore to
+            # nothing; both are refused.
+            $o->{orif_step} = num($v) * $net->{f_dia};
+            HardyCross::fail("ORIF_STEP must be greater than zero") unless $o->{orif_step} > 0;
+        }
+        elsif ($k eq 'ORIF_DP_TOL') {
+            # How far, in per cent of its target, a sized orifice plate's
+            # final drop may be from its duty (HardyCross::Validate).
+            $o->{orif_dp_tol} = num($v);
+            HardyCross::fail("ORIF_DP_TOL must be greater than zero, a percentage") unless $o->{orif_dp_tol} > 0;
+            $o->{orif_dp_tol_set} = 1;
+        }
         elsif ($k eq 'VELOCITY_PRESSURE') {
             # OFF (the default): every outlet discharges on total pressure,
             # q = K sqrt(Pt).  ON: sprinklers discharge on the normal
@@ -438,6 +502,13 @@ sub parse_row {
         HardyCross::fail("pipe %s has a non-positive diameter", $e->{id}) if $e->{dia} <= 0;
         HardyCross::fail("pipe %s has a negative length", $e->{id})       if $e->{len} < 0;
         HardyCross::fail("pipe %s has a non-positive C factor", $e->{id}) if $e->{c} <= 0;
+        # No pipe has a Hazen-Williams C outside 40 (old, badly tuberculated
+        # unlined iron) to 200; the tables fire standards print run from 100
+        # to 150.  A figure outside that is a typing error or a value from
+        # another equation, and it changes every loss in the pipe.
+        HardyCross::fail("pipe %s: a C factor of %g is outside %g to %g, the range of the Hazen-Williams C of any pipe",
+                         $e->{id}, $e->{c}, @HW_C_RANGE)
+            if $e->{c} < $HW_C_RANGE[0] || $e->{c} > $HW_C_RANGE[1];
         push @{ $net->{elems} }, $e;
         return;
     }
@@ -640,23 +711,36 @@ sub parse_row {
                 # Usable only with a complete loss: a flow coefficient, or a
                 # length with the bore and C it is of.  A data sheet that
                 # prints a length of no stated pipe gives nothing to work at.
-                HardyCross::fail("DPV %s: the database has no usable loss for %s %s DN%s%s", $tk->[0], $mk, $md, $v->{dn},
-                                 length($v->{note}) && $v->{note} ne 'DASH' ? " - $v->{note}" : '')
-                    unless $v->{cv} || (defined $v->{eql_m} && $v->{bore_mm} && $v->{c});
-                ($loss, %data) = ('DB', ($v->{cv} ? (cv => $v->{cv})
-                                                  : (eql => $v->{eql_m}, ref_bore => $v->{bore_mm}, ref_c => $v->{c})),
-                                  db => $v, db_model => "$v->{maker} $v->{model}");
+                # A record with neither is DATA_REQUIRED: the valve reads, with
+                # no loss, and HardyCross::Validate rejects the calculation and
+                # says what is missing.  (It used to refuse the model outright,
+                # which left a caller of the JSON with nothing to act on.)
+                if ($v->{cv} || (defined $v->{eql_m} && $v->{bore_mm} && $v->{c})) {
+                    ($loss, %data) = ('DB', ($v->{cv} ? (cv => $v->{cv})
+                                                      : (eql => $v->{eql_m}, ref_bore => $v->{bore_mm}, ref_c => $v->{c})),
+                                      db => $v, db_model => "$v->{maker} $v->{model}", loss_source => 'MANUFACTURER_DB');
+                } else {
+                    ($loss, %data) = ('NONE', db => $v, db_model => "$v->{maker} $v->{model}", data_status => 'DATA_REQUIRED');
+                }
             } elsif (defined kv($tk, 'EQL')) {
-                ($loss, %data) = ('EQL', eql => kv($tk, 'EQL') * $net->{f_len});
+                ($loss, %data) = ('EQL', eql => kv($tk, 'EQL') * $net->{f_len}, loss_source => 'USER_EQL');
             } elsif (defined kv($tk, 'FIXED')) {
                 my $f = kv($tk, 'FIXED') * $net->{f_pres};
                 # A loss that does not vary with flow, as a flat curve: the
                 # same as a single-pair BFP, read the same way.
                 ($loss, %data) = ('CURVE', curve => HardyCross::fit_curve(
-                    { q => [ 0, 1e6 ], p => [ $f, $f ] }, 1), fixed_loss => $f);
+                    { q => [ 0, 1e6 ], p => [ $f, $f ] }, 1), fixed_loss => $f, loss_source => 'USER_FIXED');
             } elsif (@pts) {
-                ($loss, %data) = ('CURVE', curve => read_curve($net, $tk, 4, 1));
+                ($loss, %data) = ('CURVE', curve => read_curve($net, $tk, 4, 1), loss_source => 'USER_CURVE');
             }
+            # The loss's source, as the report and the JSON print it:
+            #   MANUFACTURER_DB  a valve from the database, its published loss
+            #   USER_CURVE       flow/loss points entered in the model
+            #   USER_EQL         an equivalent length entered in the model
+            #   USER_FIXED       one loss at every flow: a simplification
+            #   NONE             no loss at all: DATA_REQUIRED
+            $data{loss_source} //= 'NONE';
+            $data{data_status} //= $loss eq 'NONE' ? 'DATA_REQUIRED' : 'GIVEN';
             push @{ $net->{elems} }, {
                 id => $tk->[0], kind => 'DPV', n1 => $n1, n2 => $n2,
                 size => int(kv($tk, 'SIZE') // 0), host_id => kv_text($tk, 'HOST'),

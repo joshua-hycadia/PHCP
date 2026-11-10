@@ -715,5 +715,17 @@ for dirpath, _dirs, files in os.walk(ext):
                 hcx.append(name)
 is_("the extension writes .phc, not the old format", not hcx, ", ".join(hcx))
 
+# A NONCOMPLIANT design is usable -- a valid solution, written back for
+# review -- but is never approved; exit 0 alone does not make it so.
+HEAD_PHC = ("UNITS LENGTH M\nUNITS ELEVATION M\nUNITS SIZE MM\nUNITS PRESSURE KPA\nUNITS FLOW LPM\n"
+            "UNITS KFACTOR LPM/KPA\nMETHOD HW\nUSE BORE 120\n")
+weak = run(command_for(os.path.join(ROOT, "phcp.pl")),
+           HEAD_PHC + "WATER N1 0 300\nSPRINKLER N2 0 -250 80\nPIPE P1 N1 N2 100 100\n", cwd=ROOT)
+is_("a NONCOMPLIANT design exits 0 and is usable", weak.code == 0 and weak.usable, weak.acceptance)
+is_("  ... but is not approved", not weak.approved and weak.acceptance == "NONCOMPLIANT", weak.acceptance)
+good = run(command_for(os.path.join(ROOT, "phcp.pl")),
+           HEAD_PHC + "WATER N1 0 900\nSPRINKLER N2 0 -50 80\nPIPE P1 N1 N2 100 100\n", cwd=ROOT)
+is_("an ACCEPTED design is approved", good.approved, good.acceptance)
+
 print("\n%d passed, %d failed" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

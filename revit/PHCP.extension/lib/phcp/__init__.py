@@ -10,5 +10,6 @@ EXTENSION_NAME = "PHCP"
 # Written against the engine's JSON contract.  interface 2 is the one
 # HardyCross::Json publishes; a different number is refused rather than
 # guessed.  Interface 2 adds the calculation's acceptance: a converged solve
-# is used only when it is ACCEPTED or NONCOMPLIANT (RunResult.usable).
+# is used only when it is ACCEPTED or NONCOMPLIANT (RunResult.usable), and
+# is an approved design only when ACCEPTED (RunResult.approved).
 JSON_INTERFACE = 2

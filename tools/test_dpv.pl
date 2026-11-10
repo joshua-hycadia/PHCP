@@ -228,8 +228,16 @@ print "3a. VALVES FROM THE DATABASE\n";
            near(loss($nv, dpv($nv)), ($gpm / 350) ** 2 * 6.894757, 1e-6));
         my $rv = HardyCross::Report::write_report($nv, $kv, 'v.phc');
         is('   the report gives the Cv and its source', $rv =~ /flow\s+coefficient Cv 350/ && $rv =~ /31\.80/);
-        my $e756 = refused(model('DPV P12 100 RATIO 6 ON VALVE VICTAULIC 756'));
-        is('refused: the 756, whose sheet gives no usable loss, with the reason', $e756 =~ /NO USABLE LOSS.*NO CV/, $e756);
+        # The 756's sheet gives no usable loss.  It used to be refused at
+        # reading; it now reads as DATA_REQUIRED and the calculation is
+        # REJECTED with the reason (test_acceptance.pl, part 7).
+        my $n756 = HardyCross::Phc::read_string(model('DPV P12 100 RATIO 6 ON VALVE VICTAULIC 756'));
+        my $k756 = HardyCross::solve_model($n756);
+        my $v756 = HardyCross::Validate::validate($n756, $k756);
+        my ($f756) = grep { $_->{code} eq 'DPV_NO_LOSS_DATA' } @{ $v756->{findings} };
+        is('the 756, whose sheet gives no usable loss: DATA_REQUIRED and REJECTED, with the reason',
+           $v756->{acceptance} eq 'REJECTED' && $f756 && $f756->{message} =~ /DATA_REQUIRED.*no usable pressure loss.*no Cv/i,
+           $f756 ? $f756->{message} : 'no finding');
     }
     my $e = refused(model('DPV P12 100 RATIO 6 ON VALVE ACME X1'));
     is('refused: a valve not in the database, the ones that are listed', $e =~ /IS NOT A DRY PIPE VALVE IN THE DATABASE \(.*TYCO DPV-1/, $e);

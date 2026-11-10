@@ -519,3 +519,6 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] Results saved back into the `.phc` (`--save`, editor SAVE after CALCULATE; `HardyCross/Results.pm`, `tools/test_results.pl`)
 - [x] v1.4.0 - release notes `release_notes/v1.4.0.md`
 - [x] v1.5.0 - release notes `release_notes/v1.5.0.md`
+- [x] Audit of 11 November 2026, acceptance hardening (`tools/test_acceptance.pl`): HW_CONST and C ranges; solver tolerances apart from fixed verification limits; CLOSED_FLOW; every demand-search trial validated, UNRESOLVED apart from INADEQUATE, SUPPLY_DEMAND_UNRESOLVED; joint demand signed balance; ORIF_DP_TOL; CURVE_EXTRAPOLATION_LIMIT; DPV loss source, DATA_REQUIRED, constant loss and loss at no flow; JSON `approved`, `demand_assessment`, `assumptions`, `verification`; `--strict` (exit 4); results block CHECK, TAMPERED, NOT FOR DESIGN USE; Revit `approved`
+- [ ] PLANNED - A non-return valve at a water supply, so that a supply that would take water in closes instead of failing the model (and a DERATE joint demand can continue past it).  Not started.
+- [ ] To check - the comment in `data/pipes.dat` above the Victaulic 756 says a model naming it is refused; it now reads as DATA_REQUIRED.  The data file is not changed without the maintainer's request.

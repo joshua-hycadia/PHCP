@@ -546,11 +546,20 @@ def calculate():
         if result.code == 2:
             tell(summary)
             return
-        if result.code != 0:
-            tell("DID NOT CONVERGE. The results were not written back.\n\n" + summary)
+        if not result.usable:
+            # INDETERMINATE (exit 1) or REJECTED (exit 3): not a valid
+            # solution, and nothing is written back.  A REJECTED calculation
+            # converged; it is not "did not converge".
+            why = ("REJECTED: the results are not a valid solution of the model"
+                   if result.acceptance == "REJECTED"
+                   else "DID NOT CONVERGE, or the device states did not settle")
+            tell("%s. The results were not written back.\n\n%s" % (why, summary))
             return
         host.apply_values(doc, element_results(result.data, host.id_map(walked)))
-        tell(summary + "\n\n%s\n%s" % (phc_path, pdf_path))
+        head = ("" if result.approved else
+                "NOT AN APPROVED DESIGN (%s). The results were written back for review.\n\n"
+                % result.acceptance)
+        tell(head + summary + "\n\n%s\n%s" % (phc_path, pdf_path))
     _guard(go)
 
 

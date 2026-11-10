@@ -37,8 +37,17 @@ class RunResult(object):
     @property
     def usable(self):
         """A valid solution: numerically and physically sound.  The design
-        may still fail (NONCOMPLIANT); the summary says so."""
+        may still fail (NONCOMPLIANT); the summary says so.  Usable is NOT
+        approved: see approved."""
         return self.code == 0 and self.acceptance in ("ACCEPTED", "NONCOMPLIANT")
+
+    @property
+    def approved(self):
+        """The design is shown to work: ACCEPTED, and the engine's own
+        "approved" says so.  Neither exit 0 nor "converged" means this -- a
+        NONCOMPLIANT calculation converges and exits 0."""
+        return (self.code == 0 and self.acceptance == "ACCEPTED"
+                and self.data.get("approved") is True)
 
 
 def run(command, text, report_path=None, cwd=None):
