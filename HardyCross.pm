@@ -1019,7 +1019,15 @@ sub pump_status {
         # HardyCross::Validate rather than taken as settled: the limit stops
         # the outer loop cycling, it does not make the state right.
         if (($e->{nflips} // 0) > $MAX_FLIP) {
-            $e->{flip_limit} = 1 unless $e->{isolating};
+            # Reaching the switch cap is not itself a failure.  Only a pump
+            # whose final pressures still call for a different state is
+            # unresolved.  This matches the established supply-NRV rule and
+            # avoids rejecting a physically settled pump for its history.
+            my $wrong = !$e->{closed} ? ($e->{q} < -$Q_TINY)
+                      : (($net->{nodes}[ $e->{n2} ]{h} - $net->{nodes}[ $e->{n1} ]{h})
+                          < curve_eval($e->{curve}, 0) - $Q_TINY);
+            if ($wrong && !$e->{isolating}) { $e->{flip_limit} = 1 }
+            else                           { delete $e->{flip_limit} }
             next;
         }
 
