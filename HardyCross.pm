@@ -499,7 +499,13 @@ sub check_valve_loss {
     my $sg = ($q < 0 && $aq >= $Q_TINY) ? -1 : 1;
     my $loss = $v->{crack} // 0;
     my $dh = 0;
-    if (($v->{cv} // 0) > 0) {
+    if (my $c = $v->{curve}) {
+        # Published open-valve losses, interpolated through the actual
+        # points on PHCP's established Q^1.85 curve scale.  No generic Cv
+        # is added on top, and the distinct opening pressure stays on NRV.
+        $loss += $sg * curve_eval($c, $aq);
+        $dh = abs curve_slope($c, $aq);
+    } elsif (($v->{cv} // 0) > 0) {
         my $kq = $KPA_PER_LPM2 / $v->{cv} ** 2;
         $loss += $sg * $kq * $aq ** 2;
         $dh = 2 * $kq * ($aq > $Q_TINY ? $aq : $Q_TINY);
