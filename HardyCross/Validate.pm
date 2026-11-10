@@ -463,6 +463,18 @@ sub physical {
                 # would be (a derating can take it below zero) is not judged.
                 next;
             }
+            if ($e->{nrv} && (my $lc = $e->{nrv}{curve})) {
+                # A manufacturer loss curve is not verified outside its
+                # published flow range.  In particular a linear extension
+                # of the last segment is a numerical extrapolation, not
+                # evidence of the valve's pressure loss at that duty.
+                $P->(code => 'NRV_CURVE_RANGE', item => $e->{id},
+                     value => $q / $uf, limit => $lc->{qhi} / $uf, unit => $fu,
+                     message => sprintf('supply check valve %s: %.1f %s exceeds the last documented '
+                                    . 'flow-loss point %.1f %s', $e->{id}, $q / $uf, $fu,
+                                      $lc->{qhi} / $uf, $fu))
+                    if $q > $lc->{qhi} + $QT;
+            }
             if ($k eq 'SUPPLY_CURVE') {
                 if (defined(my $at = curve_order($e->{curve}, -1))) {
                     $P->(code => 'SUPPLY_CURVE_RISING', item => $e->{id}, value => $at / $uf, unit => $fu,
