@@ -35,7 +35,11 @@
 #      dry pipe valve      a flow coefficient's own definition, dP psi =
 #                          (Q gpm / Cv)^2; an equivalent length of a stated
 #                          pipe and C by the US-unit Hazen-Williams form
-#   B. NETWORKS, against a NODAL NEWTON solve written here
+#   B. NETWORKS, against a NODAL NEWTON solve written here.  Two of them have
+#      a check valve at a supply (NRV): in the nodal solve a valve is no
+#      state at all, only max(0, ...) in its supply's flow equation, so
+#      whether it is shut or open comes out of the solve itself -- an
+#      independent check of the outer loop that decides it in PHCP.
 #      Hardy Cross balances LOOP flows; the reference below solves NODE heads
 #      by Newton's method with a numerical Jacobian -- a different set of
 #      unknowns, equations and iteration, sharing no code with HardyCross.pm.
@@ -233,6 +237,7 @@ print "B. NETWORKS, AGAINST A NODAL NEWTON SOLVE\n";
 #   pipes    [ id, a, b, L, d ]              C 120
 #   pumps    [ id, in, out, pc, q1, p1 ]
 #   fixed    [ id, node, q ]
+#   nrv      { static supply id => [ Cv, crack ] }   a check valve at it
 sub phc_of {
     my $m = shift;
     my $t = $HEAD . "METHOD HW\n$TIGHT" . "USE BORE 120\n";
@@ -243,13 +248,22 @@ sub phc_of {
     $t .= "PIPE @$_\n" for @{ $m->{pipes} || [] };
     $t .= "PUMP @$_\n" for @{ $m->{pumps} || [] };
     $t .= "FIXEDFLOW $_->[0] $_->[1] $_->[2]\n" for @{ $m->{fixed} || [] };
+    $t .= "NRV $_ @{ $m->{nrv}{$_} }\n" for sort keys %{ $m->{nrv} || {} };
     return $t;
 }
 sub nodal {
     my $m = shift;
     my (%z, %fixedH, @free);
     $z{ $_->[0] } = $_->[1] for @{ $m->{nodes} || [] }, @{ $m->{heads} || [] }, @{ $m->{curve} || [] };
-    for (@{ $m->{static} || [] }) { $z{ $_->[0] } = $_->[1]; $fixedH{ $_->[0] } = $_->[2] + $MH2O * $_->[1] }
+    # A static supply is a node of fixed head -- unless it has a check valve,
+    # when its node is free and the supply feeds it through the valve.
+    my %nrv = %{ $m->{nrv} || {} };
+    my %vhead;
+    for (@{ $m->{static} || [] }) {
+        $z{ $_->[0] } = $_->[1];
+        if ($nrv{ $_->[0] }) { $vhead{ $_->[0] } = $_->[2] + $MH2O * $_->[1] }
+        else                 { $fixedH{ $_->[0] } = $_->[2] + $MH2O * $_->[1] }
+    }
     @free = sort grep { !exists $fixedH{$_} } keys %z;
     my %ix; @ix{@free} = 0 .. $#free;
     my $R = sub { my ($l, $d) = @_; 6.05e7 * $l / (120 ** 1.85 * $d ** 4.87) };
@@ -281,9 +295,19 @@ sub nodal {
             $q{$id} = $f; $net{$id} += $f;
         }
         for my $x (@{ $m->{fixed} || [] }) { $net{ $x->[1] } -= $x->[2] }
+        # A supply behind a check valve: no flow until the supply's head
+        # exceeds the node's by the opening pressure, then the flow at which
+        # the excess is the valve's loss, dP psi = (Q gpm / Cv)^2.
+        for my $id (keys %vhead) {
+            my ($cv, $crack) = @{ $nrv{$id} };
+            my $x = $vhead{$id} - $h->($id) - $crack;
+            my $f = $x <= 0 ? 0 : 3.785411784 * $cv * sqrt($x / 6.894757);
+            $q{$id} = $f; $net{$id} += $f;
+        }
         return (\%q, [ map { $net{$_} // 0 } @free ]);
     };
-    my ($hmax) = sort { $b <=> $a } (values %fixedH, map { $_->[2] + $MH2O * $_->[1] } @{ $m->{curve} || [] });
+    my ($hmax) = sort { $b <=> $a } (values %fixedH, values %vhead,
+                                     map { $_->[2] + $MH2O * $_->[1] } @{ $m->{curve} || [] });
     my @H = map { $hmax - 1 - $_ } 0 .. $#free;
     my $norm = sub { my $r = shift; my $s = 0; $s += $_ ** 2 for @$r; sqrt $s };
     my (undef, $r) = $flows->(\@H);
@@ -385,6 +409,33 @@ compare('pump', { static => [[ 'S', 0, 200 ]], nodes => [[ 'D', 0 ], [ 'J', 6 ]]
                   heads => [[ 'H1', 6, 50, 80 ], [ 'H2', 6, 50, 80 ]],
                   pipes => [[ 'P1', 'D', 'J', 60, 105.3 ], [ 'B1', 'J', 'H1', 6, 41.9 ], [ 'B2', 'J', 'H2', 12, 41.9 ]],
                   pumps => [[ 'FP', 'S', 'D', 600, 3000, 450 ]] });
+
+# Two static supplies, the second weak and next to the outlets, behind a
+# check valve.  At this demand it would take water in: shut.  The nodal solve
+# finds its flow zero by itself; PHCP must find the valve CLOSED and the same
+# heads.
+my $NRV_NET = { static => [[ 'S1', 0, 900 ], [ 'S2', 0, 300 ]], nodes => [[ 'A', 0 ], [ 'B', 0 ]],
+                heads => [[ 'H1', 0, 50, 80 ], [ 'H2', 0, 50, 80 ]],
+                pipes => [[ 'P1', 'S1', 'A', 60, 80.9 ], [ 'P2', 'A', 'B', 20, 80.9 ], [ 'P3', 'S2', 'B', 5, 105.3 ],
+                          [ 'B1', 'B', 'H1', 4, 41.9 ], [ 'B2', 'A', 'H2', 6, 41.9 ]],
+                nrv => { S2 => [ 400, 7 ] } };
+compare('check valve shut', $NRV_NET);
+{
+    my ($n) = solve(phc_of($NRV_NET));
+    my ($q) = nodal($NRV_NET);
+    is('check valve shut: the nodal solve gives S2 no flow, PHCP closes it',
+       $q->{S2} == 0 && elem($n, 'S2')->{closed}, "nodal $q->{S2}");
+}
+# The same, the outlets opened up: the network falls below S2 and its valve
+# opens, passing water with its opening pressure and Cv loss.
+my %open = (%$NRV_NET, heads => [[ 'H1', 0, 50, 600 ], [ 'H2', 0, 50, 600 ]]);
+compare('check valve open', \%open);
+{
+    my ($n) = solve(phc_of(\%open));
+    my ($q) = nodal(\%open);
+    is('check valve open: both give S2 flow, PHCP has it open',
+       $q->{S2} > 1 && !elem($n, 'S2')->{closed} && elem($n, 'S2')->{q} > 1, "nodal $q->{S2}");
+}
 
 printf "\n%d passed, %d failed\n", $pass, $fail;
 exit($fail ? 1 : 0);

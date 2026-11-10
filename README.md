@@ -47,6 +47,7 @@ perl tools/test_drytime.pl               # verify the estimated trip and transit
 perl tools/test_acceptance.pl            # verify the false positives found in the audit of 11 November 2026 are refused
 perl tools/test_benchmarks.pl            # verify PHCP against reference values it did not compute (published forms, nodal Newton)
 perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
+perl tools/test_check_valves.pl          # verify supply check valves (NRV): closing, reopening, loss of supply, demand searches
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -1371,6 +1372,46 @@ No result of a valid model changed: the examples solve to the same flows and
 pressures (`tools/test_phc.pl`, `tools/test_velocity_pressure.pl`,
 `tools/test_report_checks.pl`).
 
+### Supply check valves, and the second stage of the audit
+
+A water supply may have a non-return valve (`NRV <SUPPLY> <CV> [CRACK]`,
+reference manual 7.6).  None is assumed: a supply without an `NRV` line has
+no valve, as before.  The valve's state is decided like a pump's check
+valve, in the outer loop and on a converged solve only, and the whole network
+is solved again whenever any valve changes.  An open valve whose supply would
+take water in shuts, and the supply is taken out of the network.  A shut
+valve reopens when the supply's no-flow head exceeds the network at its
+connection by more than the valve's opening pressure.  Open, the valve's loss
+is its opening pressure plus its data sheet Cv loss, (Q gpm / Cv)^2 psi.
+
+A valve is never held open to keep the network connected.  If every supply
+that could feed part of the network has shut, that part has LOST ITS SUPPLY.
+It is shown with no flow and 0 gauge pressure, the outlets are named, and the
+result is NONCOMPLIANT (SUPPLY_ISOLATED).  It is not a numerical failure and
+not a pass, and it applies to a single supply as much as to several.  A valve
+that does not settle within 8 changes, and is still in the wrong state, makes
+the result INDETERMINATE (SUPPLY_CHECK_UNRESOLVED).  Validation re-checks a
+shut valve against the final heads (SUPPLY_CHECK_INCONSISTENT).
+
+Every demand search re-solves the model as written, so the valves operate in
+the demand point, the conditional minima, the joint demand and the scenarios.
+A supply shut on its valve is CLOSED, a valid state: it is not a supply too
+weak and not an invalid trial.  On DERATE the weak supply of the audit's
+two-supply case now shuts instead of taking water in, and a joint demand is
+found with that supply giving nothing.  Section 10 of the report and the
+JSON's `supply_check_valves` give each supply's valve, state, flow, pressure
+and loss.
+
+This stage also found and corrected two defects, each with a test written
+first that failed on main at 1e196b8 (`tools/test_check_valves.pl`, part 1):
+
+| # | Defect | Now |
+|---|---|---|
+| 1 | A gravity tank, a supply at 0 kPa gauge above its outlets (the manual's own `WATER TANK 12 0`), was REJECTED as "not reachable from any water supply": the connectivity check counted a supply only above 0 kPa | A supply is usable when it is open and not negative; its elevation head counts |
+| 2 | The same tank's demand point came out at 0.006 kPa, just above zero, because the bisection could not go below its floor; the supply then failed its adequacy check by -0.006 kPa | A demand met at 0 kPa gauge is reported as 0, stated as met by elevation alone (conservative) |
+
+No result of a model without an `NRV` line changed, other than those two.
+
 ### Independent benchmarks
 
 `HardyCross::Validate` shows that a solved network satisfies PHCP's own
@@ -1452,8 +1493,8 @@ UNRESOLVED, not a supply found inadequate, and the design fails as
 SUPPLY_DEMAND_UNRESOLVED (see the audit of 11 November 2026, under Hydraulic
 validation).  On DERATE a weaker supply near the outlets can reach the point
 of taking water in before the governing outlet reaches its minimum: no joint
-demand then exists on that basis.  A non-return valve at a supply is not
-modelled.
+demand then exists on that basis, unless that supply has a check valve
+(`NRV`): it then shuts, gives nothing, and the search goes on without it.
 
 With one supply the conditional and joint demands are the demand point, and
 `tools/test_supplies.pl` checks that they agree.  The combined supply graph
@@ -1544,8 +1585,9 @@ others on the page, and the report says which check to make.
 | results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
 | estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
 | the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
-| independent benchmarks: element equations against their published forms, six networks against a nodal Newton solve (`tools/test_benchmarks.pl`) | 26 / 26 |
-| impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 18 / 18 |
+| independent benchmarks: element equations against their published forms, eight networks (two with a supply check valve) against a nodal Newton solve (`tools/test_benchmarks.pl`) | 32 / 32 |
+| impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 20 / 20 |
+| supply check valves: the two defects of the second stage, the language, no change without cause, closing against the supply deleted, reopening, unsettled valves, loss of supply (one supply and part of a network), changing demand, demand searches, the valve's loss by hand, report and JSON, equivalent descriptions (`tools/test_check_valves.pl`) | 92 / 92 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |
@@ -1637,8 +1679,11 @@ taken from.
 The engine works in the conventional metre of water, 9.80665 kPa (water of
 1000 kg/m3); water at 20 C is 998.2 kg/m3, 0.18 % lighter.  Darcy-Weisbach
 uses an accelerated three-step Colebrook-White solution, within 0.1 % of the
-equation.  A water supply that would take water in is a model failure: a
-non-return valve at a supply is not modelled.  The 1.5 times curve
+equation.  A water supply without a check valve that would take water in is
+a model failure; with one (`NRV`) it shuts.  A check valve's loss is its
+opening pressure plus a Cv loss, a two-term model of a data sheet curve.  It
+is only as good as the Cv and opening pressure given, and PHCP holds no
+check valve data of its own.  The 1.5 times curve
 extrapolation limit, the 10 % orifice duty tolerance and the 0.1 kPa
 verification limit are PHCP's rules, stated with their reasons, not clauses
 of a Standard.

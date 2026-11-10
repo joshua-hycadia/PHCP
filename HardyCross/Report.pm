@@ -733,6 +733,13 @@ sub write_report {
             $dm->{p_avail} > 0 ? 100 * $dm->{margin} / $dm->{p_avail} : 0;
         $out .= sprintf "   %-30s %10.1f %-7s at %9.1f %s\n\n", 'OPERATING POINT', $dm->{q_oper} / $uf,
             $qu, $dm->{p_oper} / $up, $pu;
+        # The demand search does not go below 0 kPa gauge (HardyCross::Demand
+        # demand_point): a supply cannot be below atmosphere.  Met there, the
+        # outlets are met by the supply's elevation alone, and the demand is
+        # stated as 0, which overstates it -- a conservative figure.
+        $out .= wrap('   ', 'The governing outlet is met with the supply at 0 gauge pressure: its elevation alone '
+            . 'meets the demand, and the demand is stated as 0, the least pressure a supply can have.  The true '
+            . 'requirement is lower, so the margin shown is conservative.') . "\n" if $dm->{at_floor};
         $out .= wrap(' ', sprintf('DEMAND is the pressure the system needs at the supply connection '
             . 'for the governing outlet, %s, to receive exactly its minimum - found by re-solving '
             . 'the whole network at trial supply pressures until its margin is zero.  The '
@@ -758,7 +765,8 @@ sub write_report {
                   BFP => 'BFP', RATIO => 'PRA', DPV => 'DPV');
         for my $e (@sup) {
             my ($hf) = $e->{closed} ? (0) : HardyCross::elem_hf($e, $e->{q}, $o);
-            my $note = $e->{closed} ? 'CHECK VALVE CLOSED - would run backwards'
+            my $note = $e->{isolated} ? 'LOSS OF SUPPLY - cut off with its supply'
+                     : $e->{closed} ? 'CHECK VALVE CLOSED - would run backwards'
                      : $e->{kind} eq 'ORIFICE' && $e->{bore}
                         ? sprintf('bore %.2f mm in %.2f mm pipe, beta %.3f',
                                   $e->{bore}, $e->{pipedia}, $e->{bore} / $e->{pipedia})
@@ -776,6 +784,7 @@ sub write_report {
                 $net->{nodes}[ $e->{n1} ]{id}, $net->{nodes}[ $e->{n2} ]{id},
                 qdp($net->{u_flow}), $e->{q} / $uf, pdp($net->{u_pres}) + 1, $hf / $up, $note;
         }
+        $out .= check_valve_table($net) if grep { $_->{nrv} } @sup;
         $out .= ratio_band_note($net) if grep { $_->{kind} eq 'RATIO' } @sup;
         $out .= pump_curves($net) if grep { $_->{kind} eq 'PUMP' } @sup;
     }
@@ -1566,6 +1575,55 @@ sub validation_summary {
 }
 
 #------------------------------------------------------------------------------
+# check_valve_table -- Section 10: every water supply's check valve (NRV).
+#
+# What a checker needs to retrace the valve: how it is modelled (its Cv from
+# the data sheet named, or a loss in the pipework, and its opening pressure,
+# given or taken as 0), the state the solve found it in, and the flow,
+# pressures and loss at that state.  A supply without a valve is listed as
+# NONE: no valve is assumed where the model does not have one.
+#------------------------------------------------------------------------------
+sub check_valve_table {
+    my $net = shift;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    my ($qd, $pd) = (qdp($net->{u_flow}), pdp($net->{u_pres}));
+    require HardyCross::Supplies;
+    my $out = "\n SUPPLY CHECK VALVES (NRV)\n";
+    $out .= sprintf "   %-10s %-14s %11s %11s %9s %7s %8s\n", 'SUPPLY', 'STATE', 'FLOW', 'PRESSURE', 'LOSS', 'CV',
+        'OPENS AT';
+    my (@models, $iso);
+    for my $s (HardyCross::Demand::supplies($net)) {
+        my $v = HardyCross::Supplies::valve_of($s);
+        my $st = $v ? HardyCross::Supplies::state_of($s) : 'NONE';
+        $iso = 1 if $st eq 'ISOLATED';
+        my $q = $s->{closed} ? 0 : $s->{q};
+        $out .= sprintf "   %-10s %-14s %11.*f %11.*f %9s %7s %8s\n", $s->{id},
+            $st eq 'ISOLATED' ? 'ISOLATED' : $st,
+            $qd, $q / $uf, $pd, HardyCross::Demand::gauge($net, $s->{n2}) / $up,
+            $v && !$s->{closed} ? sprintf('%.*f', $pd + 1, $v->{loss} / $up) : '-',
+            $v ? ($v->{cv} > 0 ? $v->{cv} : 'PIPEWORK') : '-',
+            $v ? sprintf('%.*f%s', $pd, $v->{crack} / $up, $v->{crack_given} ? '' : '*') : '-';
+        push @models, sprintf('%s: %s', $s->{id}, $v->{model} // 'make and model not stated') if $v;
+    }
+    $out .= wrap('   ', 'PRESSURE is gauge at the supply\'s connection, LOSS the valve\'s at the flow shown, both in '
+        . sym($net->{u_pres}) . '.  A valve passes water into the network only.  CLOSED: the network there '
+        . 'stands above what the supply can give less the valve\'s opening pressure, so the valve is shut and the '
+        . 'supply gives nothing; the others carry the load.  CV PIPEWORK: the valve\'s flow loss is allowed for '
+        . 'in the pipework.  The loss is the opening pressure plus (Q gpm / Cv)^2 psi.  * opening pressure not '
+        . 'given: taken as 0.');
+    $out .= wrap('   ', 'Valve data: ' . join('; ', @models) . '.') if @models;
+    if ($iso) {
+        my $i = $net->{supply_isolated};
+        $out .= wrap('   ', sprintf('*** LOSS OF SUPPLY: the check valve%s of %s shut and no other supply reaches '
+            . '%s.  Nothing there receives water; the outlets cut off are %s.  This is the operating state the '
+            . 'model gives, not a solver failure, and the design is not met.', @{ $i->{supplies} } > 1 ? 's' : '',
+            join(', ', @{ $i->{supplies} }), join(', ', @{ $i->{nodes} }),
+            @{ $i->{outlets} } ? join(', ', @{ $i->{outlets} }) : 'none'));
+    }
+    return $out;
+}
+
+#------------------------------------------------------------------------------
 # supply_schedule -- Section 12, MULTIPLE WATER SUPPLIES (HardyCross::Supplies).
 #------------------------------------------------------------------------------
 sub supply_schedule {
@@ -1586,7 +1644,8 @@ sub supply_schedule {
     for my $r (@{ $s->{operating} }) {
         $out .= sprintf "   %-10s %-8s %-6s %11s %11s %6.1f%%  %s%s\n", $r->{id}, $r->{node}, $r->{kind},
             $f->($r->{flow}, $qd, $uf), $f->($r->{pressure}, $pd, $up), $r->{share},
-            $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status},
+            $r->{status} eq 'REVERSE' ? '*** REVERSE FLOW' : $r->{status} eq 'CLOSED' ? 'CLOSED (check valve)'
+                : $r->{status} eq 'ISOLATED' ? '*** LOSS OF SUPPLY' : $r->{status},
             $r->{extrapolated} ? ', curve extrapolated' : '';
     }
     $out .= sprintf "   %-25s %11s   net demand %s, difference %.2e %s\n", 'SIGNED SUM OF SUPPLIES',

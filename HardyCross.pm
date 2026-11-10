@@ -349,12 +349,16 @@ sub elem_hf {
         return (-curve_eval($e->{curve}, $q), abs curve_slope($e->{curve}, $q));
     }
     if ($k eq 'SUPPLY_STATIC') {
-        # Edge REF -> node, so hf is a head GAIN and therefore negative.
-        return (-($e->{pstat} + $GAMMA_W * $e->{z}), 0);
+        # Edge REF -> node, so hf is a head GAIN and therefore negative.  An
+        # open check valve at the supply (NRV) takes its loss off that gain;
+        # a shut one has taken the supply out of the network altogether.
+        my ($vl, $vd) = check_valve_loss($e, $q);
+        return (-($e->{pstat} + $GAMMA_W * $e->{z}) + $vl, $vd);
     }
     if ($k eq 'SUPPLY_CURVE') {
-        return (-(curve_eval($e->{curve}, $q) + $GAMMA_W * $e->{z}),
-                abs curve_slope($e->{curve}, $q));
+        my ($vl, $vd) = check_valve_loss($e, $q);
+        return (-(curve_eval($e->{curve}, $q) + $GAMMA_W * $e->{z}) + $vl,
+                abs(curve_slope($e->{curve}, $q)) + $vd);
     }
     if ($k eq 'DISCHARGE') {
         # Edge node -> REF: the pressure the outlet needs, plus its elevation
@@ -458,6 +462,49 @@ sub elem_hf {
     # unrecognised one is exactly how the ORIFICE_P fault went unnoticed, so an
     # unknown kind is now a hard error rather than an element with no effect.
     die "internal error: no hydraulics for element kind '$k'\n";
+}
+
+# ---------------------------------------------------------------------------
+# check_valve_loss -- (loss kPa, d loss / dq) of an OPEN check valve at a
+# supply, at flow q L/min; (0, 0) for a supply without one.
+#
+# The valve is taken as two terms in series:
+#
+#   opening   its cracking pressure, CRACK, the differential it takes to lift
+#             the clapper off its seat.  Constant once open.
+#   flow      the data sheet's flow coefficient, by its own definition
+#             dP psi = (Q gpm / Cv)^2.  In L/min and kPa that is
+#             dP = 6.894757 (Q / (3.785411784 Cv))^2 -- the same conversion
+#             a dry pipe valve's Cv uses (DPV ... DB).
+#
+# CV 0 is the user's statement that the valve's flow loss is in the pipework
+# already (an EQV on the supply's pipe, say); its opening pressure still
+# applies.
+#
+# The opening term is NOT signed with the flow.  An open valve only ever
+# passes water forward, so the only use of a negative flow here is the Hardy
+# Cross iteration passing through one on its way to the answer -- and an
+# answer with reverse flow closes the valve (supply_status).  Kept constant,
+# the loss is continuous through zero flow and the iteration sees no jump; a
+# signed constant would put a step of 2 x CRACK in the loop sum at q = 0,
+# which can make a loop oscillate across zero instead of converging.  The
+# flow term is signed, as every other loss is, and adds the derivative.
+# ---------------------------------------------------------------------------
+my $KPA_PER_LPM2 = 6.894757 / 3.785411784 ** 2;   # kPa per (L/min)^2 at Cv 1
+
+sub check_valve_loss {
+    my ($e, $q) = @_;
+    my $v = $e->{nrv} or return (0, 0);
+    my $aq = abs $q;
+    my $sg = ($q < 0 && $aq >= $Q_TINY) ? -1 : 1;
+    my $loss = $v->{crack} // 0;
+    my $dh = 0;
+    if (($v->{cv} // 0) > 0) {
+        my $kq = $KPA_PER_LPM2 / $v->{cv} ** 2;
+        $loss += $sg * $kq * $aq ** 2;
+        $dh = 2 * $kq * ($aq > $Q_TINY ? $aq : $Q_TINY);
+    }
+    return ($loss, $dh);
 }
 
 # ---------------------------------------------------------------------------
@@ -586,9 +633,16 @@ sub build_tree {
         }
     }
 
+    # A node cut off from every supply by closed supply check valves
+    # (isolate_unsupplied) is out of the network: it has no water, no element
+    # of its own is open, and it is reported as having lost its supply, not
+    # as a modelling error.  If every node has been cut off there is nothing
+    # left to solve, and nothing for the reference node to anchor.
+    my $all_isolated = !grep { $_ != $net->{iref} && !$net->{nodes}[$_]{isolated} } 1 .. $nn;
     fail("the network has no supply and no discharge - nothing anchors it to datum")
-        unless $net->{nodes}[ $net->{iref} ]{visited};
+        unless $net->{nodes}[ $net->{iref} ]{visited} || $all_isolated;
     for my $i (1 .. $nn) {
+        next if $net->{nodes}[$i]{isolated} || ($all_isolated && $i == $net->{iref});
         fail("node %s is not connected to the rest of the network",
              $net->{nodes}[$i]{id})
             unless $net->{nodes}[$i]{visited};
@@ -736,6 +790,13 @@ sub recover_heads {
             $n->{h} = $e->{n1} == $n->{pnode} ? $ph - $hf : $ph + $hf;
         }
     }
+    # A node that has lost its supply holds no water under pressure: its head
+    # is its own elevation, 0 kPa gauge.  It is not part of the tree, so it
+    # is set here rather than left at whatever the walk above began with.
+    for my $i (1 .. $nn) {
+        my $n = $net->{nodes}[$i];
+        $n->{h} = $GAMMA_W * ($n->{z} // 0) if $n->{isolated};
+    }
     return $net;
 }
 
@@ -878,6 +939,8 @@ sub size_orifices {
     for my $ei (1 .. $#{ $net->{elems} }) {
         my $e = $net->{elems}[$ei];
         next unless $e->{kind} eq 'ORIFICE_REQUIRED';
+        # A plate cut off with its supply has no duty to be sized for.
+        next if $e->{isolated};
         my $q    = abs $e->{q};
         my $bore = orifice_size($q, $e->{dp}, $e->{pipedia}, $e->{cd});
         # What the plate was sized for, kept so the final plate can be checked
@@ -948,6 +1011,9 @@ sub pump_status {
     for my $ei (1 .. $#{ $net->{elems} }) {
         my $e = $net->{elems}[$ei];
         next unless $e->{kind} eq 'PUMP';
+        # A pump cut off with its supply (isolate_unsupplied) is not switched:
+        # it has nothing to pump.
+        next if $e->{isolated};
         # A pump past the flip limit is no longer switched.  It is MARKED, so
         # that whatever state it is left in is checked by
         # HardyCross::Validate rather than taken as settled: the limit stops
@@ -1008,6 +1074,172 @@ sub pump_status {
     }
     build_loops($net);
     init_flows($net);
+    return 1;
+}
+
+# ---------------------------------------------------------------------------
+# Supply check valves (NRV).
+#
+# A supply with a check valve can pass water into the network and never take
+# it back.  Like a pump's, the valve is a discrete state that Hardy Cross has
+# no mechanism for, so it is decided here, in the outer loop, on a CONVERGED
+# solve (solve_model never adjusts a device on an unconverged one), and the
+# network is solved again whenever any valve changes:
+#
+#   OPEN -> CLOSED   the converged flow through the supply is reverse (below
+#                    -Q_TINY): the rest of the network stands above what the
+#                    supply can give.  The supply is removed from the graph --
+#                    not given zero flow and left in it -- exactly as a shut
+#                    pump is, so the solver cannot drive flow through a
+#                    closed valve.
+#   CLOSED -> OPEN   the head the supply has at no flow, its pressure at zero
+#                    flow plus its elevation head, exceeds the head of the
+#                    network at its connection by more than the valve's
+#                    opening pressure: water would now lift the clapper.
+#
+# The two tests agree with each other.  An open valve whose flow has gone
+# reverse is passing water from a node standing ABOVE the supply's no-flow
+# head less its opening pressure; take the supply away and that node can only
+# stand higher still, so the closed valve does not reopen.  A valve flips
+# back and forth only where round-off straddles that boundary.
+#
+# A valve is NEVER held open to keep the network connected.  A pump that
+# would isolate part of the network is left open and the result rejected
+# (pump_status); a supply valve that closes is closed, and if that leaves
+# nodes with no open supply at all, those nodes have LOST THEIR SUPPLY
+# (isolate_unsupplied).  That is a real operating state -- the supply cannot
+# reach them -- and is reported as one (SUPPLY_ISOLATED, NONCOMPLIANT), never
+# solved by manufacturing a path, and never confused with a solve that did
+# not converge.
+#
+# Each switch is counted.  A valve exactly at its boundary could otherwise
+# open and close on alternate passes forever; past MAX_FLIP switches it is no
+# longer switched, and if it then still wants to change it is marked
+# flip_limit, which HardyCross::Validate treats as a device state that did
+# not settle (INDETERMINATE).  Unlike the pump's, the mark is only set while
+# the valve is in the wrong state: a valve at its limit that is right where it
+# is, is settled.
+#
+# A supply taken out of service by a scenario (out_of_service) is closed by
+# the scenario, not by its valve, and is never reopened here.
+# ---------------------------------------------------------------------------
+our $NRV_P_TINY = 1e-6;    # kPa: the reopening test's margin against round-off
+
+# supply_head0 -- the head a supply gives at no flow: its pressure there plus
+# its elevation head, kPa above datum.
+sub supply_head0 {
+    my $e = shift;
+    my $p = $e->{kind} eq 'SUPPLY_STATIC' ? $e->{pstat} : curve_eval($e->{curve}, 0);
+    return $p + $GAMMA_W * ($e->{z} // 0);
+}
+
+sub supply_status {
+    my $net = shift;
+    my $changed = 0;
+    for my $e (grep { $_->{nrv} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        next unless $e->{kind} =~ /^SUPPLY_/;
+        delete $e->{flip_limit};
+        next if $e->{out_of_service} || $e->{isolated};
+        my $want;
+        if (!$e->{closed}) {
+            $want = 'close' if $e->{q} < -$Q_TINY;
+        } else {
+            my $h = $net->{nodes}[ $e->{n2} ]{h};
+            $want = 'open' if supply_head0($e) - $h > $e->{nrv}{crack} + $NRV_P_TINY;
+        }
+        next unless $want;
+        if (($e->{nflips} // 0) > $MAX_FLIP) {
+            $e->{flip_limit} = 1;
+            next;
+        }
+        if ($want eq 'close') {
+            @{$e}{qw(closed check_closed q)} = (1, 1, 0);
+        } else {
+            @{$e}{qw(closed check_closed)} = (0, 0);
+        }
+        $e->{nflips}++;
+        $changed = 1;
+    }
+    return 0 unless $changed;
+    # The graph has changed: find what has lost its supply, then rebuild the
+    # tree, the loops and the seed flows in full, as pump_status does.
+    isolate_unsupplied($net);
+    build_tree($net);
+    build_loops($net);
+    init_flows($net);
+    return 1;
+}
+
+#------------------------------------------------------------------------------
+# isolate_unsupplied -- cut off every node no open supply can reach.
+#
+# Walked from the connection of every open supply, over every element that
+# joins two nodes of the network (pipes, pumps -- shut or not, since a shut
+# pump may reopen -- and every device), in either direction: this asks only
+# whether water from a supply can get there at all.  Outlets are not routes:
+# each joins its node to the reference node, which every supply also joins,
+# and walking through it would make every outlet "reachable" from every supply.
+#
+# A node not reached has no source of water left.  Solved as it stands it
+# would be fed by water flowing BACKWARDS out of its own outlets -- which is
+# the impossible answer this exists to prevent.  So it is taken out of the
+# network: the node is marked isolated, every element touching it is closed
+# (isolated, flow zero), any fixed demand at it is set aside (it cannot be
+# met, and HardyCross::Validate says so), and its head becomes its elevation,
+# 0 kPa gauge (recover_heads).  The supplies there are already shut; they are
+# marked isolated too and are not reconsidered -- with no other source in
+# their part of the network there is nothing a reopening could be measured
+# against, and reopening one to see would be holding it open to keep the
+# network connected.
+#
+# Isolation only ever grows during a solve: a part with every supply shut and
+# frozen cannot be reached again.  The network records what was cut off, for
+# the report, the JSON and the validation: supply_isolated = { nodes (ids),
+# index (node numbers), supplies (ids), outlets (ids) }.
+#------------------------------------------------------------------------------
+sub isolate_unsupplied {
+    my $net = shift;
+    my $nn  = $#{ $net->{nodes} };
+    my $iref = $net->{iref};
+    my @el = @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    my (@adj, @start);
+    for my $e (@el) {
+        my $k = $e->{kind};
+        if ($k =~ /^SUPPLY_/) { push @start, $e->{n2} unless $e->{closed}; next }
+        next if $k eq 'DISCHARGE' || $e->{isolated};
+        push @{ $adj[ $e->{n1} ] }, $e->{n2};
+        push @{ $adj[ $e->{n2} ] }, $e->{n1};
+    }
+    my %seen = map { $_ => 1 } @start;
+    my @q = @start;
+    while (@q) {
+        my $v = shift @q;
+        for my $w (@{ $adj[$v] || [] }) { push @q, $w unless $seen{$w}++ }
+    }
+    my @dead = grep { $_ != $iref && !$seen{$_} && !$net->{nodes}[$_]{isolated} } 1 .. $nn;
+    return 0 unless @dead;
+    my %dead = map { $_ => 1 } @dead;
+    my $iso = $net->{supply_isolated} //= { nodes => [], index => [], supplies => [], outlets => [] };
+    for my $i (@dead) {
+        my $n = $net->{nodes}[$i];
+        $n->{isolated} = 1;
+        $n->{demand_isolated} = $n->{demand};
+        $n->{demand} = 0;
+        push @{ $iso->{nodes} }, $n->{id};
+        push @{ $iso->{index} }, $i;
+    }
+    for my $e (@el) {
+        next unless $dead{ $e->{n1} } || $dead{ $e->{n2} };
+        @{$e}{qw(closed isolated q)} = (1, 1, 0);
+        push @{ $iso->{supplies} }, $e->{id} if $e->{kind} =~ /^SUPPLY_/;
+        push @{ $iso->{outlets} },  $e->{id} if $e->{kind} eq 'DISCHARGE';
+    }
+    for my $f (@{ $net->{fixed} || [] }) {
+        next unless $dead{ $f->{n1} };
+        $f->{q} = 0;
+        $f->{isolated} = 1;
+        push @{ $iso->{outlets} }, $f->{id};
+    }
     return 1;
 }
 
@@ -1187,7 +1419,7 @@ sub solve_model {
         maxiter  => $net->{opts}{maxiter},
         tol_flow => $net->{opts}{tol_flow},
         tol_loop => $net->{opts}{tol_loop});
-    # Outer loop: size orifice plates, settle pump check valves and set
+    # Outer loop: size orifice plates, settle pump and supply check valves and set
     # pressure ratio valve drops, re-solving after any of them changes
     # anything.  Each is decided on a converged answer, so none can live
     # inside the Hardy Cross iteration.  Bounded: plates and pumps settle in a
@@ -1217,9 +1449,13 @@ sub solve_model {
         $passes++;
         my $sized  = size_orifices($net);
         my $pumped = pump_status($net);
+        # Supply check valves after the pumps, on the same converged solve:
+        # each is decided on heads that every pump state this pass agrees
+        # with, and either change re-solves the whole network.
+        my $valved = supply_status($net);
         my $ratio  = ratio_valves($net);
         my $vp     = velocity_pressures($net);
-        unless ($sized || $pumped || $ratio || $vp) { ($settled, $stop) = (1, 'settled'); last }
+        unless ($sized || $pumped || $valved || $ratio || $vp) { ($settled, $stop) = (1, 'settled'); last }
         $ok = solve_network($net,
             maxiter  => $net->{opts}{maxiter},
             tol_flow => $net->{opts}{tol_flow},

@@ -62,6 +62,11 @@
 #   supplies       [2] with more than one supply: { operating, supply_sum,
 #                  net_demand, balance, governing, conditional, joint,
 #                  scenarios } (HardyCross::Supplies); absent with one
+#   supply_check_valves [2] [ { supply, node, installed, state (NONE, OPEN
+#                  states DELIVERING / IDLE, CLOSED, ISOLATED, OUT_OF_SERVICE),
+#                  flow, pressure, supply_pressure, loss, cv,
+#                  opening_pressure, opening_pressure_given, model,
+#                  switches } ] every supply, one or many (check_valves_json)
 #   dry_pipe_valves [2] [ { id, pipe, from, to, nominal_size, model,
 #                  trip_method, trip_ratio, trip_pressure, accelerator,
 #                  loss_basis, equivalent_length, flow, loss, state,
@@ -300,6 +305,7 @@ sub results {
     # the code without reading the sentence.  The plain warnings above stay.
     $j{validation_errors}   = [ map { "$_->{code}: $_->{message}" } grep { $_->{severity} eq 'error' } @{ $va->{findings} } ];
     $j{supplies}        = supplies_json($net, $as->{supplies}) if $as->{supplies};
+    $j{supply_check_valves} = check_valves_json($net);
     $j{dry_pipe_valves} = dpv_json($net, $va, $as->{dry});
     $j{traceability}    = traceability($net, $va);
     $j{assumptions}     = assumptions($net);
@@ -355,6 +361,43 @@ sub results {
     push @s, "$nw WARNING" . ($nw == 1 ? '' : 'S') . ' - SEE THE REPORT' if $nw;
     $j{summary} = \@s;
     return \%j;
+}
+
+#------------------------------------------------------------------------------
+# check_valves_json -- [2] every water supply's check valve (NRV), one or many
+# supplies, in the model's units: { supply, node, installed, state, flow,
+# pressure (gauge at its connection), supply_pressure (what the supply gives
+# at that flow), loss (the valve's, at that flow; null when shut or none), cv,
+# opening_pressure, opening_pressure_given, model, switches }.
+#
+# state is HardyCross::Supplies::state_of, or NONE for a supply without a
+# valve.  CLOSED is a valid state (the other supplies carry the load);
+# ISOLATED is LOSS OF SUPPLY, and the result is NONCOMPLIANT.
+#------------------------------------------------------------------------------
+sub check_valves_json {
+    my $net = shift;
+    my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
+    require HardyCross::Supplies;
+    my @out;
+    for my $s (HardyCross::Demand::supplies($net)) {
+        my $v = HardyCross::Supplies::valve_of($s);
+        my $q = $s->{closed} ? 0 : $s->{q};
+        push @out, {
+            supply => $s->{id}, node => $net->{nodes}[ $s->{n2} ]{id},
+            installed => $v ? JSON::PP::true : JSON::PP::false,
+            state => $v ? HardyCross::Supplies::state_of($s) : 'NONE',
+            flow => r4($q / $uf),
+            pressure => r4(HardyCross::Demand::gauge($net, $s->{n2}) / $up),
+            supply_pressure => r4(HardyCross::Demand::avail_of($s, $q > 0 ? $q : 0) / $up),
+            loss => $v && !$s->{closed} ? r4($v->{loss} / $up) : undef,
+            cv => $v ? 0 + $v->{cv} : undef,
+            opening_pressure => $v ? r4($v->{crack} / $up) : undef,
+            opening_pressure_given => $v ? ($v->{crack_given} ? JSON::PP::true : JSON::PP::false) : undef,
+            model => $v ? $v->{model} : undef,
+            switches => $v ? 0 + $v->{switches} : undef,
+        };
+    }
+    return \@out;
 }
 
 #------------------------------------------------------------------------------

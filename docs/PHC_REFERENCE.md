@@ -22,7 +22,7 @@ manual reads and solves.
 4. Command summary
 5. Settings: TITLE, PROJECT, UNITS, METHOD, OPTION
 6. Pipes: USE, PIPE, PC, CHANGEPIPE, EQV, and auto sizing
-7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW
+7. Nodes and outlets: NODE, NC, WATER, SPRINKLER, HYDRANT, HREEL, FIXEDFLOW, NRV, NRVMODEL
 8. Pumps and devices: PUMP, PUMPDUTY, BP, BFP, PRV, OPP, OFD, PRA, DPV, DPVMODEL, DPVAIR
 9. Design and reporting: AREA, SUPPLYGRAPH, SCENARIO
 10. Fittings
@@ -228,6 +228,8 @@ there is one, is in brackets.
 | `HYDRANT` | NAME ELEVATION MINFLOW K | 7.4 |
 | `HREEL` | NAME ELEVATION MINFLOW K | 7.4 |
 | `FIXEDFLOW` | NAME NODE FLOW [MINPRESSURE] | 7.5 |
+| `NRV` | SUPPLY CV [CRACK] | 7.6 |
+| `NRVMODEL` | SUPPLY TEXT | 7.6 |
 | `PUMP` | NAME IN OUT CHURN FLOW PRESSURE [FLOW PRESSURE ...] | 8.1 |
 | `PUMPDUTY` | PUMP FLOW PRESSURE | 8.2 |
 | `BP` | PIPE CHURN FLOW PRESSURE [FLOW PRESSURE ...] | 8.3 |
@@ -676,6 +678,60 @@ shows the shortfall as a FAIL instead.
 ```
 FIXEDFLOW HOSE1 J4 450 250
 ```
+
+### 7.6 NRV, NRVMODEL - a check valve at a supply
+
+```
+NRV      <SUPPLY> <CV> [CRACK]
+NRVMODEL <SUPPLY> <TEXT>
+```
+
+A non-return (check) valve at a water supply. Water may pass from the supply
+into the network, never back. A supply has no check valve unless an NRV line
+gives it one: none is assumed.
+
+| field | meaning |
+|---|---|
+| SUPPLY | A water supply (WATER, or a copy of one). One NRV per supply. |
+| CV | The valve's flow coefficient from its data sheet, in US units: the loss in psi is (flow in gpm / CV) squared. 0 says the valve's flow loss is already in the pipework, for example as an EQV on the supply's pipe. |
+| CRACK | The pressure it takes to open the valve. Taken as 0 when not given, and the report says so. |
+| TEXT | NRVMODEL: the make and model, as typed. The data sheet the CV and CRACK came from. |
+
+When open, the valve's loss is CRACK plus the CV loss at the flow through it.
+
+The program decides each valve's state from the solved network, after every
+Hardy Cross solve that converges, and solves again when any valve changes:
+
+- An open valve whose supply would take water in is CLOSED. The supply is
+  taken out of the network and the network is solved without it.
+- A closed valve OPENS again when the supply's pressure at no flow, plus its
+  elevation, exceeds the network at its connection by more than CRACK.
+
+With several supplies, a weak supply shuts and the others carry the load. It
+may open again as the demand rises, for example in a demand search. A
+supply shut on its valve is CLOSED, a valid operating state. It is not a
+supply found too weak, and not an invalid trial.
+
+A valve is never held open to keep the network connected. If every supply
+that could feed part of the network is shut, that part has LOST ITS SUPPLY.
+It is shown with no flow and no pressure, the outlets there are named, and
+the calculation is NONCOMPLIANT (SUPPLY_ISOLATED). This holds for a single
+supply too: a supply that cannot lift water to its outlets shuts, and the
+model is not accepted. Without a check valve the same model is REJECTED,
+because the supply would take water in.
+
+A valve that keeps opening and closing on alternate solves is stopped after
+8 changes. If it is still in the wrong state, the calculation is
+INDETERMINATE (SUPPLY_CHECK_UNRESOLVED).
+
+```
+WATER    TOWN 0 650 1800 560 3600 400
+NRV      TOWN 950 7
+NRVMODEL TOWN ACME 150 MM SWING CHECK, DATA SHEET 12
+```
+
+Section 10 of the report lists every supply's valve, state, flow, pressure
+and loss. The JSON gives the same under `supply_check_valves`.
 
 ---
 

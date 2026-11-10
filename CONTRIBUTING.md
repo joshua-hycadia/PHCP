@@ -106,6 +106,7 @@ perl tools/test_drytime.pl          # the estimated trip and transit times, the 
 perl tools/test_acceptance.pl       # the audit of 11 November 2026: each false positive refused
 perl tools/test_benchmarks.pl       # reference values PHCP did not compute: published forms, nodal Newton
 perl tools/test_impossible.pl       # tools/impossible/: models that must not be accepted
+perl tools/test_check_valves.pl     # supply check valves (NRV), and the defects of the audit's second stage
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no

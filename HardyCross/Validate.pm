@@ -33,10 +33,12 @@
 #   physical    the answer can exist: no pump, check valve, backflow
 #               preventer, ratio valve or dry pipe valve passing water
 #               backwards; no outlet discharging backwards; no supply taking
-#               water in; curves the right way up; plates that fit their pipe
+#               water in; every supply check valve in the state its own
+#               pressures put it in; curves the right way up; plates that fit their pipe
 #               and meet their duty; every operating demand reachable from a
 #               supply; no pressure below vapour pressure
-#   design      the answer meets the design: every outlet's flow and pressure,
+#   design      the answer meets the design: every outlet reached by a supply
+#               (SUPPLY_ISOLATED where check valves have cut it off), every outlet's flow and pressure,
 #               fixed-flow minimum pressures, the velocity limit where one is
 #               set, pump duties, and the supply against the demand with any
 #               margin the model asks for
@@ -247,8 +249,22 @@ sub numerical {
     if ($v->{solver}{hc_converged} && !$v->{solver}{outer_settled}) {
         $add->(code => 'DEVICES_UNSETTLED', category => 'numerical', item => undef,
                value => $v->{solver}{outer_passes}, unit => 'outer passes',
-               message => 'the device states (orifice plates, pump check valves, ratio valves, velocity '
-                        . 'pressures) had not settled when the solve stopped');
+               message => 'the device states (orifice plates, pump and supply check valves, ratio valves, '
+                        . 'velocity pressures) had not settled when the solve stopped');
+        $v->{indeterminate} = 1;
+    }
+    # A supply check valve that kept changing state until its switch limit,
+    # and still wants to change (HardyCross::supply_status): its state was not
+    # decided, so neither is anything solved with it.
+    my @unsettled = grep { $_->{nrv} && $_->{flip_limit} } @el;
+    if (@unsettled) {
+        $add->(code => 'SUPPLY_CHECK_UNRESOLVED', category => 'numerical', item => join(' ', map { $_->{id} } @unsettled),
+               value => $unsettled[0]{nflips}, unit => 'switches',
+               message => sprintf('supply check valve%s %s opened and closed on alternate solves until the switch '
+                                . 'limit was reached and %s still not in the state %s pressures call for: the '
+                                . 'operating state is not resolved', @unsettled > 1 ? 's' : '',
+                                  join(', ', map { $_->{id} } @unsettled), @unsettled > 1 ? 'are' : 'is',
+                                  @unsettled > 1 ? 'their' : 'its'));
         $v->{indeterminate} = 1;
     }
     if (@{ $net->{degenerate} || [] }) {
@@ -415,13 +431,37 @@ sub physical {
     for my $e (@el) {
         my $k = $e->{kind};
         my $q = $e->{q} // 0;
+        # An element cut off with its supply (HardyCross::isolate_unsupplied)
+        # is out of the network, with no flow and no pressure to judge; the
+        # loss of supply itself is a design finding (SUPPLY_ISOLATED).
+        next if $e->{isolated};
 
         #------------------------------------------------------------ supplies
         if ($k =~ /^SUPPLY_/) {
             if ($q < -$QT) {
                 $P->(code => 'SUPPLY_REVERSE', item => $e->{id}, value => $q / $uf, unit => $fu,
                      message => sprintf('water supply %s takes water IN, %.1f %s: a supply does not accept '
-                                      . 'flow from the network', $e->{id}, -$q / $uf, $fu));
+                                      . 'flow from the network%s', $e->{id}, -$q / $uf, $fu,
+                                        $e->{nrv} ? ', and its check valve is open' : ''));
+            }
+            # A supply check valve, worked again from the final heads rather
+            # than taken from the solver's own decision.  Shut, the network at
+            # its connection must stand at or above the supply's no-flow head
+            # less its opening pressure -- otherwise water would lift the
+            # clapper, and the state reported is not the one the pressures
+            # give.  (Open, it is the reverse-flow check above.)
+            if ($e->{nrv} && $e->{check_closed}) {
+                my $h0 = HardyCross::supply_head0($e);
+                my $h  = $net->{nodes}[ $e->{n2} ]{h};
+                my $push = $h0 - $h - $e->{nrv}{crack};
+                $P->(code => 'SUPPLY_CHECK_INCONSISTENT', item => $e->{id}, value => $push / $up, limit => 0, unit => $pu,
+                     message => sprintf('water supply %s is shut on its check valve, but its pressure exceeds the '
+                                      . 'network at its connection by %.3f %s more than the valve needs to open: '
+                                      . 'the valve would be open', $e->{id}, $push / $up, $pu))
+                    if $push > $VERIFY_P;
+                # Shut, it takes no part in the solve: what its pressure
+                # would be (a derating can take it below zero) is not judged.
+                next;
             }
             if ($k eq 'SUPPLY_CURVE') {
                 if (defined(my $at = curve_order($e->{curve}, -1))) {
@@ -893,7 +933,20 @@ sub dpv_checks {
 # and over each element only in the direction it can pass water: a pipe,
 # plate or fixed loss either way; a pump, backflow preventer, ratio valve or
 # dry pipe valve from its inlet to its outlet only.  A pump shut on its check
-# valve is no route at all.  A supply is usable when it can give pressure.
+# valve is no route at all, and nor is a supply shut on its own.
+#
+# A supply is usable when it is open and its pressure is not negative.  It
+# used to need a pressure ABOVE zero, which left out a gravity tank: a supply
+# at 0 kPa gauge (open to air) whose head is its elevation, the reference
+# manual's own "WATER TANK 12 0".  Such a model was REJECTED as unreachable
+# (found 11 November 2026, tools/test_check_valves.pl part 1).  A supply that
+# truly gives nothing -- 0 kPa at the outlets' own level -- still delivers
+# nothing in the solve, and its outlets fail the design.  A negative pressure
+# is refused separately (SUPPLY_NEGATIVE, SUPPLY_EXHAUSTED).
+#
+# Nodes cut off from every supply by closed supply check valves are reported
+# as SUPPLY_ISOLATED, by the design checks, not here: they are not a
+# modelling fault but a supply that cannot reach them.
 #
 # An outlet that is not reachable can only be "fed" in a solve by water
 # running backwards through another outlet, which is how one used to be
@@ -909,7 +962,7 @@ sub connectivity {
         my $k = $e->{kind};
         if ($k =~ /^SUPPLY_/) {
             my $p = $k eq 'SUPPLY_STATIC' ? $e->{pstat} : HardyCross::curve_eval($e->{curve}, 0);
-            push @start, $e->{n2} if ($p // 0) > 0;
+            push @start, $e->{n2} if ($p // 0) >= 0;
             next;
         }
         next if $k eq 'DISCHARGE';
@@ -926,8 +979,9 @@ sub connectivity {
                    grep { $_->{kind} eq 'DISCHARGE' } @el),
                   (map { [ $_->{id}, $_->{n1}, 'fixed flow' ] }
                    grep { ($_->{qreq} // 0) > 0 } @{ $net->{fixed} || [] }));
+    my %dead = map { $_ => 1 } @{ ($net->{supply_isolated} || {})->{index} || [] };
     for my $d (@demand) {
-        next if $seen{ $d->[1] };
+        next if $seen{ $d->[1] } || $dead{ $d->[1] };
         $P->(code => 'DEMAND_UNCONNECTED', item => $d->[0],
              message => sprintf('%s %s at node %s cannot be reached from any water supply through the pipework '
                               . 'in the direction water can flow', $d->[2], $d->[0], $net->{nodes}[ $d->[1] ]{id}));
@@ -945,6 +999,24 @@ sub design {
     my $D = sub { my %r = @_; $add->(category => 'design', %r) };
     my @el = grep { !$_->{closed} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     my %what = (SPRINKLER => 'sprinkler', HYDRANT => 'hydrant', HOSEREEL => 'hose reel');
+
+    # Loss of supply.  Outlets and fixed demands that no open supply can
+    # reach, because the check valves of every supply that could have fed
+    # them are shut (HardyCross::isolate_unsupplied).  The network there
+    # stands empty: no flow, no pressure.  That is a valid hydraulic state
+    # and a design that fails, so it is a design finding -- NONCOMPLIANT --
+    # and not a numerical one: the solve did what it should.  It is never an
+    # ACCEPTED result, and no water is assumed to reach these outlets.
+    if (my $iso = $net->{supply_isolated}) {
+        my @out = @{ $iso->{outlets} || [] };
+        $D->(code => 'SUPPLY_ISOLATED', item => join(' ', @out),
+             message => sprintf('LOSS OF SUPPLY: the check valve%s of %s %s shut and no other supply can reach '
+                              . 'node%s %s, so %s receive%s no water', @{ $iso->{supplies} } > 1 ? 's' : '',
+                                join(', ', @{ $iso->{supplies} }), @{ $iso->{supplies} } > 1 ? 'are' : 'is',
+                                @{ $iso->{nodes} } > 1 ? 's' : '', join(', ', @{ $iso->{nodes} }),
+                                @out ? join(', ', @out) : 'no outlet there', @out == 1 ? 's' : ''))
+            if @{ $iso->{nodes} || [] };
+    }
 
     # Every outlet: its flow (signed: a backward flow is never a pass) and the
     # pressure it discharges on, each against its requirement.
