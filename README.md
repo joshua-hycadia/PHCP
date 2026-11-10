@@ -1361,6 +1361,11 @@ contradicts itself the note on the record says so, and the report prints
 it wherever that valve is used.  Accelerator trip times are not entered:
 PHCP does not calculate trip or delivery time.
 
+**Planned** (`PLAN.md`): the valve's trip time, from its trip setting and
+set air pressure; accelerators, their data and their effect on trip time;
+then water delivery time.  Each will be a transient calculation apart from
+the steady-state solver.  None is started.
+
 ## The report
 
 132-column monospace, 7-bit ASCII only - it survives printing, email, pasting
