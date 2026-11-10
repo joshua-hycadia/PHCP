@@ -4,9 +4,12 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.3.0 (`release_notes/v1.3.0.md`): the spreadsheet,
-the isometric window, the pyRevit extension and the redrawn icon.  The
-solver is unchanged since 1.2.0.
+The latest release is 1.4.0 (`release_notes/v1.4.0.md`): every calculation
+validated and reported ACCEPTED, NONCOMPLIANT, REJECTED or INDETERMINATE;
+several water supplies, each on its own terms; the dry pipe valve, with
+Reliable, Tyco, Viking and Victaulic valves in the database; and the
+results saved back into the `.phc`.  No result of a valid 1.3.0 model
+changed.
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a
@@ -1026,7 +1029,7 @@ value to a line, so even a caller with no JSON reader can find it line by
 line, as AutoCAD's PHCPSOLVE does.  The contract is versioned - `interface`
 is 2, a field is never renamed or changed in meaning under that number, and
 new fields may be added - and is described in full in `HardyCross/Json.pm`.
-Interface 2 replaced 1 (after PHCP 1.3.0): an outlet's `flow` is signed (it
+Interface 2 replaced 1 in PHCP 1.4.0: an outlet's `flow` is signed (it
 was the magnitude, so a backward discharge looked like a forward one), and
 `acceptance`, `validation`, `supplies` (several supplies), `dry_pipe_valves`
 and `traceability` were added.  The Revit extension reads interface 2.

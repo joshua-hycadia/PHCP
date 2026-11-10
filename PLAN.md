@@ -512,4 +512,6 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] DPV: a dry pipe valve, solved tripped and fully open, its loss from points or an equivalent length; trip ratio or trip pressure and accelerator kept for a later delivery time calculation (`tools/test_dpv.pl`)
 - [x] JSON interface 2: acceptance, validation, supplies, dry pipe valves, traceability; outlet flow signed; exit 3 for REJECTED
 - [ ] Water delivery time for dry systems (transient; not started)
-- [ ] Manufacturer dry pipe valve data (none included)
+- [x] Manufacturer dry pipe valve data: Reliable, Tyco, Viking and Victaulic in `data/pipes.dat` (DRYVALVE), `DPV ... VALVE <MAKER> <MODEL>` (database change requested by the maintainer 10 November 2026)
+- [x] Results saved back into the `.phc` (`--save`, editor SAVE after CALCULATE; `HardyCross/Results.pm`, `tools/test_results.pl`)
+- [x] v1.4.0 - release notes `release_notes/v1.4.0.md`

@@ -22,14 +22,14 @@
 #
 # The contract is versioned: "interface" is 2.  A field is never renamed or
 # given a different meaning under the same number; new fields may be added.
-# Interface 2 (introduced after PHCP 1.3.0) changed from 1: outlet "flow" is signed (it was
+# Interface 2 (PHCP 1.4.0) changed from 1: outlet "flow" is signed (it was
 # the magnitude, which showed a backward discharge as a forward one), "pass"
 # needs a forward flow, exit status 3 is new, and a converged solve may now
 # exit 1 when its device states did not settle.  Everything else is as in
 # interface 1, with the fields marked [2] added.
 #
 #   interface      2
-#   program        "PHCP 1.3.0"
+#   program        "PHCP 1.4.0"
 #   model          the model file's name, or "-" for standard input
 #   status         "converged", "not_converged" or "error": how the
 #                  iteration ended, and nothing more
