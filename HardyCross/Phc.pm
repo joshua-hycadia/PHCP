@@ -137,6 +137,20 @@ my %CMD = (
     NC        => { kind => 'node', fixed => [ [ 'SOURCE', 'node' ] ], rest => 'names' },
     WATER     => { kind => 'node', fixed => [ [ 'NAME', 'new' ], [ 'ELEVATION', 'elev' ],
                    [ 'STATIC', 'pressure' ] ], rest => 'pairs', min => 0 },
+    # A non-return (check) valve at a water supply (HardyCross::supply_status).
+    # Water may pass from the supply into the network and never back: when the
+    # solved network would push water into the supply, the valve shuts and the
+    # network is solved without it, and a shut valve opens again when the
+    # supply could deliver.  CV is the valve's flow coefficient from its data
+    # sheet, US units (dP psi = (Q gpm / Cv)^2); 0 says its loss is allowed for
+    # in the pipework instead (an EQV on the supply's pipe).  CRACK is the
+    # pressure it takes to open it, 0 when not given.  A supply has no valve
+    # unless a line says so: none is assumed.
+    NRV       => { kind => 'nrv', fixed => [ [ 'SUPPLY', 'node' ], [ 'CV', 'num' ] ],
+                   opt => [ [ 'CRACK', 'pressure' ] ] },
+    # The make and model of a supply's check valve, as free text: the data
+    # sheet its Cv and opening pressure were taken from.
+    NRVMODEL  => { kind => 'nrv', fixed => [ [ 'SUPPLY', 'node' ], [ 'TEXT', 'text' ] ] },
     SPRINKLER => { kind => 'node', otype => 'SPRINKLER', fixed => [ [ 'NAME', 'new' ],
                    [ 'ELEVATION', 'elev' ], [ 'MINFLOW', 'minflow' ], [ 'K', 'kfactor' ] ] },
     HYDRANT   => { kind => 'node', otype => 'HYDRANT', fixed => [ [ 'NAME', 'new' ],
@@ -203,7 +217,7 @@ my %ALIAS = (P => 'PIPE', U => 'USE', N => 'NODE', W => 'WATER', CHP => 'CHANGEP
 our @COMMAND_GROUPS = (
     [qw(TITLE PROJECT UNITS METHOD OPTION)],
     [qw(USE PIPE PC CHANGEPIPE EQV)],
-    [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
+    [qw(NODE NC WATER NRV NRVMODEL SPRINKLER HYDRANT HREEL FIXEDFLOW)],
     [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA DPV DPVMODEL DPVAIR DPVTRIP)],
     [qw(AREA SUPPLYGRAPH SCENARIO)],
 );
@@ -360,7 +374,8 @@ sub analyse {
 
     #---------------------------------------------------------- TITLE, PROJECT
     # The value is the rest of the raw line, so a title keeps its spacing.
-    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT' || $a{key} eq 'SUPPLYGRAPH' || $a{key} eq 'DPVMODEL') {
+    if ($a{key} eq 'TITLE' || $a{key} eq 'PROJECT' || $a{key} eq 'SUPPLYGRAPH' || $a{key} eq 'DPVMODEL'
+        || $a{key} eq 'NRVMODEL') {
         (my $t = $code) =~ s/^\s*\S+\s*//;
         if ($a{key} eq 'PROJECT') {
             return $more->('FIELD') unless @tk > 1;
@@ -369,10 +384,12 @@ sub analyse {
             return $bad->('END CANNOT BE A PROJECT FIELD') if uc $tk[1] eq 'END';
             $t =~ s/^\S+\s*//;
         }
-        # DPVMODEL names its pipe, then the make and model as typed.
-        if ($a{key} eq 'DPVMODEL') {
-            return $more->('PIPE') unless @tk > 1;
-            my $err = check_field('pipe', $tk[1], \%a, 'PIPE');
+        # DPVMODEL names its pipe, NRVMODEL its supply, then the make and
+        # model as typed.
+        if ($a{key} eq 'DPVMODEL' || $a{key} eq 'NRVMODEL') {
+            my $what = $a{key} eq 'DPVMODEL' ? 'PIPE' : 'SUPPLY';
+            return $more->($what) unless @tk > 1;
+            my $err = check_field($what eq 'PIPE' ? 'pipe' : 'node', $tk[1], \%a, $what);
             return $bad->('%s', $err) if defined $err;
             $t =~ s/^\S+\s*//;
         }
@@ -740,7 +757,7 @@ sub translate {
     # because a copy (PC, NC), a change (CHANGEPIPE, EQV) or a device may come
     # before or after the thing it refers to.
     my (%node, @node_order, %pipe, %name_line, %change, %eqv, %device, @items, %duty, %area, @area_order, @graphs);
-    my (%dpvdata, %scenario, @scenario_order);
+    my (%dpvdata, %scenario, @scenario_order, %nrv);
     my $use = { type => 'BORE' };
     my $define_node = sub {
         my ($name, $n, $def) = @_;
@@ -823,6 +840,12 @@ sub translate {
                                      : { orifice_mm => size_mm($p[1], $units{SIZE}), count => $a->{opt}[0],
                                          temp => $a->{opt}[1], static => $a->{opt}[2] };
             $dpvdata{ $p[0] }{"${slot}_line"} = $n;
+        } elsif ($k eq 'NRV' || $k eq 'NRVMODEL') {
+            my $slot = $k eq 'NRV' ? 'valve' : 'model';
+            $at->($n, 'SUPPLY %s ALREADY HAS AN %s, ON LINE %d', $p[0], $k, $nrv{ $p[0] }{"${slot}_line"})
+                if $nrv{ $p[0] }{$slot};
+            $nrv{ $p[0] }{$slot} = $k eq 'NRV' ? { cv => $p[1], crack => $a->{opt}[0] } : $a->{text};
+            $nrv{ $p[0] }{"${slot}_line"} = $n;
         } elsif ($k eq 'SCENARIO') {
             $at->($n, 'SCENARIO %s IS ALREADY DEFINED ON LINE %d', $p[0], $scenario{ $p[0] }{line})
                 if $scenario{ $p[0] };
@@ -962,6 +985,18 @@ sub translate {
         }
     }
 
+    #---------------------------------------------------- supply check valves
+    # An NRV names a water supply (WATER, or a copy of one); an NRVMODEL
+    # describes an NRV, so its supply must have one.
+    for my $sname (sort keys %nrv) {
+        my $v = $nrv{$sname};
+        my $ln = $v->{valve_line} // $v->{model_line};
+        $at->($ln, '%s IS NOT DEFINED', $sname) unless $node{$sname};
+        $at->($ln, '%s IS NOT A WATER SUPPLY: A CHECK VALVE (NRV) GOES AT A WATER SUPPLY', $sname)
+            unless $is_water->($sname);
+        $at->($ln, 'SUPPLY %s HAS NO CHECK VALVE (NRV) FOR THIS TO DESCRIBE', $sname) unless $v->{valve};
+    }
+
     #---------------------------------------------------- auto sizing
     # A size of 0 under a pipe type asks for the pipe to be sized
     # (HardyCross::Sizing).  The line that set the size is the one sized: a
@@ -1068,7 +1103,8 @@ sub translate {
     my $areas = { list => [ map { { name => $_, line => $area{$_}{line}, outlets => $area{$_}{outlets} } } @area_order ],
                   design => $design ? $design->[0] : undef, graphs => \@graphs,
                   auto => \@auto, sizing => \%sizing,
-                  scenarios => [ map { $scenario{$_} } @scenario_order ], dpvdata => \%dpvdata };
+                  scenarios => [ map { $scenario{$_} } @scenario_order ], dpvdata => \%dpvdata,
+                  nrv => \%nrv };
     return (\@built, \%units, $areas);
 }
 
@@ -1257,6 +1293,19 @@ sub read_string {
             $e->{transient}{air_temp_c}   = $t->{temp} if defined $t->{temp};
             $e->{transient}{static_water} = $t->{static} * $net->{f_pres} if defined $t->{static};
         }
+    }
+    # The check valve of each supply that has one (NRV, NRVMODEL), on the
+    # supply itself: its Cv as given (US units, dimensionless here), its
+    # opening pressure in kPa, and whether that pressure was given or taken
+    # as 0 -- an assumption the report and the JSON then say was made.
+    for my $sname (keys %{ $areas->{nrv} || {} }) {
+        my ($e) = grep { $_->{id} eq $sname && $_->{kind} =~ /^SUPPLY_/ } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+        next unless $e;
+        my $d = $areas->{nrv}{$sname};
+        $e->{nrv} = { cv => 0 + $d->{valve}{cv},
+                      crack => defined $d->{valve}{crack} ? $d->{valve}{crack} * $net->{f_pres} : 0,
+                      crack_given => defined $d->{valve}{crack} ? 1 : 0,
+                      model => $d->{model} };
     }
     # Pipes to be sized (size 0) and how (HardyCross::Sizing).
     $net->{auto_sizing} = $areas->{auto} if @{ $areas->{auto} };

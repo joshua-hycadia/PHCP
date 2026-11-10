@@ -110,6 +110,39 @@ sub trial_of {
     return HardyCross::Demand::trial($ok, $net);
 }
 
+# state_of -- what a supply is doing, in one word, for every schedule here
+# and in the report and the JSON:
+#
+#   OUT_OF_SERVICE  taken out by a scenario (SCENARIO ... 0)
+#   ISOLATED        shut on its check valve, and nothing else supplies its part
+#                   of the network: that part has lost its supply
+#   CLOSED          shut on its check valve (NRV): the network stands above
+#                   what it can give, and the other supplies carry the load
+#   REVERSE         taking water in -- impossible, and refused by
+#                   HardyCross::Validate (SUPPLY_REVERSE)
+#   IDLE            open, giving no flow
+#   DELIVERING      open, giving water
+#
+# CLOSED is a valid operating state, not a failure: a supply whose valve has
+# shut is neither "too weak" nor an invalid trial (tools/test_check_valves.pl).
+sub state_of {
+    my $s = shift;
+    return 'OUT_OF_SERVICE' if $s->{out_of_service};
+    return 'ISOLATED'       if $s->{isolated};
+    return 'CLOSED'         if $s->{closed};
+    return $s->{q} < -$QT ? 'REVERSE' : $s->{q} <= $QT ? 'IDLE' : 'DELIVERING';
+}
+
+# valve_of -- a supply's check valve for the schedules: { cv, crack,
+# crack_given, model, loss } with loss the valve's pressure loss at the
+# supply's flow (kPa, 0 when shut), or undef for a supply without one.
+sub valve_of {
+    my $s = shift;
+    my $v = $s->{nrv} or return undef;
+    my ($loss) = $s->{closed} ? (0) : HardyCross::check_valve_loss($s, $s->{q});
+    return { %$v, loss => $loss, switches => $s->{nflips} // 0 };
+}
+
 # reverse_text -- the supplies of a trial that take water in, in words.
 sub reverse_text {
     my $t = shift;
@@ -138,7 +171,8 @@ sub operating {
             # elevation: its static, or its curve.
             supply_pressure => avail($s, $q > 0 ? $q : 0),
             share => $qin > 0 && $q > 0 ? 100 * $q / $qin : 0,
-            status => $q < -$QT ? 'REVERSE' : $q <= $QT ? 'IDLE' : 'DELIVERING',
+            status => state_of($s),
+            check_valve => valve_of($s),
             extrapolated => $s->{curve} && HardyCross::Validate::extrapolated($s->{curve}, $q) ? 1 : 0,
         };
     }
@@ -376,7 +410,7 @@ sub joint {
                       available => $a, margin => $a - $p,
                       active => !$s->{closed} && $q > $QT ? 1 : 0,
                       extrapolated => $o->{curve} && HardyCross::Validate::extrapolated($o->{curve}, $q) ? 1 : 0,
-                      status => $q < -$QT ? 'REVERSE' : $q <= $QT ? 'IDLE' : 'DELIVERING' };
+                      status => state_of($s), check_valve => valve_of($s) };
     }
     my $qin = 0;
     $qin += $_->{flow} > 0 ? $_->{flow} : 0 for @rows;
@@ -487,8 +521,7 @@ sub scenario {
         supplies   => [ map { { id => $_->{id}, percent => $sh{ $_->{id} } // 100,
                                 flow => $_->{closed} ? 0 : $_->{q},
                                 pressure => HardyCross::Demand::gauge($n, $_->{n2}),
-                                status => $_->{closed} ? 'OUT_OF_SERVICE'
-                                        : $_->{q} < -$QT ? 'REVERSE' : $_->{q} <= $QT ? 'IDLE' : 'DELIVERING' } }
+                                status => state_of($_) } }
                         supplies($n) ],
     };
 }
