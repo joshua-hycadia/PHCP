@@ -29,7 +29,7 @@ use Cwd ();
 use File::Spec;
 use Digest::SHA ();
 
-my (%PIPETYPE, %PIPE, %FIT, %KPRIME, $DATASET, $ISSUED, $PATH, $SHA256);
+my (%PIPETYPE, %PIPE, %FIT, %KPRIME, %DRYVALVE, $DATASET, $ISSUED, $PATH, $SHA256);
 
 # Status codes carried by every fitting record.
 use constant {
@@ -114,7 +114,7 @@ sub load {
     close $raw;
     # Start clean: the editor reloads after saving an edit, and a row deleted
     # there must not survive from the last load.
-    %PIPETYPE = %PIPE = %FIT = %KPRIME = ();
+    %PIPETYPE = %PIPE = %FIT = %KPRIME = %DRYVALVE = ();
     ($DATASET, $ISSUED) = (undef, undef);
     $SHA256 = Digest::SHA::sha256_hex($bytes);
     $PATH   = $path;
@@ -157,6 +157,16 @@ sub load {
             my ($code, $label, $kp, $use) = @f;
             $KPRIME{$code} = { label => $label, kp => $kp, use => $use };
         }
+        elsif ($kind eq 'DRYVALVE') {
+            # A manufacturer's dry pipe valve, open: its loss as the equivalent
+            # length of a stated reference pipe at a stated C, exactly as the
+            # data sheet prints it.  See the DRYVALVE comment in pipes.dat.
+            my ($maker, $model, $dn, $inch, $eql, $unit, $c, $ref, $trip, $pmax, $status, $source, $note) = @f;
+            $DRYVALVE{ uc $maker }{ uc $model }{$dn} = {
+                maker => uc $maker, model => uc $model, dn => $dn, inch => $inch,
+                eql => $eql, eql_unit => uc($unit // ''), c => $c, ref => $ref, trip => $trip,
+                pmax => $pmax, status => $status, source => $source, note => $note // '' };
+        }
     }
     close $fh;
     die "database $path has no DATASET line -- add one naming this data and its date\n"
@@ -180,6 +190,47 @@ sub bore {
 }
 
 sub pipe_row { my ($type, $dn) = @_; $PIPE{$type} && $PIPE{$type}{$dn} }
+
+#------------------------------------------------------------------------------
+# Dry pipe valves (DRYVALVE records).
+#
+# dry_valve -- the record for a maker, model and DN, with its loss worked
+# into the engine's terms, or undef:
+#   eql_m    the equivalent length in metres (a length in FT converted)
+#   bore_mm  the reference pipe's bore: the inch bore the sheet states, or
+#            for S40 the Schedule 40 bore of that DN from the PIPE records
+#   c        the C-factor the length is stated at
+# dry_valve_models -- [ maker, model, [ DNs ] ] for every valve, sorted.
+#------------------------------------------------------------------------------
+sub dry_valve {
+    my ($maker, $model, $dn) = @_;
+    my $r = $DRYVALVE{ uc($maker // '') } && $DRYVALVE{ uc $maker }{ uc($model // '') }
+         && $DRYVALVE{ uc $maker }{ uc $model }{$dn} or return undef;
+    my %v = %$r;
+    my $num = qr/^\s*(\d+\.?\d*|\.\d+)\s*\z/;
+    # unit CV: the loss is a flow coefficient, not a length -- US gpm at
+    # 1 psi, dP = (Q / Cv)^2 -- and needs no reference pipe or C.
+    if ($r->{eql_unit} eq 'CV') {
+        $v{cv} = $r->{eql} =~ $num ? $r->{eql} + 0 : undef;
+    } else {
+        $v{eql_m} = $r->{eql} =~ $num ? $r->{eql} * ($r->{eql_unit} eq 'FT' ? 0.3048 : 1) : undef;
+    }
+    $v{bore_mm} = $r->{ref} =~ /^(\d+\.?\d*)IN\z/i ? $1 * 25.4
+                : uc($r->{ref}) eq 'S40' ? bore('S40', $dn) : undef;
+    $v{trip_ratio} = $r->{trip} =~ $num ? $r->{trip} + 0 : undef;
+    $v{pmax_kpa} = $r->{pmax} =~ /^(\d+\.?\d*)PSI\z/i ? $1 * 6.894757
+                 : $r->{pmax} =~ /^(\d+\.?\d*)KPA\z/i ? $1 : undef;
+    return \%v;
+}
+sub dry_valve_models {
+    my @out;
+    for my $mk (sort keys %DRYVALVE) {
+        for my $md (sort keys %{ $DRYVALVE{$mk} }) {
+            push @out, [ $mk, $md, [ sort { $a <=> $b } keys %{ $DRYVALVE{$mk}{$md} } ] ];
+        }
+    }
+    return @out;
+}
 
 #------------------------------------------------------------------------------
 # Which source governs a fitting on a given pipe at a given size.  The source

@@ -515,7 +515,7 @@ is_("a failing outlet colours its pipe, and a main with no outlet stays plain",
 print("\n7. RESULTS WRITTEN BACK")
 
 sample = {
-    "interface": 1, "converged": True, "summary": ["CONVERGED"],
+    "interface": 2, "converged": True, "acceptance": "ACCEPTED", "summary": ["CONVERGED"],
     "pipes": [{"id": "P1", "flow": 10.5, "velocity": 1.2, "friction_loss": 3.0}],
     "nodes": [{"id": "S1", "pressure": 180.0}],
     "outlets": [{"id": "S1", "flow": 10.5, "pressure": 180.0, "margin": 130.0, "pass": True}],
@@ -527,7 +527,7 @@ is_("flow, pressure and pass go to the elements that own those ids",
     writes[11]["PHCP Flow"] == 10.5 and writes[22]["PHCP Pass"] is True
     and writes[33]["PHCP Pressure"] == 400)
 try:
-    accept({"interface": 2})
+    accept({"interface": 1})
     is_("a different JSON interface is refused", False)
 except Exception as err:
     is_("a different JSON interface is refused", "interface" in str(err))

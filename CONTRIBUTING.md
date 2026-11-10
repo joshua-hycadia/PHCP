@@ -98,6 +98,10 @@ perl tools/test_tools.pl            # the QUICK TOOLS calculators and the orific
 perl tools/test_sizing.pl           # auto pipe sizing, each answer checked at the demand point
 perl tools/test_manual.pl           # docs/PHC_REFERENCE.md against the program
 perl tools/test_velocity_pressure.pl  # OPTION VELOCITY_PRESSURE: hand check, OFF unchanged, ON vs OFF
+perl tools/test_validate.pl         # hydraulic validation: acceptance, the false positives it catches
+perl tools/test_supplies.pl         # several supplies: operating, conditional, joint, scenarios
+perl tools/test_dpv.pl              # the dry pipe valve, its loss by hand and the database valves
+perl tools/test_results.pl          # the results saved back into the .phc
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no

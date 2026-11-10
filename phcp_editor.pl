@@ -1348,6 +1348,13 @@ sub write_buffer {
     my $f = shift;
     my $text = full_text();
     $text .= "\n" unless $text =~ /\n\z/;
+    # The results of the last calculation go at the end of the file, as
+    # comments (HardyCross::Results) -- but only when that calculation was of
+    # exactly this text.  Results of an earlier version are not saved.
+    if ($solved && $solved->{text} eq full_text()) {
+        require HardyCross::Results;
+        $text = HardyCross::Results::with_results($text, $solved->{net}, $solved->{converged});
+    }
     my $fh;
     unless (open $fh, '>', $f) { message("CANNOT WRITE $f: $!", 1); return 0 }
     print $fh $text;

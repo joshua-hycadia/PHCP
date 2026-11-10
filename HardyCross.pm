@@ -27,7 +27,7 @@ package HardyCross;
 # The PHCP version.  Printed on every report: a calculation submitted for
 # certification has to identify the software AND the build that produced it,
 # so that a result can be reproduced -- or recalled -- later.
-our $VERSION = '1.3.0';
+our $VERSION = '1.4.0';
 
 use strict;
 use warnings;
@@ -399,6 +399,61 @@ sub elem_hf {
         return ($sg * curve_eval($e->{curve}, $aq),
                 abs curve_slope($e->{curve}, $aq));
     }
+    if ($k eq 'DPV') {
+        # A dry pipe valve, taken as TRIPPED AND FULLY OPEN: the steady state
+        # after the clapper has released and the system has filled.  Its loss
+        # is one of two things, chosen on the DPV line and printed in the
+        # report as the basis used:
+        #
+        #   CURVE  the manufacturer's flow/loss points, read exactly as a
+        #          backflow preventer's loss curve is (through every point,
+        #          straight in Q^1.85 between them, extrapolated beyond).
+        #   EQL    an equivalent length of the pipe the valve is in, at that
+        #          pipe's bore and C (or roughness), by the pipe's own
+        #          formula -- the form valve data is usually published in.
+        #
+        # With neither there is no loss data at all.  The valve then adds
+        # nothing to the loop sum, and HardyCross::Validate REJECTS the
+        # calculation: a zero loss is never assumed silently.
+        #
+        # Nothing about the trip -- ratio, trip pressure, accelerator, air --
+        # enters here.  Those are kept on the element for the report and for a
+        # future water delivery time calculation, which is a transient problem
+        # and is deliberately not part of this steady-state solver.
+        my $basis = $e->{loss} // 'NONE';
+        if ($basis eq 'CURVE') {
+            return ($sg * curve_eval($e->{curve}, $aq),
+                    abs curve_slope($e->{curve}, $aq));
+        }
+        if ($basis eq 'DB' && $e->{cv}) {
+            # A flow coefficient: dP psi = (Q gpm / Cv)^2, the data sheet's
+            # own definition, in the engine's L/min and kPa.
+            my $kq = 6.894757 / ($e->{cv} * 3.785411784) ** 2;
+            my $dh = 2 * $kq * ($aq > $Q_TINY ? $aq : $Q_TINY);
+            return ($sg * $kq * $aq ** 2, $dh);
+        }
+        if ($basis eq 'DB') {
+            # A valve from the database: its published equivalent length of
+            # its published reference pipe (bore and C), by Hazen-Williams in
+            # the AS 2118.1 metric form -- the basis the data sheets state.
+            # The loss is the valve's own, whatever pipe it is installed in,
+            # and whichever friction formula the network is solved by.
+            my $l = $e->{eql};
+            my $hf = $aq > 0 ? $HWK_DEF * $l * $aq ** 1.85 / ($e->{ref_c} ** 1.85 * $e->{ref_bore} ** 4.87) : 0;
+            my $dh = $aq > $Q_TINY ? 1.85 * $hf / $aq
+                   : 1.85 * $HWK_DEF * $l * $Q_TINY ** 0.85 / ($e->{ref_c} ** 1.85 * $e->{ref_bore} ** 4.87);
+            return ($sg * $hf, $dh);
+        }
+        if ($basis eq 'EQL' && $e->{host}) {
+            # The equivalent length as a pipe of its own, built once from the
+            # host pipe's data.  No fittings and no K: the length IS the
+            # allowance for the valve.
+            $e->{pseudo} //= { kind => 'PIPE', id => "$e->{id}.EQL", len => $e->{eql}, eqv => 0,
+                               dia => $e->{host}{dia}, c => $e->{host}{c}, eps => $e->{host}{eps} };
+            return elem_hf($e->{pseudo}, $q, $o);
+        }
+        return (0, 0);
+    }
     # Every element kind must be handled above.  Returning a silent zero for an
     # unrecognised one is exactly how the ORIFICE_P fault went unnoticed, so an
     # unknown kind is now a hard error rather than an element with no effect.
@@ -700,12 +755,15 @@ sub solve_network {
 
     $net->{converged} = 0;
     $net->{history}   = [];
+    $net->{degenerate} = [];
     my $iter = 0;
 
     while ($iter < $maxiter) {
         $iter++;
         my ($maxdq, $maxres) = (0, 0);
-        for my $lp (@{ $net->{loops} }) {
+        my %degen;
+        for my $li (0 .. $#{ $net->{loops} }) {
+            my $lp = $net->{loops}[$li];
             my ($sumh, $sumd, $qscale) = (0, 0, 0);
             for my $step (@$lp) {
                 my $e = $elems->[ $step->[0] ];
@@ -714,6 +772,12 @@ sub solve_network {
                 $sumd += $dh;
                 $qscale = abs $e->{q} if abs $e->{q} > $qscale;
             }
+            # A loop whose every element has no flow derivative (static
+            # supplies and fixed drops only) cannot be corrected at all: the
+            # Cross denominator is zero.  It is left alone, as before, but
+            # recorded when it is out of balance, so that a stall is reported
+            # as what it is rather than as slow convergence.
+            $degen{$li} = 1 if $sumd < 1e-10 && abs($sumh) > $tolloop;
             my $dq = $sumd < 1e-10 ? 0 : -$sumh / $sumd;
             # Trust region: stops the first sweeps launching the iterate into
             # nonsense when the seed is far off.  Inactive near the solution,
@@ -725,6 +789,7 @@ sub solve_network {
             $elems->[ $_->[0] ]{q} += $_->[1] * $dq for @$lp;
         }
         push @{ $net->{history} }, [ $iter, $maxdq, $maxres ];
+        $net->{degenerate} = [ sort { $a <=> $b } keys %degen ];
 
         # A solver that runs away must say so, not keep iterating until the
         # numbers become infinities and the report fills with plausible rubbish.
@@ -732,6 +797,7 @@ sub solve_network {
             my $q = $elems->[$ei]{q};
             if ($q != $q || abs($q) > 1e15) {
                 $net->{iters} = $iter;
+                $net->{nonconv} = 'diverged';
                 return 0;
             }
         }
@@ -760,8 +826,47 @@ sub solve_network {
         }
     }
     $net->{iters} = $iter;
+    $net->{nonconv} = $net->{converged} ? undef : iteration_diagnosis($net->{history});
     recover_heads($net);
     return $net->{converged};
+}
+
+#------------------------------------------------------------------------------
+# iteration_diagnosis -- why an iteration that used up MAXITER did not finish,
+# read from its history of [iter, max |dQ|, max |residual|]:
+#
+#   diverging    the corrections over the last tenth are larger than over the
+#                tenth before it, and growing
+#   oscillating  the largest correction changes direction of travel -- rises
+#                and falls -- on most sweeps of the last tenth, without the
+#                level coming down
+#   stalled      the corrections have stopped falling: over the last tenth they
+#                came down by less than 1 %
+#   slow         still falling, but MAXITER was reached first
+#
+# This is a diagnosis for the report and the JSON only.  It never changes a
+# result and never turns a failure into a pass; "slow" is as unconverged as
+# the rest.
+#------------------------------------------------------------------------------
+sub iteration_diagnosis {
+    my $h = shift;
+    return 'no_iterations' unless $h && @$h;
+    my $n = @$h;
+    return 'slow' if $n < 20;
+    my $w = int($n / 10);
+    my @last = map { $_->[1] } @$h[ $n - $w .. $n - 1 ];
+    my @prev = map { $_->[1] } @$h[ $n - 2 * $w .. $n - $w - 1 ];
+    my $mean = sub { my $s = 0; $s += $_ for @_; $s / @_ };
+    my ($ml, $mp) = ($mean->(@last), $mean->(@prev));
+    return 'diverging' if $ml > 1.5 * $mp && $last[-1] > $last[0];
+    my $turns = 0;
+    for my $i (1 .. $#last - 1) {
+        my ($d1, $d2) = ($last[$i] - $last[ $i - 1 ], $last[ $i + 1 ] - $last[$i]);
+        $turns++ if $d1 * $d2 < 0;
+    }
+    return 'oscillating' if $#last > 2 && $turns > 0.5 * ($#last - 1) && $ml >= 0.9 * $mp;
+    return 'stalled' if $ml >= 0.99 * $mp;
+    return 'slow';
 }
 
 # ---------------------------------------------------------------------------
@@ -775,8 +880,39 @@ sub size_orifices {
         next unless $e->{kind} eq 'ORIFICE_REQUIRED';
         my $q    = abs $e->{q};
         my $bore = orifice_size($q, $e->{dp}, $e->{pipedia}, $e->{cd});
+        # What the plate was sized for, kept so the final plate can be checked
+        # against it (HardyCross::Validate): the duty, the exact bore before
+        # rounding, and whether the bisection ran into either end of its
+        # bracket.  orifice_size returns the end of the bracket when the
+        # target cannot be reached -- a drop smaller than a plate of nearly
+        # the full pipe bore gives, or larger than one of 0.1 % of it -- and
+        # that bore used to be accepted as if it met the duty.
+        my ($lo, $hi) = (0.001 * $e->{pipedia}, 0.9995 * $e->{pipedia});
+        $e->{dp_target}  = $e->{dp};
+        $e->{q_sized}    = $q;
+        $e->{bore_exact} = $bore;
+        $e->{size_clamp} = $q <= $Q_TINY                                          ? 'NO_FLOW'
+                         : orifice_dp($q, $hi, $e->{pipedia}, $e->{cd}) > $e->{dp} ? 'BORE_MAX'
+                         : orifice_dp($q, $lo, $e->{pipedia}, $e->{cd}) < $e->{dp} ? 'BORE_MIN'
+                         : undef;
         my $step = $net->{opts}{orif_step} // 0.5;
-        $bore = int($bore / $step + 0.5) * $step if $step > 0;
+        if ($step > 0) {
+            my $r = int($bore / $step + 0.5) * $step;
+            # Rounding to the nearest step must still give a plate: rounding
+            # 0.9995 D up made a bore EQUAL to the pipe's (50.0 mm in a 50.0
+            # mm pipe on a test model), and a tiny bore rounds to nothing.
+            # The step below the pipe bore, or one step, is taken instead and
+            # the adjustment kept for the report; a plate that cannot meet
+            # its duty is still refused by HardyCross::Validate.
+            if ($r >= $e->{pipedia} - 1e-9) {
+                $r = (POSIX::ceil($e->{pipedia} / $step) - 1) * $step;
+                $e->{bore_rounding} = 'DOWN_BELOW_PIPE_BORE';
+            } elsif ($r <= 0) {
+                $r = $step;
+                $e->{bore_rounding} = 'UP_TO_ONE_STEP';
+            }
+            $bore = $r;
+        }
         $e->{kind} = 'ORIFICE';
         $e->{bore} = $bore;
         $changed = 1;
@@ -807,11 +943,19 @@ my $MAX_FLIP = 8;
 sub pump_status {
     my $net = shift;
     my $changed = 0;
+    my @closed_now;
 
     for my $ei (1 .. $#{ $net->{elems} }) {
         my $e = $net->{elems}[$ei];
         next unless $e->{kind} eq 'PUMP';
-        next if ($e->{nflips} // 0) > $MAX_FLIP;
+        # A pump past the flip limit is no longer switched.  It is MARKED, so
+        # that whatever state it is left in is checked by
+        # HardyCross::Validate rather than taken as settled: the limit stops
+        # the outer loop cycling, it does not make the state right.
+        if (($e->{nflips} // 0) > $MAX_FLIP) {
+            $e->{flip_limit} = 1 unless $e->{isolating};
+            next;
+        }
 
         if (!$e->{closed}) {
             if ($e->{q} < -$Q_TINY) {
@@ -819,6 +963,7 @@ sub pump_status {
                 $e->{q} = 0;
                 $e->{nflips}++;
                 $changed = 1;
+                push @closed_now, $e;
             }
         } else {
             my $shut = curve_eval($e->{curve}, 0);
@@ -834,14 +979,24 @@ sub pump_status {
 
     # The graph has changed, so the tree, the loop set and the seed flows must
     # all be rebuilt.  If closing a pump would isolate part of the network the
-    # closure is reverted rather than left to fail later: an unreachable node
-    # is a modelling problem to report, not a solver state to settle into.
+    # closure is reverted: the network cannot be solved without it.  The
+    # pump is then left OPEN, running backwards, which is physically
+    # impossible -- so it is marked isolating, and HardyCross::Validate
+    # rejects the calculation.  It is NOT a solver state to settle into.
+    #
+    # Two faults were corrected here (10 November 2026).  The revert reopened
+    # EVERY closed pump, including ones closed correctly on an earlier pass;
+    # it now reopens only those closed on this one.  And it returned "no
+    # change" after rebuilding the tree but not the loops or the flows: the
+    # closed pump's flow had been set to zero, so the network handed back
+    # broke continuity at both ends of the pump -- by 200 L/min on a test
+    # model -- and the outer loop took it as settled.  The network is now
+    # rebuilt in full and solved again.
     my $isolated = !eval { build_tree($net); 1 };
     if ($isolated) {
-        for my $ei (1 .. $#{ $net->{elems} }) {
-            my $e = $net->{elems}[$ei];
-            next unless $e->{kind} eq 'PUMP' && $e->{closed};
+        for my $e (@closed_now) {
             $e->{closed} = 0;
+            $e->{isolating} = 1;
             $e->{nflips} = $MAX_FLIP + 1;     # stop reconsidering it
         }
         $net->{warnings} ||= [];
@@ -850,7 +1005,6 @@ sub pump_status {
           . 'so the pump has been left open; the reverse flow reported '
           . 'through it is not physically possible';
         build_tree($net);
-        return 0;
     }
     build_loops($net);
     init_flows($net);
@@ -1003,8 +1157,29 @@ sub outlet_pressure {
     return $p;
 }
 
+# The most outer passes a solve may take before it is declared unsettled.
+# A package variable so a test can lower it and check that an unsettled solve
+# is refused; it is not a user option.
+our $MAX_OUTER = 60;
+
+# link_devices -- give each device that needs its pipe's data a reference to
+# that pipe: a dry pipe valve whose loss is an equivalent length (DPV ... EQL)
+# takes the bore and C of the pipe it sits in.  Done once, before the solve.
+sub link_devices {
+    my $net = shift;
+    my %pipe = map { $_->{id} => $_ } grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    for my $e (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        next unless defined $e->{host_id};
+        $e->{host} = $pipe{ $e->{host_id} };
+        delete $e->{pseudo};
+    }
+}
+
 sub solve_model {
     my $net = shift;
+    # A network solved again is validated again (HardyCross::Validate::assess).
+    delete $net->{assessment};
+    link_devices($net);
     build_tree($net);
     build_loops($net);
     init_flows($net);
@@ -1018,24 +1193,49 @@ sub solve_model {
     # inside the Hardy Cross iteration.  Bounded: plates and pumps settle in a
     # pass or two and ratio valves in a few; an unbounded loop would hang on a
     # duty that cannot be met.
-    my $settled = 0;
-    for (1 .. 60) {
+    #
+    # Two rules, added 10 November 2026, so that the result returned is one
+    # whose every device state has been decided on a converged answer:
+    #
+    #   - No device is adjusted on an UNCONVERGED inner solve.  A plate sized,
+    #     a pump switched or a ratio set from flows that do not balance is
+    #     sized, switched or set from nonsense.  The outer loop stops there
+    #     and the solve is reported as not converged.
+    #   - The solve succeeds only if the outer loop SETTLED: a pass in which
+    #     nothing changed.  Before, a solve that used up its outer passes
+    #     still returned the last inner result as converged, with only a
+    #     warning for ratio valves and velocity pressures and nothing at all
+    #     for plates and pumps.
+    #
+    # Both are recorded on the network for the report, the JSON and
+    # HardyCross::Validate: hc_converged (the last Hardy Cross solve
+    # converged), outer_settled, outer_passes, and outer_stop (why the outer
+    # loop ended: settled, inner_not_converged or pass_limit).
+    my ($settled, $passes, $stop) = (0, 0, 'pass_limit');
+    for (1 .. $MAX_OUTER) {
+        unless ($ok) { $stop = 'inner_not_converged'; last }
+        $passes++;
         my $sized  = size_orifices($net);
         my $pumped = pump_status($net);
         my $ratio  = ratio_valves($net);
         my $vp     = velocity_pressures($net);
-        unless ($sized || $pumped || $ratio || $vp) { $settled = 1; last }
+        unless ($sized || $pumped || $ratio || $vp) { ($settled, $stop) = (1, 'settled'); last }
         $ok = solve_network($net,
             maxiter  => $net->{opts}{maxiter},
             tol_flow => $net->{opts}{tol_flow},
             tol_loop => $net->{opts}{tol_loop});
     }
+    @{$net}{qw(hc_converged outer_settled outer_passes outer_stop)} = ($ok ? 1 : 0, $settled, $passes, $stop);
     push @{ $net->{warnings} }, ratio_warnings($net, $settled)
         if grep { $_->{kind} eq 'RATIO' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     push @{ $net->{warnings} }, 'the sprinkler velocity pressures had not settled when the solve '
                               . 'stopped; the results must be checked'
         if $net->{opts}{vel_press} && !$settled;
-    return $ok;
+    push @{ $net->{warnings} }, sprintf('the device states (orifice plates, pump check valves, ratio valves, '
+                              . 'velocity pressures) had not settled after %d outer passes; the solve is '
+                              . 'not converged', $passes)
+        if $ok && !$settled;
+    return $ok && $settled ? 1 : 0;
 }
 
 1;

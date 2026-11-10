@@ -234,6 +234,17 @@ sub diagnostics {
     my $line = sub { my $id = shift; $id =~ s/[.~].*//; $scan->{names}{$id} };
     push @{ $d{warnings} }, { line => undef,
         message => 'THE SOLVE DID NOT CONVERGE: THE RESULTS MUST NOT BE USED' } unless $net->{converged};
+    # The calculation's acceptance and every mandatory failure, from the same
+    # validation the report and the JSON print (HardyCross::Validate::assess;
+    # the report written with the solve has already worked it out).
+    require HardyCross::Validate;
+    my $va = HardyCross::Validate::assess($net, $net->{converged})->{validation};
+    unless ($va->{acceptance} eq 'ACCEPTED') {
+        push @{ $d{warnings} }, { line => undef,
+            message => 'CALCULATION ' . uc HardyCross::Validate::acceptance_text($va->{acceptance}) };
+        push @{ $d{warnings} }, { line => $line->($_->{item} // ''), message => uc "$_->{code}: $_->{message}" }
+            for grep { $_->{severity} eq 'error' && $_->{category} ne 'design' } @{ $va->{findings} };
+    }
     my $vl = $net->{opts}{vel_limit} // 6;
     for my $e (grep { $_->{kind} eq 'PIPE' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
         my $v = abs HardyCross::pipe_velocity($e->{q}, $e->{dia});
@@ -680,6 +691,11 @@ sub load_file {
     my $text = do { local $/; <$fh> };
     close $fh;
     $text =~ s/\r\n/\n/g;
+    # The results block a solve saved at the end of the file
+    # (HardyCross::Results) is not part of the model: it is left out of the
+    # editor, and written again, fresh, when a calculated model is saved.
+    require HardyCross::Results;
+    $text = HardyCross::Results::strip($text);
     return { text => $text, path => $path };
 }
 
@@ -730,8 +746,9 @@ sub project_label { my $f = shift; return $PROJECT_LABEL{$f} // ($f =~ tr/_/ /r)
 our %UNIT_LABEL = (LENGTH => 'PIPE LENGTH', ELEVATION => 'ELEVATION', SIZE => 'PIPE SIZE AND BORE',
                    PRESSURE => 'PRESSURE', FLOW => 'FLOW', KFACTOR => 'K-FACTOR');
 our @OPTION_FORM = (
-    [ 'VEL_LIMIT', 'VELOCITY WARNING LIMIT',
-      'PIPES FASTER THAN THIS, IN M/S, ARE LISTED AS WARNINGS. BLANK: 6 M/S.' ],
+    [ 'VEL_LIMIT', 'VELOCITY LIMIT',
+      'A DESIGN LIMIT, IN M/S: A PIPE FASTER THAN THIS FAILS THE DESIGN (NONCOMPLIANT). BLANK: 6 M/S, AS A '
+      . 'WARNING ONLY.' ],
     [ 'FITTING_BASIS', 'FITTING LENGTHS',
       'CORRECTED: ADJUSTED FOR THE C-FACTOR AND THE INSTALLED BORE. STANDARD: AS PUBLISHED IN AS 2118.1. '
       . 'BLANK: CORRECTED.', [ '', 'CORRECTED', 'STANDARD' ] ],
@@ -756,6 +773,15 @@ our @OPTION_FORM = (
     [ 'DESIGN_AREA', 'DESIGN AREA',
       'THE ONE DESIGN AREA (AREA) TO SOLVE AND REPORT. BLANK: EVERY AREA IS SOLVED AND THE ONE THAT GOVERNS IS '
       . 'REPORTED. NOT USED WITHOUT AREA LINES.' ],
+    [ 'SUPPLY_MARGIN', 'SUPPLY MARGIN',
+      'THE LEAST PRESSURE, IN THE PRESSURE UNIT, THE SUPPLY MUST HAVE OVER THE DEMAND; LESS FAILS THE DESIGN. '
+      . 'WITH SEVERAL SUPPLIES, THE MARGIN AT THEIR JOINT DEMAND. BLANK: 0.' ],
+    [ 'SUPPLY_SCENARIOS', 'SUPPLY SCENARIOS',
+      'WITH MORE THAN ONE SUPPLY: ON - EACH SUPPLY ALONE AND EACH OUT OF SERVICE ARE SOLVED AND REPORTED, FOR '
+      . 'INFORMATION. OFF: NOT. SCENARIO LINES ARE ALWAYS SOLVED. BLANK: ON.', [ '', 'ON', 'OFF' ] ],
+    [ 'JOINT_BASIS', 'JOINT DEMAND BASIS',
+      'WITH MORE THAN ONE SUPPLY, HOW THEY ARE REDUCED TOGETHER TO FIND THE JOINT DEMAND: DERATE - EVERY SUPPLY '
+      . 'LOWERED BY ONE PRESSURE; SCALE - BY ONE FACTOR. BLANK: DERATE.', [ '', 'DERATE', 'SCALE' ] ],
     'SOLVER - ADVANCED',
     [ 'TOL_FLOW', 'FLOW TOLERANCE',
       'THE SOLVE ENDS WHEN EVERY LOOP\'S FLOW CORRECTION IS SMALLER THAN THIS, IN THE FLOW UNIT. BLANK: 0.05 L/MIN.' ],

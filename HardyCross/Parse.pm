@@ -131,6 +131,18 @@ sub kv {
     return undef;
 }
 
+# kv_text -- the value of a KEY=value token as text, or undef: for the words a
+# row carries (a dry pipe valve's MODE=RATIO, ACC=ON, HOST=<pipe>), which kv
+# would read as 0.
+sub kv_text {
+    my ($tk, $key) = @_;
+    for my $t (@$tk) {
+        my ($k, $v) = split /=/, $t, 2;
+        return $v if defined $v && uc($k) eq uc($key);
+    }
+    return undef;
+}
+
 #------------------------------------------------------------------------------
 # node_index -- the index of a node by name, creating it on first mention.
 #
@@ -239,6 +251,29 @@ sub parse_row {
                          : HardyCross::fail("METHOD must be HW or DW, not %s", $v);
         }
         elsif ($k eq 'HW_CONST') { $o->{hwk} = num($v) }
+        # The least margin the supply must have over the demand, a pressure
+        # in the model's unit (0 unless given).  A supply short of it fails
+        # the design (HardyCross::Validate).
+        elsif ($k eq 'SUPPLY_MARGIN') {
+            $o->{supply_margin} = num($v) * $net->{f_pres};
+            HardyCross::fail("SUPPLY_MARGIN cannot be negative") if $o->{supply_margin} < 0;
+        }
+        # With more than one supply: whether the supply failure scenarios are
+        # worked out (ON, the default) -- every supply alone, and every supply
+        # in turn out of service (HardyCross::Supplies).
+        elsif ($k eq 'SUPPLY_SCENARIOS') {
+            my $v2 = uc $v;
+            HardyCross::fail("SUPPLY_SCENARIOS must be ON or OFF") unless $v2 eq 'ON' || $v2 eq 'OFF';
+            $o->{supply_scenarios} = $v2 eq 'ON' ? 1 : 0;
+        }
+        # The basis of the joint demand of several supplies: DERATE (the
+        # default), every supply's pressure lowered by one common amount;
+        # SCALE, every supply's pressure multiplied by one common factor.
+        elsif ($k eq 'JOINT_BASIS') {
+            my $v2 = uc $v;
+            HardyCross::fail("JOINT_BASIS must be DERATE or SCALE") unless $v2 eq 'DERATE' || $v2 eq 'SCALE';
+            $o->{joint_basis} = $v2;
+        }
         # A flow added at the supply for hose streams: the demand is checked
         # at the system's flow plus it (HardyCross::Demand).
         elsif ($k eq 'HOSE_ALLOWANCE') {
@@ -580,6 +615,77 @@ sub parse_row {
             push @{ $net->{elems} }, {
                 id => $tk->[0], kind => 'BFP', n1 => $n1, n2 => $n2,
                 curve => read_curve($net, $tk, 4, 1), q => 0, in_tree => 0,
+            };
+        } elsif ($ty eq 'DPV') {
+            # A dry pipe valve (HardyCross::elem_hf, kind DPV): solved as
+            # tripped and fully open.  Its loss is a curve (flow/loss points,
+            # or one fixed loss), an equivalent length of its pipe (EQL=, m,
+            # at the pipe's bore and C), or NONE -- which is not assumed to be
+            # zero: HardyCross::Validate rejects the calculation.
+            my $mode = uc(kv_text($tk, 'MODE') // '');
+            my $acc  = uc(kv_text($tk, 'ACC') // '');
+            my %trip = $mode eq 'RATIO' ? (trip_ratio => kv($tk, 'RATIO'))
+                     : $mode eq 'TRIP'  ? (trip_pressure => kv($tk, 'TRIP') * $net->{f_pres})
+                     : ();
+            my @pts = grep { !/=/ } @$tk[4 .. $#$tk];
+            my ($loss, %data) = ('NONE');
+            if (defined(my $vk = kv_text($tk, 'VALVE'))) {
+                # A manufacturer's valve from the database: its published
+                # equivalent length of its published reference pipe and C,
+                # worked by Hazen-Williams (HardyCross::elem_hf, loss DB).
+                ensure_db();
+                my ($mk, $md) = split m{/}, $vk, 2;
+                my $v = HardyCross::PipeData::dry_valve($mk, $md, int(kv($tk, 'SIZE') // 0))
+                    or HardyCross::fail("DPV %s: %s is not in the database in this size", $tk->[0], $vk);
+                # Usable only with a complete loss: a flow coefficient, or a
+                # length with the bore and C it is of.  A data sheet that
+                # prints a length of no stated pipe gives nothing to work at.
+                HardyCross::fail("DPV %s: the database has no usable loss for %s %s DN%s%s", $tk->[0], $mk, $md, $v->{dn},
+                                 length($v->{note}) && $v->{note} ne 'DASH' ? " - $v->{note}" : '')
+                    unless $v->{cv} || (defined $v->{eql_m} && $v->{bore_mm} && $v->{c});
+                ($loss, %data) = ('DB', ($v->{cv} ? (cv => $v->{cv})
+                                                  : (eql => $v->{eql_m}, ref_bore => $v->{bore_mm}, ref_c => $v->{c})),
+                                  db => $v, db_model => "$v->{maker} $v->{model}");
+            } elsif (defined kv($tk, 'EQL')) {
+                ($loss, %data) = ('EQL', eql => kv($tk, 'EQL') * $net->{f_len});
+            } elsif (defined kv($tk, 'FIXED')) {
+                my $f = kv($tk, 'FIXED') * $net->{f_pres};
+                # A loss that does not vary with flow, as a flat curve: the
+                # same as a single-pair BFP, read the same way.
+                ($loss, %data) = ('CURVE', curve => HardyCross::fit_curve(
+                    { q => [ 0, 1e6 ], p => [ $f, $f ] }, 1), fixed_loss => $f);
+            } elsif (@pts) {
+                ($loss, %data) = ('CURVE', curve => read_curve($net, $tk, 4, 1));
+            }
+            push @{ $net->{elems} }, {
+                id => $tk->[0], kind => 'DPV', n1 => $n1, n2 => $n2,
+                size => int(kv($tk, 'SIZE') // 0), host_id => kv_text($tk, 'HOST'),
+                trip_mode => $mode, %trip, accelerator => $acc,
+                loss => $loss, %data, q => 0, in_tree => 0,
+                # Kept for a future water delivery time calculation, which is
+                # a TRANSIENT problem solved apart from this steady-state
+                # network: nothing here is used by the solver.  The states a
+                # dry system passes through are
+                #     SET -> PRESSURE_DECAY -> TRIPPED -> FILLING -> WATER_DELIVERY
+                # and the steady-state solve is the end of that sequence: the
+                # valve tripped, the system full, water flowing.  No trip time,
+                # transit time or delivery time is calculated or implied.
+                transient => {
+                    state              => 'TRIPPED_OPEN',
+                    states             => [qw(SET PRESSURE_DECAY TRIPPED FILLING WATER_DELIVERY)],
+                    air_initial        => undef,      # DPVAIR, kPa
+                    trip_ratio         => $trip{trip_ratio},
+                    trip_pressure      => $trip{trip_pressure},
+                    accelerator        => $acc,
+                    accelerator_model  => undef,
+                    trip_conditions    => undef,
+                    dry_volume         => undef,      # m3 of the dry pipework
+                    air_decay          => undef,
+                    valve_opening      => undef,
+                    water_transit      => undef,
+                    venting            => undef,
+                    delivery_time      => undef,      # s: NOT CALCULATED
+                },
             };
         } else {
             HardyCross::fail("device type %s is not known", $ty);

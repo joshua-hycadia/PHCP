@@ -15,6 +15,10 @@
 #   phcp.pl --json -                   ...the model read from standard input
 #   phcp.pl --json model.phc --report out.pdf
 #                                      ...and the report written as well
+#   phcp.pl model.phc --save           ...and save the results back into
+#                                      model.phc, a block of comments at its
+#                                      end (HardyCross::Results); an earlier
+#                                      block is replaced, the model untouched
 #   phcp.pl model.phc --annotate out.phc
 #                                      pipes given size 0 are sized (auto
 #                                      sizing); out.phc is the model with
@@ -30,11 +34,20 @@
 # --json, one JSON object is printed instead -- in every case, an error
 # included, so a caller always has something to read.
 #
-# Exit status is the contract other programs rely on:
-#   0  solved and converged        the results can be used
-#   1  ran but did not converge    the results must NOT be used
+# Exit status is the contract other programs rely on.  It follows the
+# calculation's ACCEPTANCE (HardyCross::Validate), not only whether the
+# iteration converged:
+#   0  ACCEPTED or NONCOMPLIANT    a valid solution: numerically and physically
+#                                  sound; the JSON's "acceptance" and the
+#                                  report say whether the design passes
+#   1  INDETERMINATE               did not converge, or the device states did
+#                                  not settle: the results must NOT be used
 #   2  input or topology error     nothing was solved; the reason is on stderr
 #                                  (and in the JSON, with --json)
+#   3  REJECTED                    converged, but the network fails a
+#                                  numerical or physical check (a pump running
+#                                  backwards, a reverse discharge, continuity
+#                                  not holding): the results must NOT be used
 #==============================================================================
 # Command line driver.  Prints element flows and node pressures in the units
 # the MODEL declared -- not the engine's internal ones, because printing
@@ -49,11 +62,12 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl [--json] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
-my ($json, $model, $report_path, $annotate) = (0, undef, undef, undef);
+my $USAGE = "usage: phcp.pl [--json] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
+my ($json, $model, $report_path, $annotate, $save) = (0, undef, undef, undef, 0);
 while (@ARGV) {
     my $a = shift @ARGV;
     if    ($a eq '--json')   { $json = 1 }
+    elsif ($a eq '--save')   { $save = 1 }
     elsif ($a eq '--report') { $report_path = shift @ARGV // die $USAGE }
     elsif ($a eq '--annotate') { $annotate = shift @ARGV // die $USAGE }
     elsif (!defined $model)  { $model = $a }
@@ -118,11 +132,29 @@ if (defined $report_path) {
     }
 }
 
-if ($json) {
-    require HardyCross::Json;
-    print HardyCross::Json::encode(HardyCross::Json::results($net, $ok, $model));
-    exit($ok ? 0 : 1);
+require HardyCross::Json;
+require HardyCross::Validate;
+# --save: the results back into the model file, as comments at its end.  The
+# model text written is the one read, so nothing in the model itself changes.
+if ($save) {
+    die "--save needs a model file, not standard input\n" if $model eq '-';
+    require HardyCross::Results;
+    my $text = do { open my $in, '<', $model or die "cannot read $model: $!\n"; local $/; <$in> };
+    $text =~ s/\r\n/\n/g;
+    open my $out, '>', $model or die "cannot write $model: $!\n";
+    binmode $out;
+    print $out HardyCross::Results::with_results($text, $net, $ok);
+    close $out;
 }
+if ($json) {
+    my $j = HardyCross::Json::results($net, $ok, $model);
+    print HardyCross::Json::encode($j);
+    exit(HardyCross::Json::exit_code($j->{acceptance}));
+}
+# Without --json the acceptance is still worked out (with the demand point
+# only when a report asked for it, as it re-solves the model many times), so
+# the exit status means the same thing either way.
+my $va = HardyCross::Validate::assess($net, $ok, demand => defined $report_path ? 1 : 0)->{validation};
 
 printf "# PHCP - Perl Hydraulic Calculation Program %s\n", $HardyCross::VERSION;
 printf "# converged %s  iterations %d  loops %d  continuity %.4e\n",
@@ -139,5 +171,5 @@ for my $i (1 .. $#{ $net->{nodes} }) {
     printf "P %s %.4f\n", $n->{id},
         ($n->{h} - $HardyCross::GAMMA_W * $n->{z}) / $net->{f_pres};
 }
-exit($ok ? 0 : 1);
+exit(HardyCross::Json::exit_code($va->{acceptance}));
 

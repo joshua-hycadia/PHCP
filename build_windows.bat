@@ -93,7 +93,7 @@ perl -MWin32::API -e1 >nul 2>&1 && set ICON=yes
 
 rem HardyCross::Phc is loaded with require only when a .phc file is read,
 rem so it is listed here by name rather than left to the dependency scan.
-set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M HardyCross::PumpCheck -M HardyCross::Areas -M HardyCross::Sizing -M HardyCross::Graph -M JSON::PP
+set MODS=-M HardyCross -M HardyCross::Parse -M HardyCross::PipeData -M HardyCross::Report -M HardyCross::Demand -M HardyCross::PDF -M HardyCross::Phc -M HardyCross::Settings -M HardyCross::Json -M HardyCross::PumpCheck -M HardyCross::Areas -M HardyCross::Sizing -M HardyCross::Graph -M HardyCross::Validate -M HardyCross::Supplies -M HardyCross::Results -M Digest::SHA -M JSON::PP
 rem The database goes to lib\data inside the package, which is where
 rem HardyCross::PipeData looks for it when running from a packaged .exe.
 rem The PDF report's typeface goes beside it, in lib\data\fonts.
@@ -173,7 +173,7 @@ findstr /c:"converged yes" smoke_test_phc.txt >nul || (echo ERROR: phcp.exe did 
 phcp.exe examples\07_pipe_database_demo.phc smoke_test.pdf >nul
 if not exist smoke_test.pdf (echo ERROR: no PDF was written & exit /b 1)
 phcp.exe --json examples\05_crosscheck.phc > smoke_test.json
-findstr /c:"\"interface\" : 1" smoke_test.json >nul || (echo ERROR: phcp.exe --json gave no result. See smoke_test.json & exit /b 1)
+findstr /c:"\"interface\" : 2" smoke_test.json >nul || (echo ERROR: phcp.exe --json gave no result. See smoke_test.json & exit /b 1)
 echo        ok - .phc examples solved and converged, PDF report and JSON written
 
 echo.

@@ -55,8 +55,11 @@ for my $m (grep { !/grid1000/ } sort glob("$EX/*.phc")) {
     (my $name = $m) =~ s{.*/}{};
     my ($code, $out) = run(undef, '--json', $m);
     my $j = eval { decode_json($out) };
-    is("$name: valid JSON, interface 1, converged, exit 0",
-       $j && $j->{interface} == 1 && $j->{status} eq 'converged' && $j->{converged} && $code == 0, $@ || "exit $code");
+    is("$name: valid JSON, interface 2, converged, exit 0",
+       $j && $j->{interface} == 2 && $j->{status} eq 'converged' && $j->{converged} && $code == 0, $@ || "exit $code");
+    is("   accepted or noncompliant ($j->{acceptance}), validation and traceability given",
+       $j && $j->{acceptance} =~ /^(ACCEPTED|NONCOMPLIANT)\z/ && $j->{validation}{numerical}{status} eq 'PASS'
+       && $j->{validation}{physical}{status} eq 'PASS' && $j->{traceability}{model_sha256});
     next unless $j;
     my ($c2, $plain) = run(undef, $m);
     my %q = $plain =~ /^Q (\S+) (\S+)$/mg;
@@ -124,7 +127,8 @@ print "2. FAILURES - the JSON is written whatever happens\n";
     $j = eval { decode_json($out) };
     is('a solve that does not converge: exit 1, status not_converged',
        $j && $code == 1 && $j->{status} eq 'not_converged' && !$j->{converged}, "exit $code");
-    is('   and the summary says not to use the results', $j && $j->{summary}[0] =~ /MUST NOT BE USED/);
+    is('   INDETERMINATE, and the summary says not to use the results',
+       $j && $j->{acceptance} eq 'INDETERMINATE' && $j->{summary}[0] =~ /MUST NOT BE USED/);
 }
 
 #==============================================================================
