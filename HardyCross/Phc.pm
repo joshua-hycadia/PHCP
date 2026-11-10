@@ -58,13 +58,13 @@ use HardyCross::PipeData;
 # Solver options, as the network builder takes them (METHOD has its own
 # command).  The builder silently ignores an unknown option name; in .phc it
 # is an error, so a setting that does nothing cannot look as if it works.
-our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX
+our @OPTIONS = qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER RELAX ORIF_DP_TOL
                   VEL_LIMIT FITTING_BASIS ORIF_STEP HOSE_ALLOWANCE DESIGN_AREA
                   SIZING_GOAL SIZING_MARGIN SIZING_TRIALS VELOCITY_PRESSURE
                   SUPPLY_MARGIN SUPPLY_SCENARIOS JOINT_BASIS);
 my %OPTION = map { $_ => 1 } @OPTIONS;
 my %NUM_OPTION = map { $_ => 1 } qw(HW_CONST NU TOL_FLOW TOL_LOOP MAXITER
-                                    RELAX VEL_LIMIT ORIF_STEP HOSE_ALLOWANCE SUPPLY_MARGIN);
+                                    RELAX VEL_LIMIT ORIF_STEP ORIF_DP_TOL HOSE_ALLOWANCE SUPPLY_MARGIN);
 
 #------------------------------------------------------------------------------
 # Units.  One UNITS line per quantity; anything not set takes the office

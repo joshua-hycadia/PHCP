@@ -19,6 +19,9 @@
 #                                      model.phc, a block of comments at its
 #                                      end (HardyCross::Results); an earlier
 #                                      block is replaced, the model untouched
+#   phcp.pl --strict model.phc         exit 0 for ACCEPTED only; NONCOMPLIANT
+#                                      exits 4 (see below); the supply demand
+#                                      is always worked out
 #   phcp.pl model.phc --annotate out.phc
 #                                      pipes given size 0 are sized (auto
 #                                      sizing); out.phc is the model with
@@ -48,6 +51,11 @@
 #                                  numerical or physical check (a pump running
 #                                  backwards, a reverse discharge, continuity
 #                                  not holding): the results must NOT be used
+#   4  NONCOMPLIANT, with --strict a valid solution whose design fails or is
+#                                  not demonstrated.  Without --strict it is 0,
+#                                  as it always was, so no caller breaks; a
+#                                  caller that acts on 0 as "approved" must use
+#                                  --strict, or read "approved" in the JSON.
 #==============================================================================
 # Command line driver.  Prints element flows and node pressures in the units
 # the MODEL declared -- not the engine's internal ones, because printing
@@ -62,12 +70,13 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl [--json] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
-my ($json, $model, $report_path, $annotate, $save) = (0, undef, undef, undef, 0);
+my $USAGE = "usage: phcp.pl [--json] [--strict] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
+my ($json, $model, $report_path, $annotate, $save, $strict) = (0, undef, undef, undef, 0, 0);
 while (@ARGV) {
     my $a = shift @ARGV;
     if    ($a eq '--json')   { $json = 1 }
     elsif ($a eq '--save')   { $save = 1 }
+    elsif ($a eq '--strict') { $strict = 1 }
     elsif ($a eq '--report') { $report_path = shift @ARGV // die $USAGE }
     elsif ($a eq '--annotate') { $annotate = shift @ARGV // die $USAGE }
     elsif (!defined $model)  { $model = $a }
@@ -149,18 +158,23 @@ if ($save) {
 if ($json) {
     my $j = HardyCross::Json::results($net, $ok, $model);
     print HardyCross::Json::encode($j);
-    exit(HardyCross::Json::exit_code($j->{acceptance}));
+    exit(HardyCross::Json::exit_code($j->{acceptance}, $strict));
 }
 # Without --json the acceptance is still worked out (with the demand point
 # only when a report asked for it, as it re-solves the model many times), so
 # the exit status means the same thing either way.
-my $va = HardyCross::Validate::assess($net, $ok, demand => defined $report_path ? 1 : 0)->{validation};
+# With --strict the demand is always worked out: a status of 0 must mean the
+# supplies were shown adequate too.
+my $with_demand = defined $report_path || $strict || $save ? 1 : 0;
+my $va = HardyCross::Validate::assess($net, $ok, demand => $with_demand)->{validation};
 
 printf "# PHCP - Perl Hydraulic Calculation Program %s\n", $HardyCross::VERSION;
 printf "# converged %s  iterations %d  loops %d  continuity %.4e\n",
     ($ok ? 'yes' : 'NO'), $net->{iters}, scalar @{ $net->{loops} },
     HardyCross::continuity_error($net);
 printf "# units flow %s pressure %s\n", $net->{u_flow}, $net->{u_pres};
+printf "# acceptance %s%s\n", $va->{acceptance},
+    $with_demand ? '' : ' (supply demand not assessed: use --strict, --json or a report)';
 for my $ei (1 .. $#{ $net->{elems} }) {
     my $e = $net->{elems}[$ei];
     printf "Q %s %.4f\n", $e->{id}, $e->{q} / $net->{f_flow};
@@ -171,5 +185,5 @@ for my $i (1 .. $#{ $net->{nodes} }) {
     printf "P %s %.4f\n", $n->{id},
         ($n->{h} - $HardyCross::GAMMA_W * $n->{z}) / $net->{f_pres};
 }
-exit(HardyCross::Json::exit_code($va->{acceptance}));
+exit(HardyCross::Json::exit_code($va->{acceptance}, $strict));
 

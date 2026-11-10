@@ -16,6 +16,9 @@
 #   2  the model could not be read or solved
 #   3  REJECTED: converged, but the network fails a numerical or physical
 #      check -- not a valid answer to the model, and not to be used
+#   4  with --strict only: NONCOMPLIANT.  Then 0 means ACCEPTED and nothing
+#      else, for a caller that must not take a valid but failing design for
+#      an approved one.
 #
 # The JSON is written in every case, so a caller always has something to
 # read -- on an error, the message and its .phc line.
@@ -33,6 +36,18 @@
 #   model          the model file's name, or "-" for standard input
 #   status         "converged", "not_converged" or "error": how the
 #                  iteration ended, and nothing more
+#   approved       [2] true for ACCEPTED only: the one field that means the
+#                  design is shown to work.  Never read "converged" or exit 0
+#                  as that
+#   demand_assessment [2] { status DEMONSTRATED | INADEQUATE | UNRESOLVED |
+#                  NOT_ASSESSED, basis, message }: whether the supplies were
+#                  shown adequate, on what basis; UNRESOLVED is a search that
+#                  failed, not a supply found too weak
+#   assumptions    [2] { friction_method, hw_constant, fitting_basis,
+#                  velocity_pressure, joint_basis, joint_basis_is_assumption,
+#                  supply_margin, orifice_duty_tolerance_percent,
+#                  curve_extrapolation_limit, solver_tolerances,
+#                  dry_pipe_valves }
 #   acceptance     [2] "ACCEPTED", "NONCOMPLIANT", "REJECTED",
 #                  "INDETERMINATE" or "ERROR" (HardyCross::Validate): whether
 #                  the results may be used
@@ -117,8 +132,14 @@ our $INTERFACE = 2;
 
 # exit_code -- the exit status for a solve, from its acceptance (see the head
 # of this module).  phcp.pl uses it with and without --json, so the two agree.
+#
+# With strict (phcp.pl --strict), 0 is ACCEPTED alone and a NONCOMPLIANT
+# calculation exits 4, so a caller that takes 0 as "approved" cannot be
+# misled.  The default is unchanged, so no existing caller breaks.
 sub exit_code {
-    my $acc = shift // 'INDETERMINATE';
+    my ($acc, $strict) = @_;
+    $acc //= 'INDETERMINATE';
+    return 4 if $strict && $acc eq 'NONCOMPLIANT';
     return { ACCEPTED => 0, NONCOMPLIANT => 0, INDETERMINATE => 1, ERROR => 2, REJECTED => 3 }->{$acc} // 1;
 }
 # An element's kind in the language's own words.
@@ -151,6 +172,15 @@ sub results {
     my @el = @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
 
     my (@pipes, @elems, @nodes, @outlets);
+    # [2] Whether an element with a curve (a supply, a pump, a loss curve)
+    # operates beyond the curve's points, where its value is EXTRAPOLATED and
+    # not the published or tested performance; null for one with no curve.
+    require HardyCross::Validate;
+    my $extrap = sub {
+        my $e = shift;
+        return undef unless $e->{curve} && ($e->{loss_source} // '') ne 'USER_FIXED';
+        return HardyCross::Validate::extrapolated($e->{curve}, abs $e->{q}) ? JSON::PP::true : JSON::PP::false;
+    };
     for my $e (@el) {
         if ($e->{kind} eq 'PIPE') {
             my ($hf) = HardyCross::elem_hf($e, $e->{q}, $net->{opts});
@@ -162,13 +192,14 @@ sub results {
             # A supply joins its node to the solver's datum (REF), which is
             # nothing to a caller: it is reported by its node alone.
             push @elems, { id => $e->{id}, kind => 'WATER', from => undef,
-                           to => $node->($e->{n2})->{id}, flow => r4($e->{q} / $uf) };
+                           to => $node->($e->{n2})->{id}, flow => r4($e->{q} / $uf),
+                           extrapolated => $extrap->($e) };
         } elsif ($e->{kind} ne 'DISCHARGE') {
             # A device in a pipe is "<pipe>.<command>": its kind is the
             # command the user wrote (PRV, BFP, OPP, OFD, PRA, BP).
             push @elems, { id => $e->{id}, kind => $e->{id} =~ /\.([A-Z]+)\z/ ? $1 : $KIND{ $e->{kind} } // $e->{kind},
                            from => $node->($e->{n1})->{id}, to => $node->($e->{n2})->{id},
-                           flow => r4($e->{q} / $uf) };
+                           flow => r4($e->{q} / $uf), extrapolated => $extrap->($e) };
         }
     }
     for my $i (1 .. $#{ $net->{nodes} }) {
@@ -241,15 +272,26 @@ sub results {
     my $as = HardyCross::Validate::assess($net, $ok, demand => $o{demand} // 1);
     my $va = $as->{validation};
     $j{acceptance} = $va->{acceptance};
+    # [2] true only for ACCEPTED: the one field a caller may take as "the
+    # design is shown to work".  "converged" and an exit status of 0 are not
+    # that -- a NONCOMPLIANT calculation converges and exits 0.
+    $j{approved} = $va->{acceptance} eq 'ACCEPTED' ? JSON::PP::true : JSON::PP::false;
+    $j{demand_assessment} = { %{ $va->{demand_assessment} || { status => 'NOT_ASSESSED' } } };
     $j{validation} = {
         numerical => $va->{numerical}, physical => $va->{physical}, design => $va->{design},
         residuals => { map { my $r = $va->{residuals}{$_};
                              $_ => { value => 0 + sprintf('%.6e', $r->{value}), tolerance => 0 + sprintf('%.6e', $r->{tolerance}),
+                                     (defined $r->{solver_tolerance} ? (solver_tolerance => 0 + sprintf('%.6e', $r->{solver_tolerance})) : ()),
                                      unit => HardyCross::Report::sym($r->{unit}), at => $r->{at},
                                      pass => $r->{pass} ? JSON::PP::true : JSON::PP::false } }
                        grep { $va->{residuals}{$_} } keys %{ $va->{residuals} || {} } },
         solver => { %{ $va->{solver} }, map { $_ => $va->{solver}{$_} ? JSON::PP::true : JSON::PP::false }
                                           qw(hc_converged outer_settled) },
+        # [2] The limits the answer was checked to -- PHCP's own, not the
+        # solver tolerances (HardyCross::Validate).
+        verification => $va->{verification} ? { %{ $va->{verification} },
+                            flow_unit => HardyCross::Report::sym($va->{verification}{flow_unit}),
+                            pressure_unit => HardyCross::Report::sym($va->{verification}{pressure_unit}) } : undef,
         findings => [ map { my $f = $_; +{ map { $_ => $f->{$_} } grep { defined $f->{$_} }
                           qw(code category severity item value limit unit message outlet_type) } }
                       @{ $va->{findings} } ],
@@ -260,6 +302,7 @@ sub results {
     $j{supplies}        = supplies_json($net, $as->{supplies}) if $as->{supplies};
     $j{dry_pipe_valves} = dpv_json($net, $va, $as->{dry});
     $j{traceability}    = traceability($net, $va);
+    $j{assumptions}     = assumptions($net);
 
     if (($o{demand} // 1) && $ok) {
         my $dm = $as->{demand};
@@ -278,6 +321,9 @@ sub results {
     # The summary: what a caller shows a user in a few lines.
     my @s;
     push @s, 'CALCULATION ' . uc HardyCross::Validate::acceptance_text($va->{acceptance});
+    # Said in so many words, for a caller that shows the summary and nothing
+    # else (AutoCAD's PHCPSOLVE): only ACCEPTED is an approved design.
+    push @s, 'NOT AN APPROVED DESIGN' unless $va->{acceptance} eq 'ACCEPTED';
     push @s, $ok ? "CONVERGED IN $j{iterations} ITERATIONS"
                  : 'DID NOT CONVERGE - THE RESULTS MUST NOT BE USED';
     push @s, map { uc "MANDATORY: $_->{code} - $_->{message}" }
@@ -376,6 +422,11 @@ sub dpv_json {
         my $d = $dry{ $e->{id} };
         my $est = !$d ? undef : $d->{error} ? { error => $d->{error} } : {
             basis => 'ESTIMATE - not a water delivery time calculation by a listed method; accelerator not modelled',
+            verified => JSON::PP::false,
+            decides_acceptance => JSON::PP::false,
+            limitations => [ 'trip: isothermal choked blow-down of the dry volume through the open orifices, Cd 1',
+                             'transit: the water front at the steady-state velocities, the air ahead of it ignored - a '
+                             . 'lower bound', 'accelerators, valve opening time and trapped air are not modelled' ],
             dry_volume_m3 => r4($d->{volume}),
             trip => { status => $d->{trip}{status}, reason => $d->{trip}{reason}, seconds => $r1->($d->{trip}{seconds}),
                       formula => 't = 0.0352 V/(An sqrt T0) ln(pa0/pa), FM Global, SFPE Handbook',
@@ -400,6 +451,8 @@ sub dpv_json {
             trip_pressure => defined $e->{trip_pressure} ? r4($e->{trip_pressure} / $up) : undef,
             accelerator => $e->{accelerator},
             loss_basis => $e->{loss}, equivalent_length => r4($e->{eql}),
+            # [2] Where the loss came from, and whether there is one at all.
+            loss_source => $e->{loss_source}, data_status => $e->{data_status},
             database_valve => $e->{db} ? { maker => $e->{db}{maker}, model => $e->{db}{model}, dn => 0 + $e->{db}{dn},
                                            reference_bore => r4($e->{ref_bore}),
                                            reference_c => defined $e->{ref_c} ? 0 + $e->{ref_c} : undef,
@@ -449,6 +502,34 @@ sub traceability {
         scenarios => [ map { { name => $_->{name}, line => $_->{line},
                                shares => { map { $_->[0] => 0 + $_->[1] } @{ $_->{shares} } } } }
                        @{ $net->{scenarios} || [] } ],
+    };
+}
+
+#------------------------------------------------------------------------------
+# assumptions -- [2] the settings and assumptions the result rests on, as
+# data: the friction equation and its constant, the fitting basis, the
+# outlet discharge basis, the joint demand basis of several supplies, the
+# orifice duty tolerance, the curve extrapolation limit, the solver
+# tolerances.
+#------------------------------------------------------------------------------
+sub assumptions {
+    my $net = shift;
+    my $o = $net->{opts};
+    require HardyCross::Validate;
+    my $multi = HardyCross::Demand::supplies($net) > 1;
+    return {
+        friction_method => ($o->{method} // 'HW') eq 'DW' ? 'DARCY-WEISBACH' : 'HAZEN-WILLIAMS',
+        hw_constant => ($o->{method} // 'HW') eq 'DW' ? undef : 0 + $o->{hwk},
+        fitting_basis => $o->{fitting_basis} // 'CORRECTED',
+        velocity_pressure => $o->{vel_press} ? JSON::PP::true : JSON::PP::false,
+        joint_basis => $multi ? ($o->{joint_basis} // 'DERATE') : undef,
+        joint_basis_is_assumption => $multi ? JSON::PP::true : undef,
+        supply_margin => r4(($o->{supply_margin} // 0) / $net->{f_pres}),
+        orifice_duty_tolerance_percent => 0 + ($o->{orif_dp_tol} // $HardyCross::Validate::ORIF_DP_TOL),
+        curve_extrapolation_limit => 0 + $HardyCross::Validate::EXTRAP_MAX,
+        solver_tolerances => { flow => r4($o->{tol_flow} / $net->{f_flow}), loop => r4($o->{tol_loop} / $net->{f_pres}) },
+        dry_pipe_valves => (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }])
+            ? 'tripped and fully open (steady state)' : undef,
     };
 }
 

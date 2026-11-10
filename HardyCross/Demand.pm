@@ -131,13 +131,76 @@ sub flow_path {
 # single answer -- it depends how the supplies share the load -- and the report
 # says so rather than inventing one.
 #------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+# trial -- what one trial solve of a demand search is worth.
+#
+# A demand search changes a supply and solves again, many times, and asks of
+# each solve whether the outlets are met.  As released it asked only whether
+# the solve converged.  But a solve can converge on an answer that cannot
+# exist -- a supply taking water in, a pump running backwards -- and one that
+# does not converge says nothing about the supply at all.  Every trial is now
+# one of
+#
+#   PASS           converged, numerically and physically valid, and every
+#                  outlet receives its minimum
+#   SHORT          converged and valid, and an outlet is short: the supply is
+#                  too weak at this pressure.  The ONLY result that may be
+#                  taken as "too weak".
+#   INVALID        converged, but not a valid answer: codes lists the failed
+#                  numerical and physical checks (HardyCross::Validate)
+#   NOT_CONVERGED  no settled, converged solution: nothing is known
+#   NO_OUTLET      valid, but no outlet has a requirement to meet
+#
+# The design checks are not part of a trial: a trial is asked only whether
+# the outlets are met, and the outlet check is the margin itself.
+#------------------------------------------------------------------------------
+sub trial {
+    my ($ok, $net) = @_;
+    return { status => 'NOT_CONVERGED', net => $net } unless $ok && $net;
+    require HardyCross::Validate;
+    my $v = HardyCross::Validate::validate($net, $ok);
+    my @bad = grep { $_->{severity} eq 'error' && $_->{category} ne 'design' } @{ $v->{findings} };
+    my %codes = map { $_->{code} => 1 } @bad;
+    return { status => 'NOT_CONVERGED', net => $net, codes => [ sort keys %codes ] }
+        if $v->{acceptance} eq 'INDETERMINATE';
+    return { status => 'INVALID', net => $net, codes => [ sort keys %codes ], findings => \@bad } if @bad;
+    my ($go, $m) = governing_outlet($net);
+    return { status => 'NO_OUTLET', net => $net } unless defined $m;
+    return { status => $m >= 0 ? 'PASS' : 'SHORT', net => $net, margin => $m, go => $go };
+}
+
+# trial_why -- a trial that was not PASS or SHORT, in words: what failed.
+sub trial_why {
+    my $t = shift or return 'no trial';
+    return 'the solve did not converge and settle' if $t->{status} eq 'NOT_CONVERGED';
+    return 'no outlet has a requirement' if $t->{status} eq 'NO_OUTLET';
+    my @w = map { $_->{message} } @{ $t->{findings} || [] };
+    splice @w, 3 if @w > 3;
+    return join('; ', @w) || join(', ', @{ $t->{codes} || [] });
+}
+
+# search_status -- FOUND when the trial just short of a search's answer was a
+# valid SHORT one (or none was needed), so the boundary found is where the
+# supply becomes too weak; UNRESOLVED when it was INVALID or NOT_CONVERGED, so
+# the boundary is where the solve stops being valid, which is not a demand.
+sub search_status {
+    my $tb = shift;
+    return !$tb || $tb->{status} eq 'SHORT' ? 'FOUND' : 'UNRESOLVED';
+}
+
+# bracket_status -- no trial passed: INADEQUATE when every one was a valid
+# SHORT one (the supply is too weak however it is raised), UNRESOLVED when any
+# was not, since then it is not known.
+sub bracket_status {
+    return (grep { !$_ || $_->{status} ne 'SHORT' } @_) ? 'UNRESOLVED' : 'INADEQUATE';
+}
+
+# margin_at -- (margin, network) of a valid trial at supply pressure $p, or ().
 sub margin_at {
     my ($text, $sid, $p) = @_;
-    my ($ok, $net) = solve_at($text, $sid, $p);
-    return unless $ok;
-    my (undef, $m) = governing_outlet($net);
-    return unless defined $m;
-    return ($m, $net);
+    my $t = trial(solve_at($text, $sid, $p));
+    return unless $t->{status} eq 'PASS' || $t->{status} eq 'SHORT';
+    return ($t->{margin}, $t->{net});
 }
 
 #------------------------------------------------------------------------------
@@ -175,32 +238,49 @@ sub demand_point {
 
     my $p_now = gauge($net, $s->{n2});
     my ($lo, $hi) = (0, $p_now > 1 ? $p_now : 100);
-
-    # Make sure the bracket holds the answer: at $hi the margin must be >= 0.
-    my ($mh) = margin_at($text, $s->{id}, $hi);
+    my $at = sub { trial(solve_at($text, $s->{id}, shift)) };
+    # Make sure the bracket holds the answer: at $hi every outlet must be met,
+    # in a valid solve.
+    my $th = $at->($hi);
+    my @seen = ($th);
     for (1 .. 30) {
-        last if defined $mh && $mh >= 0;
+        last if $th->{status} eq 'PASS';
         $hi *= 1.5;
-        ($mh) = margin_at($text, $s->{id}, $hi);
+        push @seen, $th = $at->($hi);
     }
-    return { reason => 'no supply pressure up to ' . sprintf('%.0f', $hi)
-                     . ' kPa satisfies every outlet' } unless defined $mh && $mh >= 0;
-
-    # Bisect to 0.01 kPa.  A trial that does not solve counts as a failure:
-    # a supply too weak to push water to every outlet is below the demand.
+    unless ($th->{status} eq 'PASS') {
+        my $st = bracket_status(@seen);
+        my ($odd) = grep { $_->{status} ne 'SHORT' } @seen;
+        return { status => $st,
+                 reason => $st eq 'INADEQUATE'
+                     ? sprintf('no supply pressure up to %.0f kPa satisfies every outlet', $hi)
+                     : sprintf('no supply pressure up to %.0f kPa gave a valid solve meeting every outlet: %s',
+                               $hi, trial_why($odd)) };
+    }
+    # Bisect to 0.01 kPa.  Only a valid SHORT trial is "below the demand";
+    # the last one below the answer is kept, so that a boundary reached
+    # against an invalid or unconverged trial is not reported as a demand.
+    my $tb;
     for (1 .. 60) {
         my $mid = 0.5 * ($lo + $hi);
-        my ($m) = margin_at($text, $s->{id}, $mid);
-        if (defined $m && $m >= 0) { $hi = $mid } else { $lo = $mid }
+        my $t = $at->($mid);
+        if ($t->{status} eq 'PASS') { ($hi, $th) = ($mid, $t) } else { ($lo, $tb) = ($mid, $t) }
         last if $hi - $lo < 0.01;
     }
-    my ($m, $dn) = margin_at($text, $s->{id}, $hi);
+    if (search_status($tb) ne 'FOUND') {
+        return { status => 'UNRESOLVED', boundary => $tb->{status}, p_boundary => $lo,
+                 reason => sprintf('below %.2f kPa the trial solves are %s (%s): the pressure at which the outlets '
+                                 . 'stop being met could not be found', $hi, $tb->{status}, trial_why($tb)) };
+    }
+    my $dn = $th->{net};
     my ($dsup) = grep { ($_->{id} // '') eq $s->{id} } @{ $dn->{elems} }[1 .. $#{ $dn->{elems} }];
     my ($dgo) = governing_outlet($dn);
     # The demand flow: what the system draws at the demand point, plus any
     # hose allowance (OPTION HOSE_ALLOWANCE), which is added at the supply --
-    # it draws on the supply but not through the network modelled.
-    my $q_sys  = abs $dsup->{q};
+    # it draws on the supply but not through the network modelled.  Signed:
+    # the trial is valid, so the supply delivers; a reverse flow is never
+    # turned into a forward one by taking its size.
+    my $q_sys  = $dsup->{q};
     my $q_hose = $net->{opts}{hose} // 0;
     my $q_d    = $q_sys + $q_hose;
 
@@ -210,6 +290,8 @@ sub demand_point {
               : HardyCross::curve_eval($s->{curve}, $q_d);
 
     return {
+        status    => 'FOUND',
+        boundary  => $tb ? $tb->{status} : undef,
         supply    => $s,
         governing => $dgo,
         q_demand  => $q_d,
@@ -218,7 +300,7 @@ sub demand_point {
         p_demand  => $hi,
         p_avail   => $avail,
         margin    => $avail - $hi,
-        q_oper    => abs $s->{q},
+        q_oper    => $s->{q},
         p_oper    => $p_now,
         # the whole network at the demand point, so the cover sheet can report
         # sprinkler flows and density at the design condition, not only at the

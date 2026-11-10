@@ -354,12 +354,13 @@ name is an error. A numeric option's value must be a number.
 | `SUPPLY_MARGIN` | pressure, PRESSURE unit | 0 | The least margin the supply must have over the demand. With one supply, at the demand point; with several, at their joint demand (Section 9.3). Less fails the design. It cannot be negative. |
 | `SUPPLY_SCENARIOS` | `ON` or `OFF` | `ON` | With more than one supply: ON solves and reports, for information, each supply alone and each out of service in turn. SCENARIO lines are solved either way (Section 9.3). |
 | `JOINT_BASIS` | `DERATE` or `SCALE` | `DERATE` | With more than one supply, how they are reduced together to find their joint demand: every supply's pressure lowered by one common amount (DERATE), or multiplied by one common factor (SCALE). An assumption, and the report states it (Section 9.3). |
-| `HW_CONST` | number | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. |
-| `NU` | m2/s, above 0 | 1.004e-6 | Kinematic viscosity of water, for Darcy-Weisbach. The default is water at 20 C. |
-| `TOL_FLOW` | flow, FLOW unit | 0.05 L/min | Convergence tolerance on flow. |
-| `TOL_LOOP` | pressure, PRESSURE unit | 0.01 kPa | Convergence tolerance on each loop's pressure balance. |
+| `HW_CONST` | number, within 2 % of 6.05e7 | 6.05e7 | The Hazen-Williams constant: P = k Q^1.85 / (C^1.85 d^4.87), P in kPa/m, Q in L/min, d in mm. Its published forms (AS 2118.1 and EN 12845 6.05 x 10^5 bar/m; NFPA 13 4.52 in US units, 6.049 x 10^7 converted) lie within 0.6 % of 6.05e7, so anything further than 2 % is refused: a constant for other units, such as 6.05E5 or 4.52, would change every friction loss. |
+| `NU` | m2/s, 0.28e-6 to 1.8e-6 | 1.004e-6 | Kinematic viscosity of water, for Darcy-Weisbach. The default is water at 20 C; the range is water from 100 C to 0 C, and a figure outside it is refused. |
+| `TOL_FLOW` | flow, FLOW unit, above 0 | 0.05 L/min | Convergence tolerance on flow: when the iteration may stop. |
+| `TOL_LOOP` | pressure, PRESSURE unit, above 0 | 0.01 kPa | Convergence tolerance on each loop's pressure balance: when the iteration may stop. It is not the test of the answer: every loop and every element equation is checked afterwards to PHCP's verification limit, 0.1 kPa, whatever TOL_LOOP is, and a solve that stopped further out is REJECTED. |
 | `MAXITER` | count | 50000 | The most Hardy Cross iterations. A solve that has not converged by then is reported NOT CONVERGED. |
-| `ORIF_STEP` | mm | 0.5 | The step an orifice plate sized by OPP is rounded to. |
+| `ORIF_STEP` | mm, above 0 | 0.5 | The step an orifice plate sized by OPP is rounded to. |
+| `ORIF_DP_TOL` | per cent, above 0 | 10 | How far an OPP plate's final drop may be from its target. Further fails the design (NONCOMPLIANT, ORIFICE_DUTY). 10 % is what half a 0.5 mm step does to the drop of a 10 mm bore; a tighter tolerance needs a finer ORIF_STEP. The report gives each plate's deviation split into the part from rounding the bore and the part from the flow moving. |
 | `RELAX` | above 0, at most 2 | none | Accepted and range-checked for compatibility. The present solver does not use it. |
 
 ```

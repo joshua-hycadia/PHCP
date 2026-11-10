@@ -30,6 +30,16 @@
 # results are stale.  PHCP itself drops a stale block rather than keep it
 # (the editor saves without one when the last calculation was of other
 # text; phcp.pl --save always writes a fresh one).
+#
+# The fingerprint covers the model, not the results: a result edited by hand
+# would still match it.  So the block's last record, CHECK, is the SHA-256 of
+# every record before it, and status() tells all four cases apart:
+#   CURRENT   the block belongs to the model above it, untouched
+#   STALE     the model has been edited since the block was written
+#   TAMPERED  a line of the block itself has been edited
+#   NONE      there is no block
+# A block from a calculation that was not ACCEPTED says so in its first line,
+# NOT FOR DESIGN USE, as well as in its RESULT record.
 #==============================================================================
 package HardyCross::Results;
 
@@ -80,18 +90,24 @@ sub block {
     my $word = sub { my $s = shift // '-'; $s =~ s/\s+/_/g; $s =~ s/[^\x21-\x7E]//g; length $s ? $s : '-' };
 
     my @t = gmtime;
-    push @l, sprintf('%s - PHCP %s, %04d-%02d-%02d %02d:%02d UTC.  Replaced on every solve: edit the model above, '
-                   . 'not these lines.', $BEGIN, $HardyCross::VERSION, $t[5] + 1900, $t[4] + 1, @t[3, 2, 1]);
+    push @l, sprintf('%s - PHCP %s, %04d-%02d-%02d %02d:%02d UTC, %s%s.  Replaced on every solve: edit the model above, '
+                   . 'not these lines.', $BEGIN, $HardyCross::VERSION, $t[5] + 1900, $t[4] + 1, @t[3, 2, 1],
+                     $va->{acceptance}, $va->{acceptance} eq 'ACCEPTED' ? '' : ', NOT FOR DESIGN USE');
     $rec->('RESULT', ACCEPTANCE => $va->{acceptance}, NUMERICAL => $va->{numerical}{status},
-           PHYSICAL => $va->{physical}{status}, DESIGN => $va->{design}{status});
+           PHYSICAL => $va->{physical}{status}, DESIGN => $va->{design}{status},
+           DEMAND => ($va->{demand_assessment} || {})->{status} // 'NOT_ASSESSED',
+           APPROVED => $va->{acceptance} eq 'ACCEPTED' ? 'YES' : 'NO');
+    $rec->('PROGRAM', 'PHCP', VERSION => $HardyCross::VERSION);
     $rec->('MODEL', SHA256 => fingerprint($text // $net->{source_text} // ''));
     if (HardyCross::PipeData::path()) {
-        $rec->('DATABASE', SHA256 => HardyCross::PipeData::sha256());
+        $rec->('DATABASE', NAME => $word->(HardyCross::PipeData::dataset()), ISSUED => $word->(HardyCross::PipeData::issued()),
+               SHA256 => HardyCross::PipeData::sha256());
     }
     $rec->('UNITS', FLOW => $net->{u_flow}, PRESSURE => $net->{u_pres}, LENGTH => 'M', SIZE => 'MM', VELOCITY => 'M/S');
     my $s = $va->{solver};
     $rec->('SOLVER', METHOD => $s->{method}, ITERATIONS => $s->{iterations}, CONVERGED => $s->{hc_converged} ? 'YES' : 'NO',
-           SETTLED => $s->{outer_settled} ? 'YES' : 'NO', TOL_FLOW => $s->{tol_flow}, TOL_LOOP => $s->{tol_loop});
+           SETTLED => $s->{outer_settled} ? 'YES' : 'NO', TOL_FLOW => $s->{tol_flow}, TOL_LOOP => $s->{tol_loop},
+           ($va->{verification} ? (VERIFY_LOOP => sprintf('%.3e', $va->{verification}{loop})) : ()));
     for my $k (qw(continuity balance loop element)) {
         my $r = $va->{residuals}{$k} or next;
         $rec->('RESIDUAL', uc($k), sprintf('%.3e', $r->{value}), TOL => sprintf('%.3e', $r->{tolerance}),
@@ -147,7 +163,7 @@ sub block {
     my ($go, $gm) = HardyCross::Demand::governing_outlet($net);
     $rec->('GOVERNS', $go->{id}, MARGIN => $num->($gm / $up, 4)) if $go;
     if (my $dm = $as->{demand}) {
-        if ($dm->{reason}) { $rec->('DEMAND', NONE => $word->($dm->{reason})) }
+        if ($dm->{reason}) { $rec->('DEMAND', STATUS => $dm->{status} // 'NOT_FOUND', NONE => $word->($dm->{reason})) }
         else {
             $rec->('DEMAND', $dm->{supply}{id}, FLOW => $num->($dm->{q_demand} / $uf, 4), PRESSURE => $num->($dm->{p_demand} / $up, 4),
                    AVAILABLE => $num->($dm->{p_avail} / $up, 4), MARGIN => $num->($dm->{margin} / $up, 4),
@@ -160,7 +176,8 @@ sub block {
                    PRESSURE => $num->(defined $c->{pressure} ? $c->{pressure} / $up : undef, 4));
         }
         if (my $j = $sp->{joint}) {
-            unless ($j->{reason}) {
+            $rec->('JOINT', STATUS => $j->{status} // '-', BASIS => $j->{basis} // '-', ASSUMPTION => 'YES');
+            if (($j->{status} // '') eq 'FOUND') {
                 $rec->('JOINT', BASIS => $j->{basis}, ($j->{basis} eq 'DERATE' ? (DERATE => $num->($j->{delta} / $up, 4))
                                                                               : (FACTOR => $num->($j->{factor}, 6))),
                        MARGIN => $num->($j->{margin} / $up, 4), GOVERNS => $j->{governing});
@@ -178,8 +195,30 @@ sub block {
         $m =~ s/[^\x20-\x7E]//g;
         push @l, sprintf('//= %-8s %s %s %s %s', 'FINDING', uc $f->{severity}, uc $f->{category}, $f->{code}, $m);
     }
+    # The block's own fingerprint: every record above, so an edited result
+    # is told from one PHCP wrote.
+    require Digest::SHA;
+    push @l, sprintf('//= %-8s SHA256 %s', 'CHECK', Digest::SHA::sha256_hex(join "\n", @l[1 .. $#l]));
     push @l, $END;
     return join("\n", @l) . "\n";
+}
+
+#------------------------------------------------------------------------------
+# status -- whether a .phc's results block belongs to it: CURRENT, STALE (the
+# model edited since), TAMPERED (the block itself edited) or NONE.
+#------------------------------------------------------------------------------
+sub status {
+    my $text = shift // '';
+    $text =~ s/\r\n/\n/g;
+    return 'NONE' unless $text =~ /^\Q$BEGIN\E[^\n]*\n(.*?)^\Q$END\E/ms;
+    my @lines = grep { /^\/\/= / } split /\n/, $1;
+    my ($check) = map { /^\/\/= CHECK\s+SHA256 ([0-9a-f]{64})\s*$/ ? $1 : () } @lines;
+    my @recs = grep { !/^\/\/= CHECK\s/ } @lines;
+    require Digest::SHA;
+    return 'TAMPERED' unless $check && $check eq Digest::SHA::sha256_hex(join "\n", @recs);
+    my ($model) = map { /^\/\/= MODEL\s+SHA256 ([0-9a-f]{64})/ ? $1 : () } @recs;
+    return 'TAMPERED' unless $model;
+    return $model eq fingerprint($text) ? 'CURRENT' : 'STALE';
 }
 
 #------------------------------------------------------------------------------

@@ -85,6 +85,32 @@ our ($BETA_MIN, $BETA_MAX) = (0.10, 0.75);
 # typing error or a valve of a kind this check does not know.
 our ($DPV_RATIO_LO, $DPV_RATIO_HI) = (3.0, 8.0);
 
+# THE VERIFICATION LIMITS -- what the final network must satisfy, whatever
+# the solver was told.  OPTION TOL_LOOP and TOL_FLOW say when the Hardy Cross
+# iteration may STOP; they are not the test of its answer.  As released a
+# TOL_LOOP of 500 kPa was also the limit the answer was checked to, and a
+# network 21 kPa out of balance round a loop, its flows 1.7 % wrong, was
+# ACCEPTED.
+#
+#   continuity, balance   1e-6 of the largest flow (at least 1e-6 L/min).
+#                 Hardy Cross keeps continuity exact by construction, so this
+#                 is floating-point rounding, nothing more.
+#   loop, element  VERIFY_P = 0.1 kPa, plus VERIFY_P_REL = 1e-6 of the
+#                 largest head in the network for rounding.  0.1 kPa is about
+#                 10 mm of water; it is ten times PHCP's default solver
+#                 tolerance (0.01 kPa), so every default solve meets it with
+#                 room to spare, and 1/34 of the 0.5 psi (3.4 kPa) to which
+#                 NFPA 13 hand calculations are balanced at a junction.  No
+#                 pressure PHCP prints can be out by more than that through
+#                 the iteration stopping early.
+# The default tolerance on a sized orifice plate's final drop, per cent of
+# its target (OPTION ORIF_DP_TOL; see the ORIFICE check below).
+our $ORIF_DP_TOL = 10;
+
+our $VERIFY_Q_REL = 1e-6;
+our $VERIFY_P     = 0.1;
+our $VERIFY_P_REL = 1e-6;
+
 #------------------------------------------------------------------------------
 # validate -- the three results and the acceptance for a solved network.
 #
@@ -121,7 +147,12 @@ sub validate {
 
     numerical($net, $ok, $v, $add);
     physical($net, $add);
-    design($net, $add, %o);
+    # The demand assessment: whether the supplies' adequacy was shown, and on
+    # what basis -- DEMONSTRATED, INADEQUATE, UNRESOLVED (the search failed;
+    # the supply was not found too weak) or NOT_ASSESSED.
+    my %da = (status => 'NOT_ASSESSED', basis => undef, message => 'no demand was worked out');
+    design($net, $add, %o, assessment => \%da);
+    $v->{demand_assessment} = \%da;
     dry_time_checks($net, $add, $o{dry}) if $o{dry};
 
     # The status of each category: FAIL if it has an error.  A numerical
@@ -238,7 +269,37 @@ sub numerical {
         $acc[ $e->{n2} ] -= $e->{q};
         $qscale = abs $e->{q} if abs $e->{q} > $qscale;
     }
-    my $ctol = 1e-6 * ($qscale > 1 ? $qscale : 1);
+    my $ctol = $VERIFY_Q_REL * ($qscale > 1 ? $qscale : 1);
+    my $hscale = 0;
+    for my $i (1 .. $nn) { my $h = abs($net->{nodes}[$i]{h} // 0); $hscale = $h if $h > $hscale }
+    my $ptol = $VERIFY_P + $VERIFY_P_REL * $hscale;
+    $v->{verification} = {
+        continuity => $ctol / $uf, balance => $ctol / $uf, flow_unit => $net->{u_flow},
+        loop => $ptol / $up, element => $ptol / $up, pressure_unit => $net->{u_pres},
+        basis => sprintf('continuity and balance to %g of the largest flow; loop closure and element equations to '
+                       . '%g kPa plus %g of the largest head; fixed by PHCP, not by the solver tolerances',
+                         $VERIFY_Q_REL, $VERIFY_P, $VERIFY_P_REL),
+    };
+    if ($tol_loop > $VERIFY_P + 1e-12) {
+        $add->(code => 'SOLVER_TOLERANCE_LOOSE', category => 'numerical', severity => 'warning', item => 'TOL_LOOP',
+               value => $tol_loop / $up, limit => $VERIFY_P / $up, unit => $net->{u_pres},
+               message => sprintf('TOL_LOOP %g %s lets the iteration stop with loops further out of balance than the '
+                                . 'verification limit of %g; the answer is checked to the limit', $tol_loop / $up,
+                                  $net->{u_pres}, $VERIFY_P / $up));
+    }
+
+    #----------------------------------------------------------- closed flow
+    # A closed element -- a pump shut on its check valve, a supply out of
+    # service -- is out of the network and must carry nothing.  Continuity
+    # leaves it out, so a closed element left with its flow would otherwise
+    # only show as the imbalance at its ends.
+    for my $e (grep { $_->{closed} } @el) {
+        next if abs($e->{q} // 0) <= $ctol;
+        $add->(code => 'CLOSED_FLOW', category => 'numerical', item => $e->{id}, value => $e->{q} / $uf,
+               limit => $ctol / $uf, unit => $net->{u_flow},
+               message => sprintf('%s is closed but carries %.4g %s: a closed element is out of the network',
+                                  $e->{id}, $e->{q} / $uf, $net->{u_flow}));
+    }
     my ($cmax, $cat) = (0, undef);
     for my $i (1 .. $nn) {
         next if $i == $net->{iref};
@@ -284,13 +345,14 @@ sub numerical {
         }
         ($lmax, $lat) = (abs $s, $li + 1) if abs $s > $lmax || !finite($s);
     }
-    $v->{residuals}{loop} = { value => $lmax / $up, tolerance => $tol_loop / $up, unit => $net->{u_pres},
-                              at => defined $lat ? "loop $lat" : undef, pass => $lmax <= $tol_loop ? 1 : 0 };
+    $v->{residuals}{loop} = { value => $lmax / $up, tolerance => $ptol / $up, solver_tolerance => $tol_loop / $up,
+                              unit => $net->{u_pres}, at => defined $lat ? "loop $lat" : undef,
+                              pass => $lmax <= $ptol ? 1 : 0 };
     $add->(code => 'LOOP_CLOSURE', category => 'numerical', item => "loop $lat", value => $lmax / $up,
-           limit => $tol_loop / $up, unit => $net->{u_pres},
-           message => sprintf('loop %d does not close: %.6g %s against a tolerance of %g',
-                              $lat, $lmax / $up, $net->{u_pres}, $tol_loop / $up))
-        if $lmax > $tol_loop && !$v->{indeterminate};
+           limit => $ptol / $up, unit => $net->{u_pres},
+           message => sprintf('loop %d does not close: %.6g %s against the verification limit of %g',
+                              $lat, $lmax / $up, $net->{u_pres}, $ptol / $up))
+        if $lmax > $ptol && !$v->{indeterminate};
 
     #-------------------------------------------------------- element equations
     # For every element, the head difference between its ends, taken from
@@ -307,13 +369,13 @@ sub numerical {
         my $r  = $dh - $hf;
         ($emax, $eat) = (abs $r, $e->{id}) if abs $r > $emax;
     }
-    $v->{residuals}{element} = { value => $emax / $up, tolerance => $tol_loop / $up, unit => $net->{u_pres},
-                                 at => $eat, pass => $emax <= $tol_loop ? 1 : 0 };
+    $v->{residuals}{element} = { value => $emax / $up, tolerance => $ptol / $up, solver_tolerance => $tol_loop / $up,
+                                 unit => $net->{u_pres}, at => $eat, pass => $emax <= $ptol ? 1 : 0 };
     $add->(code => 'ELEMENT_EQUATION', category => 'numerical', item => $eat, value => $emax / $up,
-           limit => $tol_loop / $up, unit => $net->{u_pres},
-           message => sprintf('element %s: the pressure across it differs from its own equation by %.6g %s',
-                              $eat, $emax / $up, $net->{u_pres}))
-        if $emax > $tol_loop && !$v->{indeterminate};
+           limit => $ptol / $up, unit => $net->{u_pres},
+           message => sprintf('element %s: the pressure across it differs from its own equation by %.6g %s, against '
+                            . 'the verification limit of %g', $eat, $emax / $up, $net->{u_pres}, $ptol / $up))
+        if $emax > $ptol && !$v->{indeterminate};
 }
 
 #==============================================================================
@@ -347,6 +409,8 @@ sub physical {
     my ($fu, $pu) = ($net->{u_flow}, $net->{u_pres});
     my @el = @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     my $P = sub { my %r = @_; $add->(category => 'physical', %r) };
+    # A device's duty is a design requirement, checked here with its device.
+    my $add_design = sub { my %r = @_; $add->(category => 'design', %r) };
 
     for my $e (@el) {
         my $k = $e->{kind};
@@ -378,6 +442,7 @@ sub physical {
                                           $fu, $x eq 'ABOVE' ? 'beyond' : 'below',
                                           $e->{curve}{qlo} / $uf, $e->{curve}{qhi} / $uf));
                 }
+                extrapolation_limit($e, $e->{curve}, $q, 'water supply', $add_design, $uf, $fu);
                 my $pa = HardyCross::curve_eval($e->{curve}, $q);
                 $P->(code => 'SUPPLY_EXHAUSTED', item => $e->{id}, value => $pa / $up, unit => $pu,
                      message => sprintf('water supply %s: at %.1f %s its curve gives %.1f %s, below zero',
@@ -437,6 +502,7 @@ sub physical {
                      message => sprintf('pump %s operates at %.1f %s, beyond its curve points (to %.1f): its '
                                       . 'pressure there is EXTRAPOLATED', $e->{id}, $q / $uf, $fu, $c->{qhi} / $uf));
             }
+            extrapolation_limit($e, $c, $q, 'pump', $add_design, $uf, $fu);
             my $rise = HardyCross::curve_eval($c, $q);
             $P->(code => 'PUMP_BEYOND_RUNOUT', item => $e->{id}, value => $rise / $up, unit => $pu,
                  message => sprintf('pump %s at %.1f %s: its curve gives %.1f %s, a pressure LOSS - the pump is '
@@ -502,20 +568,47 @@ sub physical {
                                         $BETA_MIN, $BETA_MAX))
                     if $beta < $BETA_MIN || $beta > $BETA_MAX;
             }
-            if (defined $e->{dp_target}) {
+            if (defined $e->{dp_target} && $e->{dp_target} > 0) {
                 # The plate is sized on one solve and the network solved again
-                # with it, so its final drop differs from the target by the
-                # rounding of the bore and the flow moving.  Stated, so it can
-                # be checked; not a failure.
+                # with it, so its final drop differs from the target for two
+                # reasons, each worked out and kept:
+                #   rounding  the bore made to ORIF_STEP, at the flow it was
+                #             sized on: dp(q_sized, bore) - target
+                #   flow      the flow moving once the plate is in:
+                #             dp(q_final, bore) - dp(q_sized, bore)
+                # They add up to the whole deviation.  The duty is met when
+                # the final drop is within ORIF_DP_TOL per cent of the target
+                # (10 % unless set).  10 % is what half a 0.5 mm step does to
+                # the drop of a 10 mm bore -- the drop goes as the bore to the
+                # power -4, so 4 x 0.25 / 10 -- so every plate of 10 mm or more
+                # on the default step meets it on rounding alone; a tighter
+                # tolerance needs a finer ORIF_STEP.  As released the
+                # deviation was printed and never judged.
                 my $dp = HardyCross::orifice_dp(abs $q, $b, $d, $e->{cd});
-                $e->{dp_final} = $dp;
+                my $dps = HardyCross::orifice_dp($e->{q_sized} // abs $q, $b, $d, $e->{cd});
+                my $t = $e->{dp_target};
+                $e->{dp_final}         = $dp;
+                $e->{dev_pct}          = 100 * ($dp - $t) / $t;
+                $e->{dev_rounding_pct} = 100 * ($dps - $t) / $t;
+                $e->{dev_flow_pct}     = 100 * ($dp - $dps) / $t;
+                my $tol = $net->{opts}{orif_dp_tol} // $ORIF_DP_TOL;
+                $e->{dev_tol_pct} = $tol;
                 $P->(code => 'ORIFICE_DEVIATION', severity => 'info', item => $e->{id},
-                     value => $dp / $up, limit => $e->{dp_target} / $up, unit => $pu,
-                     message => sprintf('orifice plate %s: final drop %.2f %s against a target of %.2f (%+.1f %%), '
-                                      . 'bore %.2f mm rounded from %.3f mm', $e->{id}, $dp / $up, $pu,
-                                        $e->{dp_target} / $up,
-                                        $e->{dp_target} > 0 ? 100 * ($dp - $e->{dp_target}) / $e->{dp_target} : 0,
-                                        $b, $e->{bore_exact} // $b));
+                     value => $dp / $up, limit => $t / $up, unit => $pu,
+                     message => sprintf('orifice plate %s: final drop %.2f %s against a target of %.2f (%+.1f %%: '
+                                      . '%+.1f %% from rounding the bore to %.2f mm from %.3f mm, %+.1f %% from the '
+                                      . 'flow moving from %.1f to %.1f %s)', $e->{id}, $dp / $up, $pu, $t / $up,
+                                        $e->{dev_pct}, $e->{dev_rounding_pct}, $b, $e->{bore_exact} // $b,
+                                        $e->{dev_flow_pct}, ($e->{q_sized} // abs $q) / $uf, abs($q) / $uf, $fu));
+                $add_design->(code => 'ORIFICE_DUTY', item => $e->{id}, value => $e->{dev_pct}, limit => $tol,
+                              unit => '%',
+                              message => sprintf('orifice plate %s: its final drop, %.2f %s, is %+.1f %% from its target '
+                                               . 'of %.2f, outside the %g %% tolerance (ORIF_DP_TOL); %s', $e->{id},
+                                                 $dp / $up, $pu, $e->{dev_pct}, $t / $up, $tol,
+                                                 abs($e->{dev_rounding_pct}) >= abs($e->{dev_flow_pct})
+                                                 ? 'mostly from rounding the bore: a finer ORIF_STEP is needed'
+                                                 : 'mostly from the flow moving once the plate is in'))
+                    if abs($e->{dev_pct}) > $tol + 1e-9 && !$e->{size_clamp} && !$e->{bore_rounding};
             }
             next;
         }
@@ -545,7 +638,7 @@ sub physical {
             $P->(code => 'BFP_REVERSE', item => $e->{id}, value => $q / $uf, unit => $fu,
                  message => sprintf('backflow preventer %s passes water backwards, %.1f %s', $e->{id}, $q / $uf, $fu))
                 if $q < -$QT;
-            loss_curve_checks($e, $q, $P, 'loss device', $uf, $fu);
+            loss_curve_checks($e, $q, $P, 'loss device', $uf, $fu, $add_design);
             next;
         }
         if ($k eq 'FIXED_DROP') {
@@ -562,7 +655,7 @@ sub physical {
 
         #------------------------------------------------------ dry pipe valves
         if ($k eq 'DPV') {
-            dpv_checks($net, $e, $P);
+            dpv_checks($net, $e, $P, $add_design);
             next;
         }
     }
@@ -590,8 +683,28 @@ sub physical {
 
 # loss_curve_checks -- a loss curve (backflow preventer, dry pipe valve) must
 # not fall with flow, and must not give a negative loss.
+# extrapolation_limit -- a curve used far beyond its points.  Within them a
+# curve is the data it was made from; a little beyond, it is EXTRAPOLATED and
+# said to be (a warning); at more than EXTRAP_MAX times its highest flow the
+# answer rests on performance nobody published or measured, and the design
+# cannot be shown to work on it.  1.5 is the run-out to which a fire pump is
+# rated (150 % of its rated flow), the furthest a published curve normally
+# goes; it is a PHCP rule, not a clause of a Standard.
+our $EXTRAP_MAX = 1.5;
+sub extrapolation_limit {
+    my ($e, $c, $q, $what, $D, $uf, $fu) = @_;
+    return unless $c && $D && $c->{qhi} > 0;
+    my $aq = abs $q;
+    return unless $aq > $EXTRAP_MAX * $c->{qhi} * (1 + 1e-9);
+    $D->(code => 'CURVE_EXTRAPOLATION_LIMIT', item => $e->{id}, value => $aq / $uf,
+         limit => $EXTRAP_MAX * $c->{qhi} / $uf, unit => $fu,
+         message => sprintf('%s %s operates at %.1f %s, more than %g times the highest flow of its curve (%.1f): a '
+                          . 'result that far beyond the published or tested performance is not supported by the data',
+                            $what, $e->{id}, $aq / $uf, $fu, $EXTRAP_MAX, $c->{qhi} / $uf));
+}
+
 sub loss_curve_checks {
-    my ($e, $q, $P, $what, $uf, $fu) = @_;
+    my ($e, $q, $P, $what, $uf, $fu, $D) = @_;
     my $c = $e->{curve} or return;
     if (defined(my $at = curve_order($c, +1))) {
         $P->(code => 'LOSS_CURVE_FALLING', item => $e->{id}, value => $at / $uf, unit => $fu,
@@ -606,6 +719,7 @@ sub loss_curve_checks {
                               . 'EXTRAPOLATED', $what, $e->{id}, abs($q) / $uf, $fu, $x eq 'ABOVE' ? 'beyond' : 'below',
                                 $c->{qlo} / $uf, $c->{qhi} / $uf));
     }
+    extrapolation_limit($e, $c, $q, $what, $D, $uf, $fu) unless ($e->{loss_source} // '') eq 'USER_FIXED';
 }
 
 #------------------------------------------------------------------------------
@@ -615,7 +729,7 @@ sub loss_curve_checks {
 # does not change a steady-state number.
 #------------------------------------------------------------------------------
 sub dpv_checks {
-    my ($net, $e, $P) = @_;
+    my ($net, $e, $P, $D) = @_;
     my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
     my ($fu, $pu) = ($net->{u_flow}, $net->{u_pres});
     my $q = $e->{q} // 0;
@@ -684,10 +798,35 @@ sub dpv_checks {
 
     # Loss data.
     my $basis = $e->{loss} // 'NONE';
+    my $src = $e->{loss_source} // '';
     if ($basis eq 'NONE') {
+        my $d = $e->{db};
         $P->(code => 'DPV_NO_LOSS_DATA', item => $id,
-             message => "dry pipe valve $id has no pressure loss data: give the manufacturer's flow/loss points "
-                      . 'or an equivalent length (EQL).  No loss is assumed.');
+             message => $d
+                 ? "dry pipe valve $id: DATA_REQUIRED - the database record for the $d->{maker} $d->{model} DN$d->{dn} has "
+                   . 'no usable pressure loss (neither a flow coefficient nor an equivalent length of a stated pipe)'
+                   . (length($d->{note} // '') && $d->{note} ne 'DASH' ? ": $d->{note}" : '')
+                   . ".  Give the manufacturer's flow/loss points or an equivalent length.  No loss is assumed."
+                 : "dry pipe valve $id: DATA_REQUIRED - it has no pressure loss data: give the manufacturer's flow/loss "
+                   . 'points or an equivalent length (EQL).  No loss is assumed.');
+    } elsif ($src eq 'USER_FIXED') {
+        # One loss at every flow.  A valve's loss rises with its flow, so a
+        # constant is right only near the flow it was read at; and at no flow
+        # it is a pressure difference across a valve passing nothing, which
+        # no open valve holds.
+        $P->(code => 'DPV_SIMPLIFIED_LOSS', severity => 'warning', item => $id,
+             value => ($e->{fixed_loss} // 0) / $up, unit => $pu,
+             message => sprintf('dry pipe valve %s: a constant loss of %.2f %s at every flow is a SIMPLIFICATION, not '
+                              . 'the valve\'s characteristic; it holds only near the flow it was taken at.  Give the '
+                              . 'manufacturer\'s flow/loss points, or the valve from the database', $id,
+                                ($e->{fixed_loss} // 0) / $up, $pu));
+        $P->(code => 'DPV_FIXED_NO_FLOW', item => $id, value => ($e->{fixed_loss} // 0) / $up, unit => $pu,
+             message => sprintf('dry pipe valve %s carries no flow but is given a constant loss of %.2f %s: a pressure '
+                              . 'difference across an open valve passing nothing is not physical', $id,
+                                ($e->{fixed_loss} // 0) / $up, $pu))
+            if abs($q) <= $QT && ($e->{fixed_loss} // 0) > 0;
+        $P->(code => 'LOSS_CURVE_NEGATIVE', item => $id, message => "dry pipe valve $id: a negative constant loss")
+            if ($e->{fixed_loss} // 0) < 0;
     } elsif ($basis eq 'EQL') {
         $P->(code => 'DPV_EQL', item => $id, value => $e->{eql}, unit => 'm',
              message => "dry pipe valve $id: an equivalent length must be more than zero")
@@ -696,7 +835,21 @@ sub dpv_checks {
              message => "dry pipe valve $id: the pipe it is in was not found, so its equivalent length has no bore")
             unless $e->{host};
     } elsif ($basis eq 'CURVE') {
-        loss_curve_checks($e, $q, $P, 'dry pipe valve', $uf, $fu);
+        loss_curve_checks($e, $q, $P, 'dry pipe valve', $uf, $fu, $D);
+        # At no flow a tripped, open valve has no loss.  Below its first point
+        # the curve is extended on its end slope, and that can go negative --
+        # a valve ADDING pressure at low flow -- or stay well above zero.
+        my $p0 = HardyCross::curve_eval($e->{curve}, 0);
+        if ($p0 < -1e-9) {
+            $P->(code => 'DPV_LOSS_AT_ZERO', item => $id, value => $p0 / $up, unit => $pu,
+                 message => sprintf('dry pipe valve %s: its loss curve, extended below its first point, gives %.2f %s at '
+                                  . 'no flow - a passive valve adding pressure.  Give a point at low flow', $id,
+                                    $p0 / $up, $pu));
+        } elsif ($p0 > 1e-6) {
+            $P->(code => 'DPV_LOSS_AT_ZERO', severity => 'warning', item => $id, value => $p0 / $up, unit => $pu,
+                 message => sprintf('dry pipe valve %s: its loss curve gives %.2f %s at no flow; a tripped, open valve '
+                                  . 'has no loss when nothing flows.  Check the first point', $id, $p0 / $up, $pu));
+        }
     } elsif ($basis eq 'DB' && (my $d = $e->{db})) {
         # A valve from the database: checked against what its data sheet
         # says of it.
@@ -847,31 +1000,67 @@ sub design {
     # The supply against the demand, with the margin the model asks for
     # (OPTION SUPPLY_MARGIN, a pressure; 0 unless given).
     my $need = $o->{supply_margin} // 0;
+    my $da = $o{assessment} // {};
     if (my $dm = $o{demand}) {
-        if ($dm->{reason}) {
+        if (($dm->{status} // '') eq 'UNRESOLVED') {
+            # The search itself failed -- not a supply found too weak.
+            $D->(code => 'SUPPLY_DEMAND_UNRESOLVED', item => undef,
+                 message => "the supply's adequacy could not be demonstrated: $dm->{reason}");
+            %$da = (status => 'UNRESOLVED', basis => 'DEMAND POINT, one supply', message => $dm->{reason});
+        } elsif ($dm->{reason}) {
             # Not worked out: a single demand point is not defined (several
             # supplies) or could not be found.  Several supplies are judged on
             # the supply schedule below; otherwise this is a finding.
             # "no supply pressure up to ... satisfies every outlet" is a
             # failure: no pressure at all meets the demand.
+            my $na = $dm->{reason} =~ /^(\d+ supplies|the model has no supply|the model has no outlet with a required pressure)/;
             $D->(code => 'DEMAND_NOT_FOUND', item => undef, message => "the demand point was not found: $dm->{reason}")
-                unless $dm->{reason} =~ /^(\d+ supplies|the model has no supply|the model has no outlet with a required pressure)/;
+                unless $na;
+            %$da = (status => 'INADEQUATE', basis => 'DEMAND POINT, one supply', message => $dm->{reason}) unless $na;
         } elsif ($dm->{margin} < $need - 1e-6) {
             $D->(code => 'SUPPLY_ADEQUACY', item => $dm->{supply}{id}, value => $dm->{margin} / $up,
                  limit => $need / $up, unit => $pu,
                  message => sprintf('supply %s: %.1f %s available at the demand flow against %.1f needed, a margin '
                                   . 'of %.1f %s where %.1f is required', $dm->{supply}{id}, $dm->{p_avail} / $up, $pu,
                                     $dm->{p_demand} / $up, $dm->{margin} / $up, $pu, $need / $up));
+            %$da = (status => 'INADEQUATE', basis => 'DEMAND POINT, one supply',
+                    message => sprintf('margin %.1f %s against %.1f required', $dm->{margin} / $up, $pu, $need / $up));
+        } else {
+            %$da = (status => 'DEMONSTRATED', basis => 'DEMAND POINT, one supply',
+                    message => sprintf('margin %.1f %s against %.1f required', $dm->{margin} / $up, $pu, $need / $up));
         }
     }
     if (my $s = $o{supplies}) {
+        # The joint demand -- every supply at once, from one solve -- is what
+        # the supplies' adequacy is judged on.  It must have been FOUND, in a
+        # valid solve, and its margin be at least the one asked for.  A
+        # search that failed is not a supply found inadequate, and is not
+        # passed over either: as released a joint demand that could not be
+        # found was ignored, and one whose solve was REJECTED was used.
         my $j = $s->{joint};
-        if ($j && !$j->{reason} && $j->{margin} < $need - 1e-6) {
+        my $st = !$j ? 'NOT_ASSESSED' : $j->{status} // ($j->{reason} ? 'UNRESOLVED' : 'FOUND');
+        my $basis = sprintf('JOINT DEMAND on the %s basis (an assumption)', $j && $j->{basis} ? $j->{basis} : '-');
+        if ($st eq 'UNRESOLVED') {
+            $D->(code => 'SUPPLY_DEMAND_UNRESOLVED', item => 'ALL',
+                 message => "the supplies' joint adequacy could not be demonstrated: $j->{reason}");
+            %$da = (status => 'UNRESOLVED', basis => $basis, message => $j->{reason});
+        } elsif ($st eq 'INADEQUATE') {
+            $D->(code => 'SUPPLY_ADEQUACY', item => 'ALL',
+                 message => "the supplies together cannot meet the demand: $j->{reason}");
+            %$da = (status => 'INADEQUATE', basis => $basis, message => $j->{reason});
+        } elsif ($st eq 'NOT_LIMITING') {
+            %$da = (status => 'DEMONSTRATED', basis => $basis, message => $j->{reason});
+        } elsif ($st eq 'FOUND' && $j->{margin} < $need - 1e-6) {
             $D->(code => 'SUPPLY_ADEQUACY', item => 'ALL', value => $j->{margin} / $up, limit => $need / $up,
                  unit => $pu,
                  message => sprintf('the supplies together, on the %s basis, have %.1f %s %s at the joint demand '
                                   . 'where %.1f is required', $j->{basis_name}, abs($j->{margin}) / $up, $pu,
                                     $j->{margin} >= 0 ? 'to spare' : 'too little', $need / $up));
+            %$da = (status => 'INADEQUATE', basis => $basis,
+                    message => sprintf('margin %.1f %s against %.1f required', $j->{margin} / $up, $pu, $need / $up));
+        } elsif ($st eq 'FOUND') {
+            %$da = (status => 'DEMONSTRATED', basis => $basis,
+                    message => sprintf('margin %.1f %s against %.1f required', $j->{margin} / $up, $pu, $need / $up));
         }
         for my $sc (@{ $s->{scenarios} || [] }) {
             next unless $sc->{required};
@@ -964,7 +1153,7 @@ sub assess {
 #------------------------------------------------------------------------------
 my %SAY = (
     ACCEPTED      => 'ACCEPTED - numerically valid, physically valid and compliant with the design',
-    NONCOMPLIANT  => 'NONCOMPLIANT - numerically and physically valid, but the design is not met',
+    NONCOMPLIANT  => 'NONCOMPLIANT - numerically and physically valid, but the design is not met or not demonstrated',
     REJECTED      => 'REJECTED - the results are not a valid solution of the model',
     INDETERMINATE => 'INDETERMINATE - no settled, converged solution; the results must not be used',
 );

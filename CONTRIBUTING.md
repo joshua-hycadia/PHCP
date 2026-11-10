@@ -103,6 +103,9 @@ perl tools/test_supplies.pl         # several supplies: operating, conditional, 
 perl tools/test_dpv.pl              # the dry pipe valve, its loss by hand and the database valves
 perl tools/test_results.pl          # the results saved back into the .phc
 perl tools/test_drytime.pl          # the estimated trip and transit times, the formula by hand
+perl tools/test_acceptance.pl       # the audit of 11 November 2026: each false positive refused
+perl tools/test_benchmarks.pl       # reference values PHCP did not compute: published forms, nodal Newton
+perl tools/test_impossible.pl       # tools/impossible/: models that must not be accepted
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no

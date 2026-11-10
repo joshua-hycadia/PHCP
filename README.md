@@ -44,6 +44,9 @@ perl tools/test_supplies.pl              # verify several water supplies: operat
 perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand and the database valves
 perl tools/test_results.pl               # verify the results saved back into the .phc
 perl tools/test_drytime.pl               # verify the estimated trip and transit times, the formula by hand
+perl tools/test_acceptance.pl            # verify the false positives found in the audit of 11 November 2026 are refused
+perl tools/test_benchmarks.pl            # verify PHCP against reference values it did not compute (published forms, nodal Newton)
+perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -963,6 +966,7 @@ phcp.exe --json model.phc                     results as JSON on standard output
 phcp.exe --json -                             the model read from standard input
 phcp.exe --json model.phc --report out.pdf    ...and the report written too
 phcp.exe --save model.phc                     the results saved back into model.phc (see Results saved in the model)
+phcp.exe --json --strict model.phc            exit 0 for ACCEPTED only; NONCOMPLIANT exits 4
 phcp.exe model.phc --annotate out.phc         with auto sizing: the model with each size as //AS - <size>
 ```
 
@@ -972,7 +976,22 @@ validation): 0 a valid solution, ACCEPTED or NONCOMPLIANT (the JSON's
 not settled; 2 the model could not be read or solved; 3 REJECTED, converged
 but failing a numerical or physical check.  Results with exit 1 or 3 must not
 be used.  One JSON object is printed in every case, so a caller always has
-something to read.  Abridged, for example 07:
+something to read.
+
+Exit 0 is NOT an approved design: a NONCOMPLIANT calculation converges and
+exits 0.  A caller that acts on the result must read `approved` in the JSON
+(true for ACCEPTED only), or run with `--strict`, which exits 0 for ACCEPTED
+alone and 4 for NONCOMPLIANT, and always works out the supply demand.  The
+default is unchanged so that no existing caller breaks.  The JSON also gives
+`demand_assessment` (DEMONSTRATED, INADEQUATE, UNRESOLVED or NOT_ASSESSED, and
+its basis), `assumptions` (the friction equation and constant, fitting basis,
+joint demand basis, orifice duty tolerance, curve extrapolation limit, solver
+tolerances) and, under `validation`, the `verification` limits the answer was
+checked to.  Its second summary line says NOT AN APPROVED DESIGN for anything
+but ACCEPTED.  The Revit extension writes results back for any valid solution
+but heads them NOT AN APPROVED DESIGN unless ACCEPTED (`RunResult.approved`);
+AutoCAD's PHCPSOLVE shows the summary, that line included.  Abridged, for
+example 07:
 
 ```
 {
@@ -1281,6 +1300,100 @@ every example against flows and pressures frozen before, and
 `tools/test_phc.pl` against the baselines.  `tools/test_validate.pl` holds
 each defect found as a model that must now be refused.
 
+### The audit of 11 November 2026
+
+Each item below was a calculation PHCP accepted, or a check it did not make,
+on 1.5.0 as released; each is reproduced in `tools/test_acceptance.pl`, which
+failed on 1.5.0 before the correction, and in `tools/impossible/`.
+
+- **Hydraulic constants.** `OPTION HW_CONST` 0 (no friction: 2400 L/min, 80
+  sqrt 900), negative (water gaining pressure along a pipe) and 6.05E5 (the
+  constant for bar/m) were ACCEPTED.  HW_CONST is now refused unless within 2
+  % of 6.05E7, the band its published forms lie in (AS 2118.1 and EN 12845
+  6.05 x 10^5 bar/m; NFPA 13 4.52 US units, 6.049 x 10^7 converted; the SI
+  10.67 form within 0.6 %).  A C factor outside 40 to 200 is refused, and an
+  `OPTION NU` that is not the viscosity of water (0.28E-6 to 1.8E-6 m2/s, 100
+  C to 0 C; NU 1 made every pipe laminar and was ACCEPTED); a number that
+  overflows (1E999) is not a number; TOL_FLOW, TOL_LOOP,
+  ORIF_STEP and ORIF_DP_TOL must be more than zero.
+- **Solver tolerance is not acceptance.** TOL_LOOP 500 kPa was also the limit
+  the answer was checked to, and a network 21 kPa out of balance round a
+  loop, its flows 1.7 % wrong, was ACCEPTED.  The tolerances now say only when
+  the iteration may stop.  The answer is checked to PHCP's own verification
+  limits, which no setting changes: continuity to 1e-6 of the largest flow,
+  loop closure and every element equation to 0.1 kPa (ten times the default
+  solver tolerance; 1/34 of the 0.5 psi NFPA 13 hand calculations balance
+  to).  Both are printed in Sections 1 and 11; a setting looser than the
+  limit is a warning (SOLVER_TOLERANCE_LOOSE).
+- **Closed devices.** A closed element that still carries flow is CLOSED_FLOW,
+  REJECTED, on its own rather than only as the imbalance at its ends.
+- **Joint demand.** The joint demand's own validation was never looked at: a
+  two-supply model was ACCEPTED on a joint margin of 367 kPa at which one
+  supply took 550 L/min IN.  Every trial solve of a demand search is now
+  classified PASS, SHORT (valid, an outlet short), INVALID (a supply taking
+  water in, a pump backwards, any numerical or physical failure) or
+  NOT_CONVERGED.  Only a valid SHORT trial counts as a supply too weak.  A
+  demand found against an invalid or unconverged trial is UNRESOLVED, and so
+  is one whose search never reached a valid passing solve; the design then
+  fails as SUPPLY_DEMAND_UNRESOLVED - the supplies' adequacy is not
+  demonstrated - which is kept apart from SUPPLY_ADEQUACY, a supply found too
+  weak.  The same holds for one supply's demand point and each supply's
+  conditional minimum (REQUIRED, NOT_REQUIRED, INADEQUATE or UNRESOLVED).
+  The joint demand's supplies are signed and checked to add up to the
+  network's net demand in the same solve; each carries its node pressure,
+  elevation, active state and whether its curve is extrapolated.
+- **Orifice plates.** The final drop against the target was printed and never
+  judged.  It must now be within `OPTION ORIF_DP_TOL` (10 % unless set: what
+  half a 0.5 mm step does to a 10 mm bore) or the design fails, ORIFICE_DUTY;
+  the deviation is split into the part from rounding the bore and the part
+  from the flow moving once the plate is in.
+- **Curves.** A curve used beyond its points is EXTRAPOLATED, as before; at
+  more than 1.5 times its highest flow (a fire pump's 150 % rated run-out,
+  the furthest a published curve normally goes - a PHCP rule, not a clause)
+  the result is not supported by the data and the design fails,
+  CURVE_EXTRAPOLATION_LIMIT.  The JSON marks each element operating beyond its
+  points.
+- **Dry pipe valves.** Every valve's loss has a source: MANUFACTURER_DB,
+  USER_CURVE, USER_EQL, USER_FIXED or NONE.  A constant loss is a
+  SIMPLIFICATION (a warning), and refused on a valve carrying no flow; a loss
+  curve that goes negative at no flow is refused.  A database valve with no
+  usable loss (the Victaulic 756) is DATA_REQUIRED - it reads, no loss is
+  assumed, and the calculation is REJECTED - where it used to stop the model
+  being read at all.  The trip and transit estimates are marked in the JSON
+  `verified: false` and `decides_acceptance: false`, with their limitations.
+- **Results block.** Its last record, CHECK, is the SHA-256 of every record
+  before it, so a result edited by hand is TAMPERED, told from STALE (the
+  model edited) and CURRENT; a block from anything but ACCEPTED says NOT FOR
+  DESIGN USE in its first line.  It records the program version and the
+  database's name, issue and fingerprint.
+
+No result of a valid model changed: the examples solve to the same flows and
+pressures (`tools/test_phc.pl`, `tools/test_velocity_pressure.pl`,
+`tools/test_report_checks.pl`).
+
+### Independent benchmarks
+
+`HardyCross::Validate` shows that a solved network satisfies PHCP's own
+element equations - consistency, since the check and the solver share them.
+`tools/test_benchmarks.pl` checks the equations themselves against values
+worked without any PHCP function: Hazen-Williams against the NFPA 13 US-unit
+form (within 0.02 %), Darcy-Weisbach against Colebrook-White iterated to
+convergence (0.18 %, the density of 1000 PHCP's conventional metre of water
+implies against 998.2 kg/m3 at 20 C) and a Moody chart point, elevation
+against the conventional metre of water, equivalent lengths, K-factors, the
+orifice plate against ISO 5167-2, pump and supply curves against the N^1.85
+form, and dry pipe valve losses against a flow coefficient's definition and
+the US-unit form.  Six networks - series, branched, looped, gridded, two
+supplies on a static and a curve with a fixed flow, and a pump - are solved
+again by a nodal Newton method written in the test, a different set of
+unknowns and a different iteration: they agree to within 2e-8 L/min and
+5e-9 kPa, and at PHCP's default tolerances within the 0.1 kPa verification
+limit.  It found that examples/01's comment gave its closed-form resistance
+as 1.5689E-4, 0.08 % high; it is 1.5677E-4, and PHCP's answer matched the
+correct one.  This is evidence that PHCP solves the published equations as
+published; it is not evidence that the equations describe a real
+installation, nor external certification.
+
 ## Results saved in the model
 
 The results of a solve are kept in the `.phc` itself, not in a file beside
@@ -1289,12 +1402,14 @@ editor after CALCULATE, write them as a block of comment lines at the end
 of the model:
 
 ```
-//== PHCP RESULTS - PHCP 1.4.0, 2026-11-10 05:19 UTC.  Replaced on every solve: ...
-//= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS
+//== PHCP RESULTS - PHCP 1.5.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
+//= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS DEMAND DEMONSTRATED APPROVED YES
+//= PROGRAM  PHCP VERSION 1.5.0
 //= MODEL    SHA256 05b9e70f...
 //= PIPE     PA1 FROM PA TO H FLOW 2784.9699 VELOCITY 1.477 LOSS 0.2530
 //= NODE     PA ELEVATION 0.000 PRESSURE 639.1367
 //= OUTLET   S1 TYPE SPRINKLER FLOW ... PASS YES
+//= CHECK    SHA256 9c1e4a07...
 //== END PHCP RESULTS
 ```
 
@@ -1304,7 +1419,11 @@ solves to the same figures with it, and the editor does not show it.  A new
 solve replaces it.  MODEL is the SHA-256 of the model without the block, so
 results that no longer belong to the model above them can be told; PHCP
 never saves a stale block (the editor saves without one when the last
-calculation was of other text).  `--json` stays, printed to standard
+calculation was of other text).  CHECK is the SHA-256 of every record
+before it, so `HardyCross::Results::status` tells a block CURRENT, STALE (the
+model edited since), TAMPERED (the block itself edited) or NONE.  A block
+from a calculation that was not ACCEPTED says NOT FOR DESIGN USE in its
+first line.  `--json` stays, printed to standard
 output for the programs that call PHCP; no JSON file is written.
 `tools/test_results.pl` checks it.
 
@@ -1326,6 +1445,15 @@ With more than one supply, Section 12 of the report and the JSON's
   (`SCALE`).  The basis is an assumption and the report states it;
 - SCENARIOS: each supply alone and each out of service, for information, and
   each `SCENARIO` line - a requirement - solved and validated on its own.
+
+Every trial solve of these searches is validated.  A search that meets a
+physically invalid or unconverged trial where the supply would fall short is
+UNRESOLVED, not a supply found inadequate, and the design fails as
+SUPPLY_DEMAND_UNRESOLVED (see the audit of 11 November 2026, under Hydraulic
+validation).  On DERATE a weaker supply near the outlets can reach the point
+of taking water in before the governing outlet reaches its minimum: no joint
+demand then exists on that basis.  A non-return valve at a supply is not
+modelled.
 
 With one supply the conditional and joint demands are the demand point, and
 `tools/test_supplies.pl` checks that they agree.  The combined supply graph
@@ -1395,7 +1523,7 @@ others on the page, and the report says which check to make.
 | pipe and fitting database | 39 / 39 |
 | `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 314 / 314 |
 | AutoCAD exporter, structure | 5 / 5 |
-| Revit extension, without Revit (`tools/test_revit.py`) | 88 / 88 |
+| Revit extension, without Revit (`tools/test_revit.py`) | 91 / 91 |
 | JSON interface (interface 2) | 109 / 109 |
 | supply, pump and loss curves, supplies combined, and a CD on an orifice plate | 24 / 24 |
 | report hand-checks, 10 models | 615 / 615 |
@@ -1415,6 +1543,9 @@ others on the page, and the report says which check to make.
 | dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), the database valves against figures printed on their data sheets, validation, report and JSON (`tools/test_dpv.pl`) | 52 / 52 |
 | results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
 | estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
+| the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
+| independent benchmarks: element equations against their published forms, six networks against a nodal Newton solve (`tools/test_benchmarks.pl`) | 26 / 26 |
+| impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 18 / 18 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |
@@ -1502,6 +1633,15 @@ model, not the standard's tables.  Agreement with other
 implementations does not validate a reading of a standard.  The database is
 user editable: a value changed in it is only as good as the source it was
 taken from.
+
+The engine works in the conventional metre of water, 9.80665 kPa (water of
+1000 kg/m3); water at 20 C is 998.2 kg/m3, 0.18 % lighter.  Darcy-Weisbach
+uses an accelerated three-step Colebrook-White solution, within 0.1 % of the
+equation.  A water supply that would take water in is a model failure: a
+non-return valve at a supply is not modelled.  The 1.5 times curve
+extrapolation limit, the 10 % orifice duty tolerance and the 0.1 kPa
+verification limit are PHCP's rules, stated with their reasons, not clauses
+of a Standard.
 
 Auto sizing is a search, not a proof of the least possible sizes: it keeps the
 best of its trials, each checked against the velocity limit and the margin
