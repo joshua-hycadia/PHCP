@@ -781,7 +781,7 @@ sub write_report {
     $out .= supply_schedule($net, $as->{supplies}) if $as->{supplies};
 
     #------------------------------------------------- 13. dry pipe valves
-    $out .= dry_pipe_valves($net, $va)
+    $out .= dry_pipe_valves($net, $va, $as->{dry})
         if grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
 
     #---------------------------------------------- 14. calculation acceptance
@@ -1648,14 +1648,16 @@ sub supply_schedule {
 # dry_pipe_valves -- Section 13, DRY PIPE VALVES.
 #------------------------------------------------------------------------------
 sub dry_pipe_valves {
-    my ($net, $va) = @_;
+    my ($net, $va, $dry) = @_;
     my ($uf, $up) = @{$net}{qw(f_flow f_pres)};
     my ($qu, $pu) = (sym($net->{u_flow}), sym($net->{u_pres}));
+    my %dry = map { $_->{id} => $_ } @{ $dry || [] };
     my $out = title('13. DRY PIPE VALVES');
     $out .= wrap(' ', 'Each dry pipe valve is solved TRIPPED AND FULLY OPEN: the steady state after it has '
-        . 'operated and the system has filled.  No trip time, transit time or water delivery time is '
-        . 'calculated, and none is implied; the trip setting and the accelerator are recorded for that '
-        . 'later calculation and do not change any figure in this report.') . "\n";
+        . 'operated and the system has filled.  The trip, transit and delivery times given below are '
+        . 'ESTIMATES (HardyCross::DryTime): they change no other figure in this report, they do not decide '
+        . 'its acceptance, and they are not a water delivery time calculation by a listed method.  The '
+        . 'accelerator is not modelled.') . "\n";
     for my $e (grep { $_->{kind} eq 'DPV' } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
         my ($hf) = HardyCross::elem_hf($e, $e->{q}, $net->{opts});
         my @f = grep { $_->{item} && $_->{item} eq $e->{id} && $_->{severity} eq 'error' } @{ $va->{findings} };
@@ -1663,14 +1665,14 @@ sub dry_pipe_valves {
         $out .= " $e->{id}\n";
         $row->('Location', sprintf('pipe %s, from node %s', $e->{host_id} // '-', $net->{nodes}[ $e->{n1} ]{id}));
         $row->('Nominal size', sprintf('DN%d', $e->{size} // 0));
-        $row->('Make and model', $e->{model} // 'not given');
+        $row->('Make and model', $e->{model} // $e->{db_model} // 'not given');
         $row->('Trip method', ($e->{trip_mode} // '') eq 'RATIO'
             ? sprintf('differential ratio %.2f:1 (water to air pressure at the clapper)', $e->{trip_ratio} // 0)
             : ($e->{trip_mode} // '') eq 'TRIP'
             ? sprintf('air-side trip pressure %.1f %s', ($e->{trip_pressure} // 0) / $up, $pu) : 'not given');
-        $row->('Accelerator', ($e->{accelerator} // '-') . ' (no effect on trip time is assumed)');
+        $row->('Accelerator', ($e->{accelerator} // '-') . ' (not modelled: no effect on trip time is assumed)');
         $row->('Set air pressure', defined $e->{transient}{air_initial}
-            ? sprintf('%.1f %s (reserved: not used in a steady-state solve)', $e->{transient}{air_initial} / $up, $pu)
+            ? sprintf('%.1f %s (used for the trip time estimate only)', $e->{transient}{air_initial} / $up, $pu)
             : 'not given');
         my $basis = $e->{loss} // 'NONE';
         $row->('Loss basis', $basis eq 'CURVE' ? (defined $e->{fixed_loss}
@@ -1694,8 +1696,56 @@ sub dry_pipe_valves {
             HardyCross::Demand::gauge($net, $e->{n1}) / $up, pdp($net->{u_pres}),
             HardyCross::Demand::gauge($net, $e->{n2}) / $up, $pu));
         $row->('Validation', @f ? '*** ' . join('; ', map { $_->{code} } @f) : 'PASS');
+        $out .= dry_time_rows($net, $dry{ $e->{id} }, $row) if $dry{ $e->{id} };
         $out .= "\n";
     }
+    return $out;
+}
+
+#------------------------------------------------------------------------------
+# dry_time_rows -- a dry pipe valve's ESTIMATED times (HardyCross::DryTime),
+# each with what it was worked from, so it can be checked by hand.
+#------------------------------------------------------------------------------
+sub dry_time_rows {
+    my ($net, $d, $row) = @_;
+    my $up = $net->{f_pres};
+    my $pu = sym($net->{u_pres});
+    my $out = '';
+    my $add = sub { my ($k, $v) = @_; $out .= sprintf "   %-30s %s\n", $k, $v };
+    if ($d->{error}) { $add->('Trip and transit times', "NOT ESTIMATED: $d->{error}"); return $out }
+    $add->('Dry system volume', sprintf('%.4f m3 in %d pipes downstream of the valve', $d->{volume}, $d->{pipes}));
+    my $t = $d->{trip};
+    if (($t->{status} // '') eq 'ESTIMATE') {
+        $add->('TRIP TIME, ESTIMATE', sprintf('%.1f s', $t->{seconds}));
+        $add->('   worked from', sprintf('t = 0.0352 V / (An sqrt T0) ln(pa0/pa) (FM Global, SFPE Handbook): '
+            . 'V %.3f ft3, An %d x %.2f mm orifice = %.6f ft2, T0 %.1f C = %.1f R, pa0 %.2f psia (set air %.1f %s), '
+            . 'pa %.2f psia (trip %.1f %s%s)', $d->{volume} / 0.028316846592, $t->{open_count}, $t->{orifice_mm},
+            $t->{area} / 0.09290304, $t->{air_temp_c}, ($t->{air_temp_c} + 273.15) * 1.8,
+            ($t->{air_gauge} + 101.325) / 6.894757, $t->{air_gauge} / $up, $pu,
+            ($t->{trip_gauge} + 101.325) / 6.894757, $t->{trip_gauge} / $up, $pu,
+            defined $t->{static} ? sprintf(', from %.1f %s static water%s', $t->{static} / $up, $pu,
+                                           $t->{static_given} ? ' as given' : ' from the supplies, pumps not included') : ''));
+        $add->('   accelerator', 'ON, but not modelled: the time is without it') if $t->{accelerator_ignored};
+        $add->('   choked flow', 'NO - the trip pressure is below 1.893 atm, so the estimate is less reliable') unless $t->{choked};
+    } else {
+        $add->('TRIP TIME', ($t->{status} // 'NOT_CALCULATED') eq 'ERROR' ? "*** $t->{reason}" : "not estimated: $t->{reason}");
+    }
+    my $x = $d->{transit};
+    if (($x->{status} // '') eq 'ESTIMATE') {
+        $add->('TRANSIT TIME, ESTIMATE', sprintf('%.1f s, the larger of:', $x->{seconds}));
+        $add->('   water front to the remote head', defined $x->{path_seconds}
+            ? sprintf('%.1f s along %.1f m (%s) to %s, sum of L / v at the %s flows', $x->{path_seconds}, $x->{path_length},
+                      join(' ', @{ $x->{path_pipes} }), $x->{remote}, $x->{basis})
+            : 'not traced');
+        $add->('   filling the dry volume', defined $x->{fill_seconds}
+            ? sprintf('%.1f s: dry volume / %.1f %s through the valve at the %s', $x->{fill_seconds},
+                      $x->{flow} / $net->{f_flow}, sym($net->{u_flow}), $x->{basis}) : 'no flow');
+        $add->('   ignoring', 'the air the water has to compress and expel: a lower bound');
+    } else {
+        $add->('TRANSIT TIME', "not estimated: $x->{reason}");
+    }
+    $add->('DELIVERY TIME, ESTIMATE', sprintf('%.1f s = trip + transit (not a listed method: check with one, or a test)',
+                                              $d->{delivery})) if defined $d->{delivery};
     return $out;
 }
 

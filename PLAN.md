@@ -511,9 +511,11 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] Several supplies: operating, conditional minimum, joint demand on a stated basis (DERATE or SCALE), supply scenarios and SCENARIO lines (`tools/test_supplies.pl`)
 - [x] DPV: a dry pipe valve, solved tripped and fully open, its loss from points or an equivalent length; trip ratio or trip pressure and accelerator kept for a later delivery time calculation (`tools/test_dpv.pl`)
 - [x] JSON interface 2: acceptance, validation, supplies, dry pipe valves, traceability; outlet flow signed; exit 3 for REJECTED
-- [ ] PLANNED - Dry pipe valve trip: trip time from the trip ratio or air-side trip pressure and the set air pressure (DPVAIR), through SET -> PRESSURE_DECAY -> TRIPPED, as a transient calculation apart from the steady-state solver.  The DPV's `transient` record already holds the fields.  Not started.
+- [x] Dry pipe valve trip time, ESTIMATED: the FM Global formula as published in the SFPE Handbook, from DPVAIR and DPVTRIP (`HardyCross/DryTime.pm`, `tools/test_drytime.pl`), apart from the steady-state solver
 - [ ] PLANNED - Accelerators: the accelerator models and their published operating data (Reliable B1, C; Tyco ACC-1, VIZOR, QRS-2; Viking D-2, E-1, EA-1; Victaulic 746-LPA, 746) in the database, and their effect on trip time.  The surveys of 10 November 2026 found only Reliable Bulletin 359 publishes trip-time rules for one (fixed delays); the others give operating ranges and disclaimers only.  Not started.
-- [ ] PLANNED - Water delivery time for dry systems: transit after trip, FILLING -> WATER_DELIVERY, to the remote sprinkler.  Not started.
+- [x] Transit time, ESTIMATED and rudimentary, ignoring the air: the larger of the water front's path time (sum of L / v to the most remote outlet) and the fill time (dry volume / flow); delivery = trip + transit
+- [ ] PLANNED - The air in the transit: the water as a plug pushing the dry pipework's air out through the open orifice, so the transit is not only a lower bound.  Not started (held, 10 November 2026).
 - [x] Manufacturer dry pipe valve data: Reliable, Tyco, Viking and Victaulic in `data/pipes.dat` (DRYVALVE), `DPV ... VALVE <MAKER> <MODEL>` (database change requested by the maintainer 10 November 2026)
 - [x] Results saved back into the `.phc` (`--save`, editor SAVE after CALCULATE; `HardyCross/Results.pm`, `tools/test_results.pl`)
 - [x] v1.4.0 - release notes `release_notes/v1.4.0.md`
+- [x] v1.5.0 - release notes `release_notes/v1.5.0.md`

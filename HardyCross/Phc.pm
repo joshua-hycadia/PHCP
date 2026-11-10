@@ -175,6 +175,12 @@ my %CMD = (
     # The air pressure a dry system is set to.  Reserved for a water delivery
     # time calculation; the steady-state solve does not use it.
     DPVAIR    => { kind => 'dpvdata', fixed => [ [ 'PIPE', 'pipe' ], [ 'PRESSURE', 'pressure' ] ] },
+    # What the ESTIMATED trip time of a dry pipe valve is worked from
+    # (HardyCross::DryTime): the orifice of the open sprinkler (SIZE unit),
+    # how many are open (1), the air temperature in C (20), and the static
+    # water pressure at the valve (worked from the supplies unless given).
+    DPVTRIP   => { kind => 'dpvdata', fixed => [ [ 'PIPE', 'pipe' ], [ 'ORIFICE', 'size' ] ],
+                   opt => [ [ 'COUNT', 'num' ], [ 'AIRTEMP', 'temp' ], [ 'STATIC', 'pressure' ] ] },
     # A water supply scenario: the supplies named run at the percentage of
     # their pressure given (0 is out of service, 100 as modelled), the rest
     # as modelled.  Each is solved and validated on its own; one that does
@@ -198,7 +204,7 @@ our @COMMAND_GROUPS = (
     [qw(TITLE PROJECT UNITS METHOD OPTION)],
     [qw(USE PIPE PC CHANGEPIPE EQV)],
     [qw(NODE NC WATER SPRINKLER HYDRANT HREEL FIXEDFLOW)],
-    [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA DPV DPVMODEL DPVAIR)],
+    [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA DPV DPVMODEL DPVAIR DPVTRIP)],
     [qw(AREA SUPPLYGRAPH SCENARIO)],
 );
 our @COMMANDS = map { @$_ } @COMMAND_GROUPS;
@@ -519,6 +525,12 @@ sub check_field {
         return 'AN AIR-SIDE TRIP PRESSURE MUST BE MORE THAN 0' if $v <= 0;
         return $push->($v);
     }
+    # An air temperature, degrees C: may be below zero.
+    if ($type eq 'temp') {
+        return "$label '$v' IS NOT A NUMBER" unless $is_num;
+        return "$label: AN AIR TEMPERATURE OF $v C IS OUTSIDE -50 TO 60 C" if $v < -50 || $v > 60;
+        return $push->($v);
+    }
     if ($type eq 'onoff') {
         my $m = uc $v;
         return 'THE ACCELERATOR IS ON OR OFF' unless $m eq 'ON' || $m eq 'OFF';
@@ -799,11 +811,17 @@ sub translate {
         } elsif ($k eq 'PUMPDUTY') {
             $at->($n, 'PUMP %s ALREADY HAS A DUTY, ON LINE %d', $p[0], $duty{ $p[0] }{line}) if $duty{ $p[0] };
             $duty{ $p[0] } = { line => $n, q => $p[1], p => $p[2] };
-        } elsif ($k eq 'DPVMODEL' || $k eq 'DPVAIR') {
-            my $slot = $k eq 'DPVMODEL' ? 'model' : 'air';
+        } elsif ($k eq 'DPVMODEL' || $k eq 'DPVAIR' || $k eq 'DPVTRIP') {
+            my $slot = { DPVMODEL => 'model', DPVAIR => 'air', DPVTRIP => 'trip' }->{$k};
             $at->($n, 'PIPE %s ALREADY HAS A %s, ON LINE %d', $p[0], $k, $dpvdata{ $p[0] }{"${slot}_line"})
                 if $dpvdata{ $p[0] }{$slot};
-            $dpvdata{ $p[0] }{$slot} = $k eq 'DPVMODEL' ? $a->{text} : $p[1];
+            $at->($n, 'DPVTRIP %s: THE NUMBER OF OPEN SPRINKLERS IS A WHOLE NUMBER, 1 OR MORE', $p[0])
+                if $k eq 'DPVTRIP' && defined $a->{opt}[0] && ($a->{opt}[0] !~ /^\d+\z/ || $a->{opt}[0] < 1);
+            $at->($n, 'DPVTRIP %s: THE ORIFICE MUST BE MORE THAN 0', $p[0]) if $k eq 'DPVTRIP' && $p[1] <= 0;
+            $dpvdata{ $p[0] }{$slot} = $k eq 'DPVMODEL' ? $a->{text}
+                                     : $k eq 'DPVAIR' ? $p[1]
+                                     : { orifice_mm => size_mm($p[1], $units{SIZE}), count => $a->{opt}[0],
+                                         temp => $a->{opt}[1], static => $a->{opt}[2] };
             $dpvdata{ $p[0] }{"${slot}_line"} = $n;
         } elsif ($k eq 'SCENARIO') {
             $at->($n, 'SCENARIO %s IS ALREADY DEFINED ON LINE %d', $p[0], $scenario{ $p[0] }{line})
@@ -912,7 +930,7 @@ sub translate {
     # DPVMODEL and DPVAIR describe a dry pipe valve, so their pipe must have one.
     for my $pname (sort keys %dpvdata) {
         my $d = $dpvdata{$pname};
-        my $ln = $d->{model_line} // $d->{air_line};
+        my $ln = $d->{model_line} // $d->{air_line} // $d->{trip_line};
         $at->($ln, 'PIPE %s HAS NO DRY PIPE VALVE (DPV) FOR THIS TO DESCRIBE', $pname)
             unless $device{$pname} && $device{$pname}{key} eq 'DPV';
     }
@@ -1233,6 +1251,12 @@ sub read_string {
         my $d = $areas->{dpvdata}{$pname};
         $e->{model} = $d->{model} if defined $d->{model};
         $e->{transient}{air_initial} = $d->{air} * $net->{f_pres} if defined $d->{air};
+        if (my $t = $d->{trip}) {
+            $e->{transient}{orifice_mm}   = $t->{orifice_mm};
+            $e->{transient}{open_count}   = $t->{count} if defined $t->{count};
+            $e->{transient}{air_temp_c}   = $t->{temp} if defined $t->{temp};
+            $e->{transient}{static_water} = $t->{static} * $net->{f_pres} if defined $t->{static};
+        }
     }
     # Pipes to be sized (size 0) and how (HardyCross::Sizing).
     $net->{auto_sizing} = $areas->{auto} if @{ $areas->{auto} };

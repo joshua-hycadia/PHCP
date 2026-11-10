@@ -27,7 +27,7 @@ package HardyCross;
 # The PHCP version.  Printed on every report: a calculation submitted for
 # certification has to identify the software AND the build that produced it,
 # so that a result can be reproduced -- or recalled -- later.
-our $VERSION = '1.4.0';
+our $VERSION = '1.5.0';
 
 use strict;
 use warnings;

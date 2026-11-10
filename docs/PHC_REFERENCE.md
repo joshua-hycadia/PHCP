@@ -239,6 +239,7 @@ there is one, is in brackets.
 | `DPV` | PIPE SIZE RATIO\|TRIP SETTING ON\|OFF [FLOW LOSS ...] or [EQL LENGTH] | 8.7 |
 | `DPVMODEL` | PIPE TEXT | 8.7 |
 | `DPVAIR` | PIPE PRESSURE | 8.7 |
+| `DPVTRIP` | PIPE ORIFICE [COUNT] [AIRTEMP] [STATIC] | 8.7 |
 | `AREA` | NAME OUTLET [OUTLET ...] | 9.1 |
 | `SUPPLYGRAPH` | FILE | 9.2 |
 | `SCENARIO` | NAME SUPPLY PERCENT [SUPPLY PERCENT ...] | 9.3 |
@@ -808,7 +809,7 @@ PRA P2 3:1 300
 PRA P3 2:1 0 3
 ```
 
-### 8.7 DPV, DPVMODEL, DPVAIR - a dry pipe valve
+### 8.7 DPV, DPVMODEL, DPVAIR, DPVTRIP - a dry pipe valve
 
 ```
 DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> [FLOW LOSS ...]
@@ -817,6 +818,7 @@ DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> EQL <LENGTH>
 DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> VALVE <MAKER> <MODEL>
 DPVMODEL <PIPE> <TEXT>
 DPVAIR <PIPE> <PRESSURE>
+DPVTRIP <PIPE> <ORIFICE> [COUNT] [AIRTEMP] [STATIC]
 ```
 
 A dry pipe valve in a pipe, at its start. PHCP solves it TRIPPED AND FULLY
@@ -838,10 +840,41 @@ calculation is REJECTED: no loss is ever assumed for it, and a check valve's
 is not put in its place.
 
 The trip setting and the accelerator do not change any steady-state figure.
-They are kept, with DPVMODEL (the make and model, free text, the rest of the
-line) and DPVAIR (the air pressure the system is set to, reserved), for a
-later water delivery time calculation. That calculation is not part of
-PHCP.
+DPVMODEL is the make and model, free text, the rest of the line. DPVAIR is
+the air pressure the system is set to.
+
+**Estimated trip, transit and delivery times.** With DPVAIR and DPVTRIP the
+report gives, for the valve, ESTIMATES - they change no other figure, do not
+decide the calculation's acceptance, and are not a water delivery time
+calculation by a listed method:
+
+- TRIP TIME by the formula of FM Global, as published in the SFPE Handbook:
+  t = 0.0352 V / (An sqrt T0) ln(pa0 / pa), V the dry volume (every pipe
+  downstream of the valve), An the open orifice area, T0 the air
+  temperature, pa0 the set air pressure and pa the trip pressure (TRIP, or
+  the static water pressure divided by RATIO), all absolute.
+- TRANSIT TIME, ignoring the air: the larger of the water front's travel
+  time from the valve to the most remote outlet, the sum of L / v along the
+  flow path, and the time to fill the dry volume at the flow through the
+  valve, both at the demand point's flows (with one supply) or else the
+  operating point's. A lower bound: the air the water must push out is not
+  modelled.
+- DELIVERY TIME, trip plus transit.
+
+The accelerator is not modelled: a time with ON is the time without it, and
+the report says so.
+
+| DPVTRIP field | meaning |
+|---|---|
+| ORIFICE | The nominal orifice of the open sprinkler (or test outlet), in the SIZE unit. |
+| COUNT | How many are open. 1 if not given. |
+| AIRTEMP | The air temperature in the dry pipework, degrees C, -50 to 60. 20 if not given. Colder air gives a longer trip time. |
+| STATIC | The static water pressure at the valve, in the PRESSURE unit, for a RATIO trip. If not given, the highest supply's pressure at no flow, corrected for elevation; pumps are not included. |
+
+A set air pressure not above the trip pressure is a valve that cannot be
+set, and REJECTS the calculation. A trip pressure below 1.893 atmospheres
+absolute, where flow through the orifice stops being choked, is a warning.
+A dry part that reaches a water supply is refused.
 
 The report's Section 13 lists each valve: where it is, its size, make,
 trip, accelerator, loss basis, steady-state flow and loss, the pressures
@@ -854,6 +887,7 @@ DPV P14 150 TRIP 140 OFF EQL 6.1
 DPV P16 100 RATIO 5.5:1 ON VALVE TYCO DPV-1
 DPVMODEL P12 MAKER X MODEL D100
 DPVAIR P12 280
+DPVTRIP P12 12.7 1 5
 ```
 
 **One device to a pipe.** BP, BFP, PRV, OPP, OFD, PRA and DPV name the pipe

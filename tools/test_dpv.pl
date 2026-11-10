@@ -254,7 +254,7 @@ print "4. THE OUTPUT\n";
     is('   the trip, the accelerator, the model and the loss basis',
        $rep =~ /differential ratio 5\.50:1/ && $rep =~ /Accelerator\s+ON/ && $rep =~ /MAKER X/
        && $rep =~ /equivalent length 6\.10 m of pipe P12/);
-    my $words = join '\s+', map { quotemeta } split ' ', 'No trip time, transit time or water delivery time is calculated';
+    my $words = join '\s+', map { quotemeta } split ' ', 'The trip, transit and delivery times given below are ESTIMATES';
     is('   and says no delivery time is calculated', $rep =~ /$words/);
     my $j = HardyCross::Json::results($net, $ok, 'dpv.phc', demand => 0);
     my ($d) = @{ $j->{dry_pipe_valves} };

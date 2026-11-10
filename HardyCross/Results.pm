@@ -127,11 +127,21 @@ sub block {
                PRESSURE => $num->(HardyCross::Demand::gauge($net, $e->{n2}) / $up, 4),
                STATUS => $e->{closed} ? 'OUT_OF_SERVICE' : $e->{q} < -$HardyCross::Q_TINY ? 'REVERSE' : 'DELIVERING');
     }
+    # The ESTIMATED dry system times (HardyCross::DryTime), seconds, on each
+    # dry pipe valve's DEVICE record.
+    my %dry = map { $_->{id} => $_ } @{ $as->{dry} || [] };
+    my $est = sub {
+        my $d = $dry{ shift() } or return ();
+        return (ESTIMATE => 'NO') if $d->{error};
+        return (TRIP_S => $num->($d->{trip}{seconds}, 1), TRANSIT_S => $num->($d->{transit}{seconds}, 1),
+                DELIVERY_S => $num->($d->{delivery}, 1), ESTIMATE => 'YES');
+    };
     for my $e (grep { $_->{kind} !~ /^(PIPE|DISCHARGE|SUPPLY_)/ } @el) {
         my ($hf) = $e->{closed} ? (0) : HardyCross::elem_hf($e, $e->{q}, $net->{opts});
         $rec->('DEVICE', $e->{id}, KIND => $e->{kind}, FLOW => $num->($e->{q} / $uf, 4), LOSS => $num->($hf / $up, 4),
                STATE => $e->{closed} ? 'CLOSED' : 'OPEN',
-               ($e->{kind} eq 'DPV' ? (MODEL => $word->($e->{db_model} // $e->{model}), BASIS => $e->{loss}) : ()),
+               ($e->{kind} eq 'DPV' ? (MODEL => $word->($e->{db_model} // $e->{model}), BASIS => $e->{loss},
+                                       $est->($e->{id})) : ()),
                ($e->{kind} eq 'ORIFICE' ? (BORE => $num->($e->{bore}, 2)) : ()));
     }
     my ($go, $gm) = HardyCross::Demand::governing_outlet($net);

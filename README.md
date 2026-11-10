@@ -4,12 +4,11 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.4.0 (`release_notes/v1.4.0.md`): every calculation
-validated and reported ACCEPTED, NONCOMPLIANT, REJECTED or INDETERMINATE;
-several water supplies, each on its own terms; the dry pipe valve, with
-Reliable, Tyco, Viking and Victaulic valves in the database; and the
-results saved back into the `.phc`.  No result of a valid 1.3.0 model
-changed.
+The latest release is 1.5.0 (`release_notes/v1.5.0.md`): ESTIMATED trip,
+transit and delivery times for a dry pipe valve, from `DPVAIR` and the new
+`DPVTRIP` - the trip time by the FM Global formula published in the SFPE
+Handbook, the transit a rudimentary lower bound that ignores the air.  No
+steady-state result changed since 1.4.0.
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a
@@ -44,6 +43,7 @@ perl tools/test_validate.pl              # verify hydraulic validation and the a
 perl tools/test_supplies.pl              # verify several water supplies: operating, conditional, joint, scenarios
 perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand and the database valves
 perl tools/test_results.pl               # verify the results saved back into the .phc
+perl tools/test_drytime.pl               # verify the estimated trip and transit times, the formula by hand
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -1361,10 +1361,21 @@ contradicts itself the note on the record says so, and the report prints
 it wherever that valve is used.  Accelerator trip times are not entered:
 PHCP does not calculate trip or delivery time.
 
-**Planned** (`PLAN.md`): the valve's trip time, from its trip setting and
-set air pressure; accelerators, their data and their effect on trip time;
-then water delivery time.  Each will be a transient calculation apart from
-the steady-state solver.  None is started.
+**Estimated trip and transit times** (`HardyCross/DryTime.pm`): with
+`DPVAIR` and `DPVTRIP`, Section 13 of the report, the JSON and the results
+block give each valve's TRIP TIME by the FM Global formula published in the
+SFPE Handbook, t = 0.0352 V / (An sqrt T0) ln(pa0/pa), and a rudimentary
+TRANSIT TIME that ignores the air: the larger of the water front's travel
+time to the most remote outlet (the sum of L / v along the flow path at the
+demand point's flows) and the time to fill the dry volume.  Their sum is a
+DELIVERY estimate.  They are estimates: they change no other figure, decide
+no acceptance, and are not a water delivery calculation by a listed method.
+`tools/test_drytime.pl` checks the formula against the published worked
+example and its constant against the blow-down of air it comes from.
+
+**Planned** (`PLAN.md`): accelerators, their data and their effect on trip
+time; and the air the water pushes ahead of it, so that the transit is not
+only a lower bound.  Not started.
 
 ## The report
 
@@ -1403,6 +1414,7 @@ others on the page, and the report says which check to make.
 | several supplies: operating, one supply against the demand point, conditional, joint (DERATE and SCALE), scenarios, report and JSON (`tools/test_supplies.pl`) | 43 / 43 |
 | dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), the database valves against figures printed on their data sheets, validation, report and JSON (`tools/test_dpv.pl`) | 52 / 52 |
 | results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
+| estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |
