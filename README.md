@@ -45,6 +45,7 @@ perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its 
 perl tools/test_results.pl               # verify the results saved back into the .phc
 perl tools/test_drytime.pl               # verify the estimated trip and transit times, the formula by hand
 perl tools/test_acceptance.pl            # verify the false positives found in the audit of 11 November 2026 are refused
+perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -1302,7 +1303,7 @@ each defect found as a model that must now be refused.
 
 Each item below was a calculation PHCP accepted, or a check it did not make,
 on 1.5.0 as released; each is reproduced in `tools/test_acceptance.pl`, which
-failed on 1.5.0 before the correction.
+failed on 1.5.0 before the correction, and in `tools/impossible/`.
 
 - **Hydraulic constants.** `OPTION HW_CONST` 0 (no friction: 2400 L/min, 80
   sqrt 900), negative (water gaining pressure along a pipe) and 6.05E5 (the
@@ -1519,6 +1520,7 @@ others on the page, and the report says which check to make.
 | results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
 | estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
 | the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
+| impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 18 / 18 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |

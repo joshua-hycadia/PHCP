@@ -43,7 +43,7 @@ jobs:
           set -e
           for t in test_curves test_phc test_pipedata test_report_checks test_pdf test_json \
                    test_editor test_sheet test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure test_validate test_supplies test_dpv test_results test_drytime \
-                   test_acceptance check_lisp stress_resolver; do
+                   test_acceptance test_impossible check_lisp stress_resolver; do
             echo "== $t"
             perl tools/$t.pl
           done
@@ -99,10 +99,17 @@ jobs:
         shell: cmd
         run: |
           set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
-          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_sheet test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure test_validate test_supplies test_dpv test_results test_drytime test_acceptance check_lisp) do (
+          for %%t in (test_curves test_phc test_pipedata test_report_checks test_pdf test_json test_editor test_sheet test_dbedit test_isometric test_graph test_tools test_sizing test_manual test_velocity_pressure test_validate test_supplies test_dpv test_results test_drytime test_acceptance test_impossible check_lisp) do (
             echo == %%t
             perl tools\%%t.pl || exit /b 1
           )
+      # The models that must not be accepted, through the program a user
+      # runs: the built phcp.exe, not the script it was built from.
+      - name: Impossible models refused by the built phcp.exe
+        shell: cmd
+        run: |
+          set PATH=C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;%PATH%
+          perl tools\test_impossible.pl phcp.exe || exit /b 1
       - name: Revit extension, without Revit
         shell: pwsh
         run: python tools\test_revit.py
