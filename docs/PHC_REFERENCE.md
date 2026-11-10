@@ -814,6 +814,7 @@ PRA P3 2:1 0 3
 DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> [FLOW LOSS ...]
 DPV <PIPE> <SIZE> TRIP <PRESSURE> <ON|OFF> [FLOW LOSS ...]
 DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> EQL <LENGTH>
+DPV <PIPE> <SIZE> RATIO <RATIO> <ON|OFF> VALVE <MAKER> <MODEL>
 DPVMODEL <PIPE> <TEXT>
 DPVAIR <PIPE> <PRESSURE>
 ```
@@ -830,6 +831,7 @@ and none of its results says one has been checked.
 | ON or OFF | The accelerator. No effect on trip time is assumed or calculated. |
 | FLOW LOSS ... | The manufacturer's loss through the open valve: flow and loss pairs, read as every PHCP curve is, straight in Q^1.85 between the points and continued beyond the last (which is a warning). One pair at flow 0 is a loss that does not vary with flow. |
 | EQL LENGTH | Instead, the valve's equivalent length of its pipe, in the LENGTH unit, worked at that pipe's bore and C (or roughness). |
+| VALVE MAKER MODEL | Instead, a manufacturer's valve from the pipe and fitting database (`DRYVALVE` records, `data/pipes.dat`), in the size SIZE: its published equivalent length of its published reference pipe and C, worked by Hazen-Williams. The database holds Reliable, Tyco, Viking and Victaulic valves; an unknown valve, or a size it is not made in, is refused with the ones there are. The data sheet's trip ratio and rated working pressure are checked against the model: a ratio far from it, a low-pressure valve given a ratio, or a legacy valve is a warning; an inlet pressure above the rating REJECTS the calculation. A conflict found in the data sheet itself is printed with the valve. |
 
 The loss must be given. A DPV with no loss data is solved with none and the
 calculation is REJECTED: no loss is ever assumed for it, and a check valve's
@@ -849,6 +851,7 @@ a valve size, or a trip setting that cannot be right REJECTS the calculation.
 ```
 DPV P12 100 RATIO 5.5:1 ON 1000 15 3000 40
 DPV P14 150 TRIP 140 OFF EQL 6.1
+DPV P16 100 RATIO 5.5:1 ON VALVE TYCO DPV-1
 DPVMODEL P12 MAKER X MODEL D100
 DPVAIR P12 280
 ```

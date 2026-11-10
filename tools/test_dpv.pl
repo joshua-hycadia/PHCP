@@ -190,6 +190,59 @@ print "3. VALIDATION\n";
 }
 
 #==============================================================================
+print "3a. VALVES FROM THE DATABASE\n";
+#==============================================================================
+{
+    # Each against a figure printed on its data sheet: the loss at a flow.
+    require HardyCross::PipeData;
+    for my $c ([ 'TYCO', 'DPV-1', 100, 600, 1.25, 'TFP1020 Graph A' ], [ 'VIKING', 'VXR', 100, 1000, 7.59, 'chart F_110325' ],
+               [ 'VIKING', 'F-1', 150, 1750, 4.85, 'chart F_061909' ], [ 'VIKING', 'VXR', 65, 400, 7.92, 'chart F_110525' ]) {
+        my ($mk, $md, $dn, $gpm, $psi, $src) = @$c;
+        my ($n) = solve(model("DPV P12 $dn RATIO 6 ON VALVE $mk $md", water => 'WATER W 0 1000'));
+        my $e = dpv($n);
+        my ($hf) = HardyCross::elem_hf($e, $gpm * 3.785411784, $n->{opts});
+        is(sprintf('%s %s DN%d: %.3f psi at %d gpm against %.2f printed (%s)', $mk, $md, $dn, $hf / 6.894757, $gpm, $psi, $src),
+           abs($hf / 6.894757 - $psi) <= 0.01 * $psi + 0.005);
+    }
+    my ($n, $ok, $v) = solve(model('DPV P12 100 RATIO 5.5 ON VALVE TYCO DPV-1'));
+    is("TYCO DPV-1 DN100 in a model: $v->{acceptance}, its loss across the valve",
+       $v->{acceptance} eq 'ACCEPTED' && near(loss($n, dpv($n)), (HardyCross::elem_hf(dpv($n), dpv($n)->{q}, $n->{opts}))[0], 1e-9));
+    (undef, undef, $v) = solve(model('DPV P12 80 RATIO 5.5 ON VALVE TYCO DPV-1'));
+    is('TYCO DPV-1 DN80: the data sheet\'s own conflict is a warning (DPV_DATA_NOTE)',
+       (codes($v)->{DPV_DATA_NOTE} // '') eq 'warning');
+    (undef, undef, $v) = solve(model('DPV P12 100 RATIO 5.5 ON VALVE RELIABLE DDX-LP'));
+    is('a low-pressure valve given a ratio: a warning (DPV_RATIO_DB)', (codes($v)->{DPV_RATIO_DB} // '') eq 'warning');
+    (undef, undef, $v) = solve(model('DPV P12 100 RATIO 3 ON VALVE VIKING F-1'));
+    is('a ratio far from the data sheet\'s: a warning (DPV_RATIO_DB)', (codes($v)->{DPV_RATIO_DB} // '') eq 'warning');
+    (undef, undef, $v) = solve(model('DPV P12 100 RATIO 6 ON VALVE RELIABLE D'));
+    is('a legacy valve: a warning (DPV_LEGACY)', (codes($v)->{DPV_LEGACY} // '') eq 'warning');
+    (undef, undef, $v) = solve(model('DPV P12 100 RATIO 6 ON VALVE VIKING F-1', water => 'WATER W 0 1600'));
+    is('above its rated working pressure (175 psi): REJECTED, DPV_PRESSURE_RATING',
+       $v->{acceptance} eq 'REJECTED' && (codes($v)->{DPV_PRESSURE_RATING} // '') eq 'error', $v->{acceptance});
+    {
+        # Victaulic: a flow coefficient, dP psi = (Q gpm / Cv)^2, Cv 350 for
+        # the 768N DN100 (31.80).
+        my ($nv, $kv, $vv) = solve(model('DPV P12 100 RATIO 6 ON VALVE VICTAULIC 768N'));
+        my $gpm = dpv($nv)->{q} / 3.785411784;
+        is(sprintf('VICTAULIC 768N DN100: the loss is (Q/Cv)^2 at its flow (%.4f kPa)', loss($nv, dpv($nv))),
+           near(loss($nv, dpv($nv)), ($gpm / 350) ** 2 * 6.894757, 1e-6));
+        my $rv = HardyCross::Report::write_report($nv, $kv, 'v.phc');
+        is('   the report gives the Cv and its source', $rv =~ /flow\s+coefficient Cv 350/ && $rv =~ /31\.80/);
+        my $e756 = refused(model('DPV P12 100 RATIO 6 ON VALVE VICTAULIC 756'));
+        is('refused: the 756, whose sheet gives no usable loss, with the reason', $e756 =~ /NO USABLE LOSS.*NO CV/, $e756);
+    }
+    my $e = refused(model('DPV P12 100 RATIO 6 ON VALVE ACME X1'));
+    is('refused: a valve not in the database, the ones that are listed', $e =~ /IS NOT A DRY PIPE VALVE IN THE DATABASE \(.*TYCO DPV-1/, $e);
+    $e = refused(model('DPV P12 200 RATIO 6 ON VALVE VIKING F-1'));
+    is('refused: a size the valve does not come in, the sizes it does', $e =~ /IN DN80, DN100, DN150 ONLY, NOT DN200/, $e);
+    my $net = HardyCross::Phc::read_string(model('DPV P12 100 RATIO 5.5 ON VALVE TYCO DPV-1'));
+    my $k = HardyCross::solve_model($net);
+    my $rep = HardyCross::Report::write_report($net, $k, 'dpv.phc');
+    is('the report names the database valve, its basis and its source',
+       $rep =~ /the pipe and fitting database: TYCO DPV-1 DN100, 8\.9 ft of Schedule 40 pipe/ && $rep =~ /TFP1020/);
+}
+
+#==============================================================================
 print "4. THE OUTPUT\n";
 #==============================================================================
 {

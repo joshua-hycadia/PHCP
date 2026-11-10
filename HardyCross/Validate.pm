@@ -696,6 +696,33 @@ sub dpv_checks {
             unless $e->{host};
     } elsif ($basis eq 'CURVE') {
         loss_curve_checks($e, $q, $P, 'dry pipe valve', $uf, $fu);
+    } elsif ($basis eq 'DB' && (my $d = $e->{db})) {
+        # A valve from the database: checked against what its data sheet
+        # says of it.
+        my $pin = gauge($net, $e->{n1});
+        $P->(code => 'DPV_PRESSURE_RATING', item => $id, value => $pin / $up, limit => $d->{pmax_kpa} / $up, unit => $pu,
+             message => sprintf('dry pipe valve %s (%s %s): %.1f %s at its inlet, above its rated working pressure of '
+                              . '%.1f (%s)', $id, $d->{maker}, $d->{model}, $pin / $up, $pu, $d->{pmax_kpa} / $up, $d->{source}))
+            if defined $d->{pmax_kpa} && $pin > $d->{pmax_kpa} + 1e-6;
+        if (($e->{trip_mode} // '') eq 'RATIO' && defined $e->{trip_ratio}) {
+            if (uc($d->{trip} // '') eq 'LOW') {
+                $P->(code => 'DPV_RATIO_DB', severity => 'warning', item => $id, value => $e->{trip_ratio}, unit => 'ratio',
+                     message => "dry pipe valve $id: the $d->{maker} $d->{model} is a low-pressure valve, set by its air "
+                              . "pressure table, not a differential ratio ($d->{source})");
+            } elsif (defined $d->{trip_ratio} && abs($e->{trip_ratio} - $d->{trip_ratio}) > 0.25) {
+                $P->(code => 'DPV_RATIO_DB', severity => 'warning', item => $id, value => $e->{trip_ratio},
+                     limit => $d->{trip_ratio}, unit => 'ratio',
+                     message => sprintf('dry pipe valve %s: a trip ratio of %.2f:1 is given; the %s %s data sheet gives '
+                                      . 'about %g:1 (%s)', $id, $e->{trip_ratio}, $d->{maker}, $d->{model},
+                                        $d->{trip_ratio}, $d->{source}));
+            }
+        }
+        $P->(code => 'DPV_LEGACY', severity => 'warning', item => $id,
+             message => "dry pipe valve $id: the $d->{maker} $d->{model} is a legacy valve, no longer sold ($d->{source})")
+            if uc($d->{status} // '') eq 'LEGACY';
+        $P->(code => 'DPV_DATA_NOTE', severity => 'warning', item => $id,
+             message => "dry pipe valve $id ($d->{maker} $d->{model} DN$d->{dn}): $d->{note}")
+            if length($d->{note} // '') && $d->{note} ne 'DASH';
     }
     # The pressures either side: a dry pipe valve does not add pressure.
     my $dp = $net->{nodes}[ $e->{n1} ]{h} - $net->{nodes}[ $e->{n2} ]{h};

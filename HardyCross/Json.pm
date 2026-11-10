@@ -378,6 +378,12 @@ sub dpv_json {
             trip_pressure => defined $e->{trip_pressure} ? r4($e->{trip_pressure} / $up) : undef,
             accelerator => $e->{accelerator},
             loss_basis => $e->{loss}, equivalent_length => r4($e->{eql}),
+            database_valve => $e->{db} ? { maker => $e->{db}{maker}, model => $e->{db}{model}, dn => 0 + $e->{db}{dn},
+                                           reference_bore => r4($e->{ref_bore}),
+                                           reference_c => defined $e->{ref_c} ? 0 + $e->{ref_c} : undef,
+                                           cv => defined $e->{cv} ? 0 + $e->{cv} : undef,
+                                           published_trip => $e->{db}{trip}, rated_pressure => $e->{db}{pmax},
+                                           status => $e->{db}{status}, source => $e->{db}{source} } : undef,
             flow => r4($e->{q} / $uf), loss => r4($hf / $up),
             state => 'TRIPPED_OPEN',
             initial_air_pressure => defined $e->{transient}{air_initial} ? r4($e->{transient}{air_initial} / $up) : undef,
@@ -409,7 +415,8 @@ sub traceability {
         if grep { $_->{code} eq 'CURVE_EXTRAPOLATED' } @{ $va->{findings} };
     return {
         program => "PHCP $HardyCross::VERSION", version => $HardyCross::VERSION,
-        model_sha256 => defined $text ? Digest::SHA::sha256_hex($text) : undef,
+        # The model without any results block saved in it (HardyCross::Results).
+        model_sha256 => defined $text ? do { require HardyCross::Results; HardyCross::Results::fingerprint($text) } : undef,
         database => HardyCross::PipeData::path()
             ? { name => HardyCross::PipeData::dataset(), sha256 => HardyCross::PipeData::sha256() } : undef,
         method => $va->{solver}{method} eq 'DW' ? 'Darcy-Weisbach' : 'Hazen-Williams',

@@ -1680,6 +1680,13 @@ sub dry_pipe_valves {
                            : $basis eq 'EQL' ? sprintf('equivalent length %.2f m of pipe %s (bore %.1f mm, %s)', $e->{eql},
                                  $e->{host_id}, $e->{host} ? $e->{host}{dia} : 0,
                                  ($net->{opts}{method} // 'HW') eq 'DW' ? 'its roughness' : sprintf('C %g', $e->{host} ? $e->{host}{c} // 0 : 0))
+                           : $basis eq 'DB' && $e->{cv} ? sprintf('the pipe and fitting database: %s %s DN%d, flow '
+                                 . 'coefficient Cv %g (gpm at 1 psi, loss = (Q/Cv)^2) - %s', $e->{db}{maker},
+                                 $e->{db}{model}, $e->{db}{dn}, $e->{cv}, $e->{db}{source})
+                           : $basis eq 'DB' ? sprintf('the pipe and fitting database: %s %s DN%d, %s %s of %s pipe '
+                                 . '(bore %.2f mm) at C %g, by Hazen-Williams - %s', $e->{db}{maker}, $e->{db}{model},
+                                 $e->{db}{dn}, $e->{db}{eql}, lc $e->{db}{eql_unit}, uc($e->{db}{ref}) eq 'S40' ? 'Schedule 40'
+                                 : "$e->{db}{ref} bore", $e->{ref_bore}, $e->{ref_c}, $e->{db}{source})
                            : '*** NONE GIVEN - the calculation is rejected');
         $row->('Steady-state flow', sprintf('%.*f %s', qdp($net->{u_flow}), $e->{q} / $uf, $qu));
         $row->('Hydraulic loss', sprintf('%.*f %s', pdp($net->{u_pres}) + 1, $hf / $up, $pu));

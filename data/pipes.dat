@@ -8,7 +8,7 @@
 # Format: one record per line, fields separated by "|".  Lines starting with
 # "#" are comments.  A value of DASH means "no value published": the program
 # treats it as missing data and stops, never as zero.
-DATASET|Hycadia pipe and fitting database|28 October 2026
+DATASET|Hycadia pipe and fitting database|10 November 2026
 
 # PIPETYPE|code|name|standard|range|C|roughness_mm
 #
@@ -388,3 +388,86 @@ KPRIME|GLV|Globe valve, conventional, fully open|340|Approved if such a valve is
 KPRIME|AV|Angle valve, conventional, fully open|145|Approved if such a valve is specifically used
 KPRIME|BV|Butterfly valve, >8 in, fully open|40|Approved if such a valve is specifically used
 KPRIME|CV|Check valve, conventional swing|135|Approved if such a valve is specifically used
+
+# DRYVALVE|maker|model|DN|size_in|equivalent_length|unit|C|reference_bore|trip|rated_pressure|status|source|note
+#
+# Manufacturers' dry pipe valves, OPEN (tripped), for DPV ... VALVE <maker>
+# <model>.  Each loss is the equivalent length the data sheet prints, of the
+# reference pipe and at the C-factor it states, used exactly as printed: PHCP
+# works the loss by Hazen-Williams at that reference bore and C, so the loss
+# is the valve's own whatever pipe it is installed in.
+#   unit            FT or M, as printed
+#   reference_bore  S40: the Schedule 40 bore of that DN (the PIPE|S40
+#                   records); or a bore in inches the sheet itself states
+#   trip            the differential trip ratio the sheet gives (water to air,
+#                   approximate where it says so); LOW for a low-pressure
+#                   valve set by its air pressure table; DASH none published
+#   rated_pressure  the rated working pressure, as printed (PSI)
+#   status          CURRENT, or LEGACY: still published, no longer sold
+#   note            a conflict or gap in the data sheet, printed in the
+#                   report as a warning wherever the valve is used; DASH none
+# Sizes published only as metric OD variants (Reliable 76 mm, 165 mm) are not
+# entered: their reference pipe is not stated.  No trip or delivery time data
+# are entered: PHCP does not calculate either.  Read from the documents named,
+# 10 November 2026.
+DRYVALVE|TYCO|DPV-1|65|2-1/2|2.2|FT|100|S40|5.5|250PSI|CURRENT|Tyco TFP1020, January 2025|DASH
+DRYVALVE|TYCO|DPV-1|80|3|4.9|FT|100|S40|5.5|250PSI|CURRENT|Tyco TFP1020, January 2025|TFP1020 prints 4.9 ft but its own Graph A gives about 1.28 psi at 350 gpm, about 6.6 ft; the printed 4.9 ft is used - confirm with the manufacturer
+DRYVALVE|TYCO|DPV-1|100|4|8.9|FT|100|S40|5.5|250PSI|CURRENT|Tyco TFP1020, January 2025|DASH
+DRYVALVE|TYCO|DPV-1|150|6|22.0|FT|100|S40|5.5|250PSI|CURRENT|Tyco TFP1020, January 2025|DASH
+DRYVALVE|VIKING|VXR|65|2-1/2|11|FT|100|2.469IN|5.75|250PSI|CURRENT|Viking F_112220 Rev 01, January 2025; chart F_110525|F_112220 states a 2.489 in. bore but its loss table matches 2.469 in.; the smaller bore, the higher loss, is used. DN is not published: DN65 by inch size
+DRYVALVE|VIKING|VXR|80|3|14|FT|100|3.068IN|5.75|250PSI|CURRENT|Viking F_112220 Rev 01, January 2025; chart F_110425|DN is not published: DN80 by inch size
+DRYVALVE|VIKING|VXR|100|4|21|FT|100|4.029IN|5.75|250PSI|CURRENT|Viking F_112220 Rev 01, January 2025; chart F_110325|DN is not published: DN100 by inch size
+DRYVALVE|VIKING|VXR|150|6|29|FT|100|6.065IN|5.75|250PSI|CURRENT|Viking F_112220 Rev 01, January 2025; chart F_110225|DN is not published: DN150 by inch size
+DRYVALVE|VIKING|F-1|80|3|3|FT|120|3.068IN|6|175PSI|CURRENT|Viking F_070392 Rev 01, June 2023; chart F_061809|DASH
+DRYVALVE|VIKING|F-1|100|4|5|FT|120|4.026IN|6|175PSI|CURRENT|Viking F_070392 Rev 01, June 2023; chart F_061709|DASH
+DRYVALVE|VIKING|F-1|150|6|49|FT|120|6.065IN|6|175PSI|CURRENT|Viking F_070392 Rev 01, June 2023; chart F_061909|49 ft is as printed on the data sheet and chart, and far above the 3 and 4 in. sizes - confirm with the manufacturer
+DRYVALVE|VIKING|F-2|80|3|3|FT|120|3.068IN|6|175PSI|CURRENT|Viking F_011507 Rev 19.1; chart F_061809|DASH
+DRYVALVE|VIKING|F-2|100|4|5|FT|120|4.026IN|6|175PSI|CURRENT|Viking F_011507 Rev 19.1; chart F_061709|DASH
+DRYVALVE|VIKING|F-2|150|6|49|FT|120|6.065IN|6|175PSI|CURRENT|Viking F_011507 Rev 19.1; chart F_061909|49 ft is as printed on the data sheet and chart, and far above the 3 and 4 in. sizes - confirm with the manufacturer
+DRYVALVE|RELIABLE|DDX-LP|50|2|4.4|FT|120|S40|LOW|250PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|DDX-LP|65|2-1/2|6.0|FT|120|S40|LOW|250PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|DDX-LP|80|3|12.6|FT|120|S40|LOW|250PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|DDX-LP|100|4|14|FT|120|S40|LOW|300PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|DDX-LP|150|6|29.4|FT|120|S40|LOW|300PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|DDX-LP|200|8|53.5|FT|120|S40|LOW|250PSI|CURRENT|Reliable Bulletin 338, October 2026|DASH
+DRYVALVE|RELIABLE|EX|50|2|4.4|FT|120|S40|LOW|250PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|EX|65|2-1/2|6.0|FT|120|S40|LOW|250PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|EX|80|3|12.6|FT|120|S40|LOW|250PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|EX|100|4|14|FT|120|S40|LOW|300PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|EX|150|6|29.4|FT|120|S40|LOW|300PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|EX|200|8|53.5|FT|120|S40|LOW|250PSI|LEGACY|Reliable Bulletin 359, August 2025|Bulletin 359 does not state the pipe schedule; Schedule 40 is taken, as Bulletin 338 states for the same values
+DRYVALVE|RELIABLE|FX|50|2|10.0|FT|120|S40|6|250PSI|CURRENT|Reliable Bulletin 360, April 2026|DASH
+DRYVALVE|RELIABLE|FX|65|2-1/2|11.4|FT|120|S40|6|300PSI|CURRENT|Reliable Bulletin 360, April 2026|DASH
+DRYVALVE|RELIABLE|FX|80|3|13.2|FT|120|S40|6|300PSI|CURRENT|Reliable Bulletin 360, April 2026|DASH
+DRYVALVE|RELIABLE|FX|100|4|23.5|FT|120|S40|6|300PSI|CURRENT|Reliable Bulletin 360, April 2026|DASH
+DRYVALVE|RELIABLE|FX|150|6|37|FT|120|S40|6|300PSI|CURRENT|Reliable Bulletin 360, April 2026|DASH
+DRYVALVE|RELIABLE|D|100|4|28|FT|120|S40|6|175PSI|LEGACY|Reliable Bulletin 351, January 2023|Bulletin 351 does not state the pipe schedule; Schedule 40 is taken
+DRYVALVE|RELIABLE|D|150|6|47|FT|120|S40|6|175PSI|LEGACY|Reliable Bulletin 351, January 2023|Bulletin 351 does not state the pipe schedule; Schedule 40 is taken
+# Victaulic prints its dry valves' equivalent lengths as "equivalent feet of
+# straight pipe" with no pipe or C stated, so they cannot be worked; each
+# valve's published flow coefficient Cv (unit CV: gpm at a 1 psi loss,
+# dP = (Q/Cv)^2) is used instead, and the printed length is in the note.  The
+# 756 publishes no Cv: it is entered so a model naming it is refused with the
+# reason.  Low-differential valves (trip LOW): set by air pressure, 13 psi
+# minimum, not a ratio.
+DRYVALVE|VICTAULIC|768N|40|1-1/2|60|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 3 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768N|50|2|110|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 9 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768N|65|2-1/2|180|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 8 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768N|80|3|200|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 17 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768N|100|4|350|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 21 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768N|150|6|1000|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 22 ft of straight pipe, the pipe and C not stated; the Cv is used, and gives a higher loss than 22 ft of Schedule 40 at C 120 would
+DRYVALVE|VICTAULIC|768N|200|8|1500|CV|DASH|DASH|LOW|300PSI|CURRENT|Victaulic 31.80 Rev P, July 2024|31.80 also prints 50 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|40|1-1/2|60|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 3 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|50|2|110|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 9 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|65|2-1/2|180|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 8 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|80|3|200|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 17 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|100|4|350|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 21 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|150|6|1000|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 22 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|768|200|8|1500|CV|DASH|DASH|LOW|300PSI|LEGACY|Victaulic 30.80 Rev H, March 2021|30.80 is superseded by 31.80 (Series 768N); also prints 50 ft of straight pipe, the pipe and C not stated; the Cv is used
+DRYVALVE|VICTAULIC|756|40|1-1/2|3|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 3 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|50|2|9|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 9 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|65|2-1/2|8|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 8 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|80|3|17|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 17 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|100|4|21|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 21 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|150|6|22|FT|DASH|DASH|DASH|300PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 22 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work
+DRYVALVE|VICTAULIC|756|200|8|50|FT|DASH|DASH|DASH|225PSI|LEGACY|Victaulic 30.03 Rev H (discontinued)|30.03 prints 50 ft of straight pipe with no pipe or C, and no Cv: there is no loss PHCP can work

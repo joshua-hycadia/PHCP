@@ -39,7 +39,8 @@ perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand
 perl tools/test_manual.pl                # verify the .phc reference manual against the program
 perl tools/test_validate.pl              # verify hydraulic validation and the acceptance of a calculation
 perl tools/test_supplies.pl              # verify several water supplies: operating, conditional, joint, scenarios
-perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand
+perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand and the database valves
+perl tools/test_results.pl               # verify the results saved back into the .phc
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -958,6 +959,7 @@ now (see below).
 phcp.exe --json model.phc                     results as JSON on standard output
 phcp.exe --json -                             the model read from standard input
 phcp.exe --json model.phc --report out.pdf    ...and the report written too
+phcp.exe --save model.phc                     the results saved back into model.phc (see Results saved in the model)
 phcp.exe model.phc --annotate out.phc         with auto sizing: the model with each size as //AS - <size>
 ```
 
@@ -1276,6 +1278,33 @@ every example against flows and pressures frozen before, and
 `tools/test_phc.pl` against the baselines.  `tools/test_validate.pl` holds
 each defect found as a model that must now be refused.
 
+## Results saved in the model
+
+The results of a solve are kept in the `.phc` itself, not in a file beside
+it (`HardyCross/Results.pm`).  `phcp.exe --save model.phc`, and SAVE in the
+editor after CALCULATE, write them as a block of comment lines at the end
+of the model:
+
+```
+//== PHCP RESULTS - PHCP 1.4.0, 2026-11-10 05:19 UTC.  Replaced on every solve: ...
+//= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS
+//= MODEL    SHA256 05b9e70f...
+//= PIPE     PA1 FROM PA TO H FLOW 2784.9699 VELOCITY 1.477 LOSS 0.2530
+//= NODE     PA ELEVATION 0.000 PRESSURE 639.1367
+//= OUTLET   S1 TYPE SPRINKLER FLOW ... PASS YES
+//== END PHCP RESULTS
+```
+
+Each `//=` line is a record: what it is, then NAME VALUE pairs, in the
+model's own units.  Being comments, the block changes nothing: the model
+solves to the same figures with it, and the editor does not show it.  A new
+solve replaces it.  MODEL is the SHA-256 of the model without the block, so
+results that no longer belong to the model above them can be told; PHCP
+never saves a stale block (the editor saves without one when the last
+calculation was of other text).  `--json` stays, printed to standard
+output for the programs that call PHCP; no JSON file is written.
+`tools/test_results.pl` checks it.
+
 ## Several water supplies
 
 With more than one supply, Section 12 of the report and the JSON's
@@ -1310,9 +1339,24 @@ are in the solve and in Section 13 of the report.  The trip setting
 and `DPVAIR` are recorded for a later water delivery time calculation; PHCP
 calculates no trip, transit or delivery time and does not imply one.  A
 valve with no loss data is refused - no loss is ever assumed for it.  The
-loss model has been checked by hand (`tools/test_dpv.pl`); no
-manufacturer's valve data is included, and no transient behaviour is
+loss model has been checked by hand (`tools/test_dpv.pl`), and no transient behaviour is
 modelled.
+
+`VALVE <MAKER> <MODEL>` in place of the loss takes a manufacturer's valve
+from the database: `DPV P12 100 RATIO 5.5:1 ON VALVE TYCO DPV-1`.  The
+`DRYVALVE` records in `data/pipes.dat` hold the current and legacy dry
+pipe valves of Reliable, Tyco, Viking and Victaulic, each size with the
+equivalent length its data sheet prints, the reference pipe and C it
+states, its trip ratio, rated working pressure and the document it came
+from (read 10 November 2026).  PHCP works the loss at that reference pipe,
+so it is the valve's own whatever pipe it sits in; `tools/test_dpv.pl`
+checks it against figures printed on the sheets.  Victaulic prints its
+lengths with no reference pipe or C, so its published flow coefficient Cv
+(loss = (Q/Cv)^2) is used instead; the discontinued Victaulic 756 gives
+neither, and a model naming it is refused with that reason.  Where a sheet
+contradicts itself the note on the record says so, and the report prints
+it wherever that valve is used.  Accelerator trip times are not entered:
+PHCP does not calculate trip or delivery time.
 
 ## The report
 
@@ -1349,7 +1393,8 @@ others on the page, and the report says which check to make.
 | velocity pressure: hand-checked range, OFF against the earlier solver, ON against OFF (`tools/test_velocity_pressure.pl`) | 85 / 85 |
 | hydraulic validation: the examples, each defect found as a model now refused, outer-loop settling, tampering caught, design checks, exit status, report / JSON / editor agreement (`tools/test_validate.pl`) | 58 / 58 |
 | several supplies: operating, one supply against the demand point, conditional, joint (DERATE and SCALE), scenarios, report and JSON (`tools/test_supplies.pl`) | 43 / 43 |
-| dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), validation, report and JSON (`tools/test_dpv.pl`) | 36 / 36 |
+| dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), the database valves against figures printed on their data sheets, validation, report and JSON (`tools/test_dpv.pl`) | 52 / 52 |
+| results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |

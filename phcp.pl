@@ -15,6 +15,10 @@
 #   phcp.pl --json -                   ...the model read from standard input
 #   phcp.pl --json model.phc --report out.pdf
 #                                      ...and the report written as well
+#   phcp.pl model.phc --save           ...and save the results back into
+#                                      model.phc, a block of comments at its
+#                                      end (HardyCross::Results); an earlier
+#                                      block is replaced, the model untouched
 #   phcp.pl model.phc --annotate out.phc
 #                                      pipes given size 0 are sized (auto
 #                                      sizing); out.phc is the model with
@@ -58,11 +62,12 @@ use HardyCross;
 use HardyCross::Parse;
 use HardyCross::Report;
 
-my $USAGE = "usage: phcp.pl [--json] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
-my ($json, $model, $report_path, $annotate) = (0, undef, undef, undef);
+my $USAGE = "usage: phcp.pl [--json] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n";
+my ($json, $model, $report_path, $annotate, $save) = (0, undef, undef, undef, 0);
 while (@ARGV) {
     my $a = shift @ARGV;
     if    ($a eq '--json')   { $json = 1 }
+    elsif ($a eq '--save')   { $save = 1 }
     elsif ($a eq '--report') { $report_path = shift @ARGV // die $USAGE }
     elsif ($a eq '--annotate') { $annotate = shift @ARGV // die $USAGE }
     elsif (!defined $model)  { $model = $a }
@@ -129,6 +134,18 @@ if (defined $report_path) {
 
 require HardyCross::Json;
 require HardyCross::Validate;
+# --save: the results back into the model file, as comments at its end.  The
+# model text written is the one read, so nothing in the model itself changes.
+if ($save) {
+    die "--save needs a model file, not standard input\n" if $model eq '-';
+    require HardyCross::Results;
+    my $text = do { open my $in, '<', $model or die "cannot read $model: $!\n"; local $/; <$in> };
+    $text =~ s/\r\n/\n/g;
+    open my $out, '>', $model or die "cannot write $model: $!\n";
+    binmode $out;
+    print $out HardyCross::Results::with_results($text, $net, $ok);
+    close $out;
+}
 if ($json) {
     my $j = HardyCross::Json::results($net, $ok, $model);
     print HardyCross::Json::encode($j);

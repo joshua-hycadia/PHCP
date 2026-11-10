@@ -425,6 +425,25 @@ sub elem_hf {
             return ($sg * curve_eval($e->{curve}, $aq),
                     abs curve_slope($e->{curve}, $aq));
         }
+        if ($basis eq 'DB' && $e->{cv}) {
+            # A flow coefficient: dP psi = (Q gpm / Cv)^2, the data sheet's
+            # own definition, in the engine's L/min and kPa.
+            my $kq = 6.894757 / ($e->{cv} * 3.785411784) ** 2;
+            my $dh = 2 * $kq * ($aq > $Q_TINY ? $aq : $Q_TINY);
+            return ($sg * $kq * $aq ** 2, $dh);
+        }
+        if ($basis eq 'DB') {
+            # A valve from the database: its published equivalent length of
+            # its published reference pipe (bore and C), by Hazen-Williams in
+            # the AS 2118.1 metric form -- the basis the data sheets state.
+            # The loss is the valve's own, whatever pipe it is installed in,
+            # and whichever friction formula the network is solved by.
+            my $l = $e->{eql};
+            my $hf = $aq > 0 ? $HWK_DEF * $l * $aq ** 1.85 / ($e->{ref_c} ** 1.85 * $e->{ref_bore} ** 4.87) : 0;
+            my $dh = $aq > $Q_TINY ? 1.85 * $hf / $aq
+                   : 1.85 * $HWK_DEF * $l * $Q_TINY ** 0.85 / ($e->{ref_c} ** 1.85 * $e->{ref_bore} ** 4.87);
+            return ($sg * $hf, $dh);
+        }
         if ($basis eq 'EQL' && $e->{host}) {
             # The equivalent length as a pipe of its own, built once from the
             # host pipe's data.  No fittings and no K: the length IS the

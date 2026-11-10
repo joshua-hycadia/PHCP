@@ -428,8 +428,14 @@ sub analyse {
         }
     } elsif ($rest eq 'dpvloss') {
         # A dry pipe valve's loss: nothing (refused when the model is
-        # validated, never assumed), EQL and one length, or flow/loss pairs.
-        if (@f && uc $f[0] eq 'EQL') {
+        # validated, never assumed), EQL and one length, VALVE and a make and
+        # model from the database, or flow/loss pairs.
+        if (@f && uc $f[0] eq 'VALVE') {
+            return $more->('THE MAKER AND MODEL, FROM THE DATABASE') if @f == 1;
+            return $more->('THE MODEL') if @f == 2;
+            return $bad->("UNEXPECTED FIELD '%s' AFTER THE MODEL", $f[3]) if @f > 3;
+            $a{rest} = [ 'VALVE', uc $f[1], uc $f[2] ];
+        } elsif (@f && uc $f[0] eq 'EQL') {
             return $more->('THE EQUIVALENT LENGTH') if @f == 1;
             return $bad->("UNEXPECTED FIELD '%s' AFTER THE EQUIVALENT LENGTH", $f[2]) if @f > 2;
             my $m = length_metres($f[1], 'M');
@@ -1142,7 +1148,19 @@ sub device_row {
         my @row = ($id, $s, $x, 'DPV', "SIZE=$dn", "MODE=$mode",
                    ($mode eq 'RATIO' ? 'RATIO=' . fmt(ratio_value($set)) : "TRIP=$set"),
                    "ACC=$acc", "HOST=$pname");
-        if (@r && $r[0] eq 'EQL') {
+        if (@r && $r[0] eq 'VALVE') {
+            # A valve from the database: found by make, model and this DN.
+            HardyCross::Parse::ensure_db();
+            unless (HardyCross::PipeData::dry_valve($r[1], $r[2], $dn)) {
+                my @have = grep { $_->[0] eq $r[1] && $_->[1] eq $r[2] } HardyCross::PipeData::dry_valve_models();
+                $at->($n, @have ? 'DPV %s: THE DATABASE HAS %s %s IN DN%s ONLY, NOT DN%d'
+                                : 'DPV %s: %s %s IS NOT A DRY PIPE VALVE IN THE DATABASE (%s)',
+                      $pname, $r[1], $r[2],
+                      @have ? (join(', DN', @{ $have[0][2] }), $dn)
+                            : join(', ', map { "$_->[0] $_->[1]" } HardyCross::PipeData::dry_valve_models()));
+            }
+            push @row, "VALVE=$r[1]/$r[2]";
+        } elsif (@r && $r[0] eq 'EQL') {
             push @row, 'EQL=' . fmt(length_metres($r[1], $units->{LENGTH}));
         } elsif (@r) {
             # A single pair at flow zero is a loss that does not vary with

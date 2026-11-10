@@ -691,6 +691,11 @@ sub load_file {
     my $text = do { local $/; <$fh> };
     close $fh;
     $text =~ s/\r\n/\n/g;
+    # The results block a solve saved at the end of the file
+    # (HardyCross::Results) is not part of the model: it is left out of the
+    # editor, and written again, fresh, when a calculated model is saved.
+    require HardyCross::Results;
+    $text = HardyCross::Results::strip($text);
     return { text => $text, path => $path };
 }
 

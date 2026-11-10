@@ -629,7 +629,24 @@ sub parse_row {
                      : ();
             my @pts = grep { !/=/ } @$tk[4 .. $#$tk];
             my ($loss, %data) = ('NONE');
-            if (defined kv($tk, 'EQL')) {
+            if (defined(my $vk = kv_text($tk, 'VALVE'))) {
+                # A manufacturer's valve from the database: its published
+                # equivalent length of its published reference pipe and C,
+                # worked by Hazen-Williams (HardyCross::elem_hf, loss DB).
+                ensure_db();
+                my ($mk, $md) = split m{/}, $vk, 2;
+                my $v = HardyCross::PipeData::dry_valve($mk, $md, int(kv($tk, 'SIZE') // 0))
+                    or HardyCross::fail("DPV %s: %s is not in the database in this size", $tk->[0], $vk);
+                # Usable only with a complete loss: a flow coefficient, or a
+                # length with the bore and C it is of.  A data sheet that
+                # prints a length of no stated pipe gives nothing to work at.
+                HardyCross::fail("DPV %s: the database has no usable loss for %s %s DN%s%s", $tk->[0], $mk, $md, $v->{dn},
+                                 length($v->{note}) && $v->{note} ne 'DASH' ? " - $v->{note}" : '')
+                    unless $v->{cv} || (defined $v->{eql_m} && $v->{bore_mm} && $v->{c});
+                ($loss, %data) = ('DB', ($v->{cv} ? (cv => $v->{cv})
+                                                  : (eql => $v->{eql_m}, ref_bore => $v->{bore_mm}, ref_c => $v->{c})),
+                                  db => $v, db_model => "$v->{maker} $v->{model}");
+            } elsif (defined kv($tk, 'EQL')) {
                 ($loss, %data) = ('EQL', eql => kv($tk, 'EQL') * $net->{f_len});
             } elsif (defined kv($tk, 'FIXED')) {
                 my $f = kv($tk, 'FIXED') * $net->{f_pres};
