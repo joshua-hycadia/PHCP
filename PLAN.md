@@ -519,6 +519,7 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] Results saved back into the `.phc` (`--save`, editor SAVE after CALCULATE; `HardyCross/Results.pm`, `tools/test_results.pl`)
 - [x] v1.4.0 - release notes `release_notes/v1.4.0.md`
 - [x] v1.5.0 - release notes `release_notes/v1.5.0.md`
+- [x] v1.6.0 - release notes `release_notes/v1.6.0.md`
 - [x] Audit of 11 November 2026, acceptance hardening (`tools/test_acceptance.pl`, `tools/test_impossible.pl`): HW_CONST and C ranges; solver tolerances apart from fixed verification limits; CLOSED_FLOW; every demand-search trial validated, UNRESOLVED apart from INADEQUATE, SUPPLY_DEMAND_UNRESOLVED; joint demand signed balance; ORIF_DP_TOL; CURVE_EXTRAPOLATION_LIMIT; DPV loss source, DATA_REQUIRED, constant loss and loss at no flow; JSON `approved`, `demand_assessment`, `assumptions`, `verification`; `--strict` (exit 4); results block CHECK, TAMPERED, NOT FOR DESIGN USE; Revit `approved`
 - [x] Independent benchmarks: element equations against their published forms, six networks against a nodal Newton solve (`tools/test_benchmarks.pl`)
 - [x] A non-return valve at a water supply (`NRV`, `NRVMODEL`): a supply that would take water in shuts and is taken out of the network, reopens when its pressure would lift the valve, and a part of the network left with no supply is LOSS OF SUPPLY (SUPPLY_ISOLATED, NONCOMPLIANT); in every demand search; report Section 10 and JSON `supply_check_valves` (`tools/test_check_valves.pl`, two cases in `tools/test_benchmarks.pl`)

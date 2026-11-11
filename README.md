@@ -4,16 +4,13 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.5.0 (`release_notes/v1.5.0.md`): ESTIMATED trip,
-transit and delivery times for a dry pipe valve, from `DPVAIR` and the new
-`DPVTRIP` - the trip time by the FM Global formula published in the SFPE
-Handbook, the transit a rudimentary lower bound that ignores the air.  No
-steady-state result changed since 1.4.0.
-
-Since 1.5.0, on `main` and not yet released: check valves at water supplies
-(`NRV`, `NRVMODEL`, `NRVLOSS`) with LOSS OF SUPPLY reported as NONCOMPLIANT, two
-corrections for a gravity tank at 0 kPa, `--strict`, and the independent
-benchmarks (see Hydraulic validation).
+The latest release is 1.6.0 (`release_notes/v1.6.0.md`): check valves at
+water supplies (`NRV`, `NRVMODEL`, `NRVLOSS`) with LOSS OF SUPPLY reported
+as NONCOMPLIANT; the acceptance hardening of the audit of 11 November 2026,
+with `--strict`; two corrections for a gravity tank at 0 kPa; the
+independent benchmarks and impossible models; and the user guide, as PDF
+and Word.  No solved result of a valid model without an `NRV` line
+changed, apart from the gravity tank.
 
 **New to PHCP?  Start with the User Guide**,
 [docs/PHCP_User_Guide.pdf](docs/PHCP_User_Guide.pdf) (also as
@@ -68,7 +65,7 @@ perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
 perl tools/doc_screenshots.pl            # retake the User Guide's pictures (Tk, ImageMagick; xvfb-run if no display)
-python tools/build_docs.py               # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF)
+python tools/build_docs.py               # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,
@@ -1468,9 +1465,9 @@ editor after CALCULATE, write them as a block of comment lines at the end
 of the model:
 
 ```
-//== PHCP RESULTS - PHCP 1.5.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
+//== PHCP RESULTS - PHCP 1.6.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
 //= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS DEMAND DEMONSTRATED APPROVED YES
-//= PROGRAM  PHCP VERSION 1.5.0
+//= PROGRAM  PHCP VERSION 1.6.0
 //= MODEL    SHA256 05b9e70f...
 //= PIPE     PA1 FROM PA TO H FLOW 2784.9699 VELOCITY 1.477 LOSS 0.2530
 //= NODE     PA ELEVATION 0.000 PRESSURE 639.1367
