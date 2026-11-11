@@ -1,0 +1,86 @@
+# PHCP against the other calculation programs, run again on this commit.
+#
+# Run by hand (Actions > comparison > Run workflow), or by pushing a branch
+# named comparison-run/<anything>; never on an ordinary push or pull request:
+# it is 900 models and several runner-hours.
+#
+#   rerun     16 runners, four models at a time on each: PHCP re-solves every
+#             model of comparison/models, models_A and models_B
+#             (comparison/tools/rerun_phcp.py)
+#   compare   the shards joined; PHCP against its stored 1.0.0 results
+#             (tools/compare_versions.py, versions.md), then against the five
+#             other programs' stored results (tools/compare.py, results.csv,
+#             summary.md and the plots for each suite); kept as the
+#             comparison-results artefact
+#
+# The other programs are not run here: their results are what they gave on
+# 4 November 2026 (comparison/README.md).  Only PHCP has changed since.
+
+name: comparison
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['comparison-run/**']
+
+permissions:
+  contents: read
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Re-solve this shard's models, four at a time
+        working-directory: comparison
+        run: |
+          for k in 0 1 2 3; do
+            python3 tools/rerun_phcp.py --shard $(( ${{ matrix.shard }} * 4 + k ))/64 --timeout 18000 \
+              > rerun_$k.log 2>&1 &
+          done
+          wait
+          cat rerun_*.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rerun-${{ matrix.shard }}
+          path: comparison/rerun/
+
+  compare:
+    needs: rerun
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rerun-*
+          path: comparison/rerun
+          merge-multiple: true
+      - name: Join the shards; PHCP against PHCP 1.0.0
+        working-directory: comparison
+        run: |
+          python3 tools/rerun_phcp.py --merge R A B
+          python3 tools/compare_versions.py
+      - name: Against the other programs
+        working-directory: comparison
+        run: |
+          pip install matplotlib
+          cp rerun/R/phcp.jsonl.gz results/phcp.jsonl.gz
+          cp rerun/A/phcp.jsonl.gz results_A/phcp.jsonl.gz
+          cp rerun/B/phcp.jsonl.gz results_B/phcp.jsonl.gz
+          python3 tools/compare.py
+          python3 tools/compare.py A
+          python3 tools/compare.py B
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparison-results
+          path: |
+            comparison/rerun/versions.md
+            comparison/results/
+            comparison/results_A/
+            comparison/results_B/
