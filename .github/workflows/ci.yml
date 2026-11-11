@@ -11,8 +11,9 @@
 #                   including the Revit extension; the programs are kept as
 #                   the run's artefacts
 #   release         on a version tag (v1.2.3) or a release published on
-#                   GitHub: the programs attached to the release, with the
-#                   notes in release_notes/<tag>.md if there are any
+#                   GitHub: the programs, the user guide and the reference
+#                   manual (docs/*.docx, docs/*.pdf) attached to the release,
+#                   with the notes in release_notes/<tag>.md if there are any
 #
 # Runs on every pull request and every push to main.
 
@@ -65,6 +66,13 @@ jobs:
         with:
           name: user-guide-screenshots
           path: screenshots/*.png
+      # The Word documents are built from the Markdown here, so a broken
+      # table or a missing picture fails the run.  The .docx and .pdf in
+      # docs/ are built on a PC with Word (tools/build_docs.py) and committed.
+      - name: The user guide and reference manual as Word documents
+        run: |
+          pip install python-docx
+          python3 tools/build_docs.py --no-pdf
 
   build-windows:
     runs-on: windows-latest
@@ -154,6 +162,9 @@ jobs:
           [ -f phcp_editor.exe ] && files="$files phcp_editor.exe"
           [ -f phcp_sheet.exe ] && files="$files phcp_sheet.exe"
           [ -f phcp_isometric.exe ] && files="$files phcp_isometric.exe"
+          for d in docs/PHCP_User_Guide docs/PHCP_Reference_Manual; do
+            for x in docx pdf; do [ -f "$d.$x" ] && files="$files $d.$x"; done
+          done
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           elif [ -f "release_notes/$TAG.md" ]; then

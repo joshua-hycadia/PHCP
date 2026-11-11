@@ -3,9 +3,8 @@
 This guide is for a designer using PHCP to calculate a sprinkler, hydrant or
 hose reel system.  It walks through the three windows, a first calculation,
 and how to read the result.  Every command of the model language is in the
-reference manual, [PHC_REFERENCE.md](PHC_REFERENCE.md).  How the program
-works, how it is tested and what it does not do are in the
-[README](../README.md).
+PHCP Reference Manual.  How the program works, how it is tested and what it
+does not do are in the README on GitHub.
 
 The pictures are taken from the programs themselves by
 `tools/doc_screenshots.pl`, which CI runs on every pull request.  Each one

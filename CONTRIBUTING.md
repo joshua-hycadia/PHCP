@@ -67,6 +67,10 @@ A stale README is a defect.
   `tools/doc_screenshots.pl`.  When a window changes, take them again: CI's
   Linux job keeps a fresh set as the `user-guide-screenshots` artefact on
   every run, so copy those into `docs/images/` rather than taking them by hand.
+- The guide and the reference manual are published as Word and PDF
+  (`docs/PHCP_User_Guide.*`, `docs/PHCP_Reference_Manual.*`).  Edit the
+  Markdown, never the .docx, and rebuild both with `python tools/build_docs.py`
+  in the same commit: on a PC with Word for the best PDF, or LibreOffice.
 
 ### Style
 
