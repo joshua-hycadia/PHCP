@@ -10,6 +10,21 @@ transit and delivery times for a dry pipe valve, from `DPVAIR` and the new
 Handbook, the transit a rudimentary lower bound that ignores the air.  No
 steady-state result changed since 1.4.0.
 
+Since 1.5.0, on `main` and not yet released: check valves at water supplies
+(`NRV`, `NRVMODEL`) with LOSS OF SUPPLY reported as NONCOMPLIANT, two
+corrections for a gravity tank at 0 kPa, `--strict`, and the independent
+benchmarks (see Hydraulic validation).
+
+**New to PHCP?  Start with the User Guide**,
+[docs/PHCP_User_Guide.pdf](docs/PHCP_User_Guide.pdf) (also as
+[Word](docs/PHCP_User_Guide.docx)): the three windows with pictures, a first
+calculation, and how to read the result.  Every `.phc` command is in the
+Reference Manual, [docs/PHCP_Reference_Manual.pdf](docs/PHCP_Reference_Manual.pdf)
+(also as [Word](docs/PHCP_Reference_Manual.docx)).  Both are attached to each
+release.  They are built from `docs/USER_GUIDE.md` and `docs/PHC_REFERENCE.md`,
+which are the text that is edited and checked (`tools/test_manual.pl` holds
+the reference manual to the program).
+
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a
 spreadsheet and an isometric drawing - and a monospace ASCII calculation
@@ -52,6 +67,8 @@ perl tools/test_nrv_refinements.pl       # verify manufacturer curves, recovery,
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
+perl tools/doc_screenshots.pl            # retake the User Guide's pictures (Tk, ImageMagick; xvfb-run if no display)
+python tools/build_docs.py               # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF)
 ```
 
 One model file type: `.phc`, the command language described below.  `phcp.pl`,

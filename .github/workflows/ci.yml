@@ -2,7 +2,8 @@
 #
 #   test-linux      every test suite, including the Revit extension without
 #                   Revit, and the editor, spreadsheet and isometric windows
-#                   under a virtual display
+#                   under a virtual display; then the user guide's pictures
+#                   (tools/doc_screenshots.pl), kept as the run's artefact
 #   build-windows   build_windows.bat on a Windows runner, exactly as on a PC:
 #                   phcp.exe, phcp_editor.exe, phcp_sheet.exe and
 #                   phcp_isometric.exe, the smoke test, the icon read back out
@@ -10,8 +11,9 @@
 #                   including the Revit extension; the programs are kept as
 #                   the run's artefacts
 #   release         on a version tag (v1.2.3) or a release published on
-#                   GitHub: the programs attached to the release, with the
-#                   notes in release_notes/<tag>.md if there are any
+#                   GitHub: the programs, the user guide and the reference
+#                   manual (docs/*.docx, docs/*.pdf) attached to the release,
+#                   with the notes in release_notes/<tag>.md if there are any
 #
 # Runs on every pull request and every push to main.
 
@@ -37,7 +39,7 @@ jobs:
       - name: Perl/Tk and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y perl-tk xvfb xauth
+          sudo apt-get install -y perl-tk xvfb xauth imagemagick
       - name: Test suites
         run: |
           set -e
@@ -57,6 +59,20 @@ jobs:
         run: perl tools/test_isometric_window.pl
       - name: Invariance stress, 60 random networks
         run: perl tools/stress_invariance.pl 60
+      - name: The user guide's pictures, under Xvfb
+        run: perl tools/doc_screenshots.pl screenshots
+      - name: Keep the pictures
+        uses: actions/upload-artifact@v4
+        with:
+          name: user-guide-screenshots
+          path: screenshots/*.png
+      # The Word documents are built from the Markdown here, so a broken
+      # table or a missing picture fails the run.  The .docx and .pdf in
+      # docs/ are built on a PC with Word (tools/build_docs.py) and committed.
+      - name: The user guide and reference manual as Word documents
+        run: |
+          pip install python-docx
+          python3 tools/build_docs.py --no-pdf
 
   build-windows:
     runs-on: windows-latest
@@ -146,6 +162,9 @@ jobs:
           [ -f phcp_editor.exe ] && files="$files phcp_editor.exe"
           [ -f phcp_sheet.exe ] && files="$files phcp_sheet.exe"
           [ -f phcp_isometric.exe ] && files="$files phcp_isometric.exe"
+          for d in docs/PHCP_User_Guide docs/PHCP_Reference_Manual; do
+            for x in docx pdf; do [ -f "$d.$x" ] && files="$files $d.$x"; done
+          done
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           elif [ -f "release_notes/$TAG.md" ]; then

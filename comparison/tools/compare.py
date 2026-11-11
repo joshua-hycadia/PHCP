@@ -41,6 +41,11 @@ def load():
             for line in f:
                 r = json.loads(line)
                 res[e][r["model"]] = r
+    # PHCP's label is the version that produced its results (the stored run is
+    # 1.0.0; tools/rerun_phcp.py records the version it ran)
+    progs = {r["program"] for r in res[REF].values() if r.get("program")}
+    if len(progs) == 1:
+        LABEL[REF] = progs.pop()
     return models, res
 
 
