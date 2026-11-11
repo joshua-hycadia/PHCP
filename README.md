@@ -63,6 +63,7 @@ perl tools/test_acceptance.pl            # verify the false positives found in t
 perl tools/test_benchmarks.pl            # verify PHCP against reference values it did not compute (published forms, nodal Newton)
 perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
 perl tools/test_check_valves.pl          # verify supply check valves (NRV): closing, reopening, loss of supply, demand searches
+perl tools/test_nrv_refinements.pl       # verify manufacturer curves, recovery, pump switching and saved valve states
 perl tools/stress_resolver.pl            # fuzz the fitting resolver
 perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
 python3 tools/test_revit.py              # the Revit extension, without Revit
@@ -1399,7 +1400,9 @@ is solved again whenever any valve changes.  An open valve whose supply would
 take water in shuts, and the supply is taken out of the network.  A shut
 valve reopens when the supply's no-flow head exceeds the network at its
 connection by more than the valve's opening pressure.  Open, the valve's loss
-is its opening pressure plus its data sheet Cv loss, (Q gpm / Cv)^2 psi.
+is its opening pressure plus its data sheet Cv loss, (Q gpm / Cv)^2 psi,
+or a traceable NRVLOSS manufacturer flow/loss curve. Curves must be sourced
+through NRVMODEL; no manufacturer figures are invented.
 
 A valve is never held open to keep the network connected.  If every supply
 that could feed part of the network has shut, that part has LOST ITS SUPPLY.
@@ -1408,7 +1411,12 @@ result is NONCOMPLIANT (SUPPLY_ISOLATED).  It is not a numerical failure and
 not a pass, and it applies to a single supply as much as to several.  A valve
 that does not settle within 8 changes, and is still in the wrong state, makes
 the result INDETERMINATE (SUPPLY_CHECK_UNRESOLVED).  Validation re-checks a
-shut valve against the final heads (SUPPLY_CHECK_INCONSISTENT).
+shut valve against the final heads (SUPPLY_CHECK_INCONSISTENT). A previously
+isolated section can be retried with a bounded reopening trial if its
+supply's local no-flow head permits opening, without forcing an invalid pass.
+The trial is one per solve: a model solved again after a supply's pressure
+changed gets a trial of its own, so a section cut off once is not cut off for
+good.
 
 Every demand search re-solves the model as written, so the valves operate in
 the demand point, the conditional minima, the joint demand and the scenarios.

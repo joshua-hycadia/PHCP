@@ -499,7 +499,13 @@ sub check_valve_loss {
     my $sg = ($q < 0 && $aq >= $Q_TINY) ? -1 : 1;
     my $loss = $v->{crack} // 0;
     my $dh = 0;
-    if (($v->{cv} // 0) > 0) {
+    if (my $c = $v->{curve}) {
+        # Published open-valve losses, interpolated through the actual
+        # points on PHCP's established Q^1.85 curve scale.  No generic Cv
+        # is added on top, and the distinct opening pressure stays on NRV.
+        $loss += $sg * curve_eval($c, $aq);
+        $dh = abs curve_slope($c, $aq);
+    } elsif (($v->{cv} // 0) > 0) {
         my $kq = $KPA_PER_LPM2 / $v->{cv} ** 2;
         $loss += $sg * $kq * $aq ** 2;
         $dh = 2 * $kq * ($aq > $Q_TINY ? $aq : $Q_TINY);
@@ -1019,7 +1025,15 @@ sub pump_status {
         # HardyCross::Validate rather than taken as settled: the limit stops
         # the outer loop cycling, it does not make the state right.
         if (($e->{nflips} // 0) > $MAX_FLIP) {
-            $e->{flip_limit} = 1 unless $e->{isolating};
+            # Reaching the switch cap is not itself a failure.  Only a pump
+            # whose final pressures still call for a different state is
+            # unresolved.  This matches the established supply-NRV rule and
+            # avoids rejecting a physically settled pump for its history.
+            my $wrong = !$e->{closed} ? ($e->{q} < -$Q_TINY)
+                      : (($net->{nodes}[ $e->{n2} ]{h} - $net->{nodes}[ $e->{n1} ]{h})
+                          < curve_eval($e->{curve}, 0) - $Q_TINY);
+            if ($wrong && !$e->{isolating}) { $e->{flip_limit} = 1 }
+            else                           { delete $e->{flip_limit} }
             next;
         }
 
@@ -1136,6 +1150,33 @@ sub supply_head0 {
 sub supply_status {
     my $net = shift;
     my $changed = 0;
+
+    # Reconsider a supply which was closed and then isolated.  Isolation is
+    # normally sticky: a cut-off island has no solved network head on which
+    # the ordinary reopening test can operate.  If its source has acquired
+    # enough no-flow pressure to overcome its own opening pressure, make ONE
+    # controlled trial of that island instead of treating its old state as
+    # permanent.  If it closes again, the trial flag prevents a fabricated
+    # perpetual reopen/close cycle.  A fresh solve may retry after inputs
+    # are changed, but a failed trial is never called ACCEPTED.
+    my @retry = grep {
+        $_->{nrv} && $_->{isolated} && $_->{check_closed}
+            && !$_->{out_of_service} && !$_->{isolation_retry}
+            && supply_head0($_) - $GAMMA_W * $net->{nodes}[ $_->{n2} ]{z}
+                   > $_->{nrv}{crack} + $NRV_P_TINY
+    } @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
+    if (@retry) {
+        clear_isolation($net);
+        for my $e (@retry) {
+            @{$e}{qw(closed check_closed isolation_retry)} = (0, 0, 1);
+            $e->{nflips}++;
+        }
+        isolate_unsupplied($net);
+        build_tree($net);
+        build_loops($net);
+        init_flows($net);
+        return 1;
+    }
     for my $e (grep { $_->{nrv} } @{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
         next unless $e->{kind} =~ /^SUPPLY_/;
         delete $e->{flip_limit};
@@ -1168,6 +1209,30 @@ sub supply_status {
     build_loops($net);
     init_flows($net);
     return 1;
+}
+
+#------------------------------------------------------------------------------
+# clear_isolation -- restore the pre-isolation topology for a bounded trial.
+# Save the original closed states when isolating, otherwise an AREA-disabled
+# outlet or an already-shut valve could be spuriously opened.  The subsequent
+# reachability pass immediately cuts off any still-unsupplied components.
+#------------------------------------------------------------------------------
+sub clear_isolation {
+    my $net = shift;
+    for my $n (@{ $net->{nodes} }[1 .. $#{ $net->{nodes} }]) {
+        next unless delete $n->{isolated};
+        $n->{demand} = delete $n->{demand_isolated} if exists $n->{demand_isolated};
+    }
+    for my $e (@{ $net->{elems} }[1 .. $#{ $net->{elems} }]) {
+        next unless delete $e->{isolated};
+        $e->{closed} = delete $e->{pre_isolation_closed} // 0;
+        $e->{q} = 0;
+    }
+    for my $f (@{ $net->{fixed} || [] }) {
+        next unless delete $f->{isolated};
+        $f->{q} = delete $f->{pre_isolation_q} if exists $f->{pre_isolation_q};
+    }
+    delete $net->{supply_isolated};
 }
 
 #------------------------------------------------------------------------------
@@ -1230,12 +1295,14 @@ sub isolate_unsupplied {
     }
     for my $e (@el) {
         next unless $dead{ $e->{n1} } || $dead{ $e->{n2} };
+        $e->{pre_isolation_closed} = $e->{closed} ? 1 : 0;
         @{$e}{qw(closed isolated q)} = (1, 1, 0);
         push @{ $iso->{supplies} }, $e->{id} if $e->{kind} =~ /^SUPPLY_/;
         push @{ $iso->{outlets} },  $e->{id} if $e->{kind} eq 'DISCHARGE';
     }
     for my $f (@{ $net->{fixed} || [] }) {
         next unless $dead{ $f->{n1} };
+        $f->{pre_isolation_q} = $f->{q};
         $f->{q} = 0;
         $f->{isolated} = 1;
         push @{ $iso->{outlets} }, $f->{id};
@@ -1411,6 +1478,11 @@ sub solve_model {
     my $net = shift;
     # A network solved again is validated again (HardyCross::Validate::assess).
     delete $net->{assessment};
+    # The trial reopening of an isolated supply (supply_status) is one per
+    # solve, not one per network: a network solved again after its inputs
+    # changed -- a supply's pressure raised -- gets its own trial.  Left set,
+    # an island cut off once stayed cut off however strong its supply became.
+    delete $_->{isolation_retry} for @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     link_devices($net);
     build_tree($net);
     build_loops($net);

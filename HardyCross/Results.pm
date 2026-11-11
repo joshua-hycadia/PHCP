@@ -138,10 +138,25 @@ sub block {
                PRESSURE => $num->($p / $up, 4), REQ_PRESSURE => $num->($f->{preq} / $up, 4),
                MARGIN => $num->(($p - $f->{preq}) / $up, 4), PASS => $p >= $f->{preq} - 1e-6 ? 'YES' : 'NO');
     }
+    require HardyCross::Supplies;
     for my $e (grep { $_->{kind} =~ /^SUPPLY_/ } @el) {
+        my $state = HardyCross::Supplies::state_of($e);
         $rec->('SUPPLY', $e->{id}, NODE => $nid->($e->{n2}), FLOW => $num->($e->{q} / $uf, 4),
                PRESSURE => $num->(HardyCross::Demand::gauge($net, $e->{n2}) / $up, 4),
-               STATUS => $e->{closed} ? 'OUT_OF_SERVICE' : $e->{q} < -$HardyCross::Q_TINY ? 'REVERSE' : 'DELIVERING');
+               STATUS => $state);
+        # Persist the settled check-valve state with the results, not merely
+        # in JSON or the printable report.  Include the data basis so a
+        # reviewer can reproduce the pressure loss and reopening threshold.
+        my $v = HardyCross::Supplies::valve_of($e) or next;
+        $rec->('CHECKVALVE', $e->{id}, NODE => $nid->($e->{n2}), STATE => $state,
+               FLOW => $num->(($e->{closed} ? 0 : $e->{q}) / $uf, 4),
+               PRESSURE => $num->(HardyCross::Demand::gauge($net, $e->{n2}) / $up, 4),
+               LOSS => $e->{closed} ? '-' : $num->($v->{loss} / $up, 4),
+               BASIS => $v->{basis} // ($v->{cv} > 0 ? 'CV' : 'PIPEWORK'),
+               CV => $num->($v->{cv}, 3),
+               CRACK => $num->($v->{crack} / $up, 4),
+               CRACK_GIVEN => $v->{crack_given} ? 'YES' : 'NO',
+               MODEL => $word->($v->{model}), SWITCHES => $v->{switches});
     }
     # The ESTIMATED dry system times (HardyCross::DryTime), seconds, on each
     # dry pipe valve's DEVICE record.

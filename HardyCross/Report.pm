@@ -1589,7 +1589,7 @@ sub check_valve_table {
     my ($qd, $pd) = (qdp($net->{u_flow}), pdp($net->{u_pres}));
     require HardyCross::Supplies;
     my $out = "\n SUPPLY CHECK VALVES (NRV)\n";
-    $out .= sprintf "   %-10s %-14s %11s %11s %9s %7s %8s\n", 'SUPPLY', 'STATE', 'FLOW', 'PRESSURE', 'LOSS', 'CV',
+    $out .= sprintf "   %-10s %-14s %11s %11s %9s %9s %8s\n", 'SUPPLY', 'STATE', 'FLOW', 'PRESSURE', 'LOSS', 'BASIS',
         'OPENS AT';
     my (@models, $iso);
     for my $s (HardyCross::Demand::supplies($net)) {
@@ -1601,16 +1601,14 @@ sub check_valve_table {
             $st eq 'ISOLATED' ? 'ISOLATED' : $st,
             $qd, $q / $uf, $pd, HardyCross::Demand::gauge($net, $s->{n2}) / $up,
             $v && !$s->{closed} ? sprintf('%.*f', $pd + 1, $v->{loss} / $up) : '-',
-            $v ? ($v->{cv} > 0 ? $v->{cv} : 'PIPEWORK') : '-',
+            $v ? ($v->{basis} eq 'CV' ? sprintf('CV %.0f', $v->{cv}) : $v->{basis}) : '-',
             $v ? sprintf('%.*f%s', $pd, $v->{crack} / $up, $v->{crack_given} ? '' : '*') : '-';
         push @models, sprintf('%s: %s', $s->{id}, $v->{model} // 'make and model not stated') if $v;
     }
-    $out .= wrap('   ', 'PRESSURE is gauge at the supply\'s connection, LOSS the valve\'s at the flow shown, both in '
-        . sym($net->{u_pres}) . '.  A valve passes water into the network only.  CLOSED: the network there '
-        . 'stands above what the supply can give less the valve\'s opening pressure, so the valve is shut and the '
-        . 'supply gives nothing; the others carry the load.  CV PIPEWORK: the valve\'s flow loss is allowed for '
-        . 'in the pipework.  The loss is the opening pressure plus (Q gpm / Cv)^2 psi.  * opening pressure not '
-        . 'given: taken as 0.');
+    $out .= wrap('   ', 'PRESSURE is gauge at the supply\'s connection; LOSS is the valve\'s at the flow shown. '
+        . 'BASIS: CV means opening pressure plus (Q gpm / Cv)^2 psi; CURVE uses manufacturer flow/loss points '
+        . 'and is rejected outside their tested range; PIPEWORK means flow loss is separately allowed in '
+        . 'the model, not zero. CLOSED gives zero flow. * opening pressure not specified: 0 assumed.');
     $out .= wrap('   ', 'Valve data: ' . join('; ', @models) . '.') if @models;
     if ($iso) {
         my $i = $net->{supply_isolated};

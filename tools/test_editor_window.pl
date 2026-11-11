@@ -134,8 +134,8 @@ is('flat: no bevel on the buttons or the editor',
    !grep({ $main::btn{$_}->cget(-relief) ne 'flat' || $main::btn{$_}->cget(-borderwidth) != 0 } keys %main::btn)
    && $main::ed->cget(-borderwidth) == 0);
 my @strip = main::strip_commands();
-is('the command strip lists the 29 network commands (PUMPDUTY, DPV, NRV, NRVMODEL, AREA, SCENARIO among them), no settings',
-   @strip == 29 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' || $_ eq 'DPV' || $_ eq 'NRV' || $_ eq 'NRVMODEL' } @strip) == 5 && $strip[0] eq 'USE' && $strip[-1] eq 'SCENARIO' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
+is('the command strip lists the 30 network commands (PUMPDUTY, DPV, NRV, NRVMODEL, NRVLOSS, AREA, SCENARIO among them), no settings',
+   @strip == 30 && grep({ $_ eq 'PUMPDUTY' || $_ eq 'AREA' || $_ eq 'DPV' || $_ eq 'NRV' || $_ eq 'NRVMODEL' || $_ eq 'NRVLOSS' } @strip) == 6 && $strip[0] eq 'USE' && $strip[-1] eq 'SCENARIO' && !grep({ /^(TITLE|PROJECT|UNITS|METHOD|OPTION)$/ } @strip),
    "@strip");
 is('NETWORK, PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE and DATABASE tabs above; VALIDATION, PIPES, NODES, OUTLETS, REPORT below',
    join(' ', @{ $main::toptabs->{names} }) eq 'NETWORK PROJECT GRAPH QUICK TOOLS ORIFICE PLATE DATABASE'

@@ -151,6 +151,10 @@ my %CMD = (
     # The make and model of a supply's check valve, as free text: the data
     # sheet its Cv and opening pressure were taken from.
     NRVMODEL  => { kind => 'nrv', fixed => [ [ 'SUPPLY', 'node' ], [ 'TEXT', 'text' ] ] },
+    # Published flow/loss points for a specific valve: the loss in the OPEN
+    # state, additional to its cracking pressure.  No data is invented.
+    NRVLOSS   => { kind => 'nrv', fixed => [ [ 'SUPPLY', 'node' ] ],
+                   rest => 'pairs', min => 2 },
     SPRINKLER => { kind => 'node', otype => 'SPRINKLER', fixed => [ [ 'NAME', 'new' ],
                    [ 'ELEVATION', 'elev' ], [ 'MINFLOW', 'minflow' ], [ 'K', 'kfactor' ] ] },
     HYDRANT   => { kind => 'node', otype => 'HYDRANT', fixed => [ [ 'NAME', 'new' ],
@@ -217,7 +221,7 @@ my %ALIAS = (P => 'PIPE', U => 'USE', N => 'NODE', W => 'WATER', CHP => 'CHANGEP
 our @COMMAND_GROUPS = (
     [qw(TITLE PROJECT UNITS METHOD OPTION)],
     [qw(USE PIPE PC CHANGEPIPE EQV)],
-    [qw(NODE NC WATER NRV NRVMODEL SPRINKLER HYDRANT HREEL FIXEDFLOW)],
+    [qw(NODE NC WATER NRV NRVMODEL NRVLOSS SPRINKLER HYDRANT HREEL FIXEDFLOW)],
     [qw(PUMP PUMPDUTY BP BFP PRV OPP OFD PRA DPV DPVMODEL DPVAIR DPVTRIP)],
     [qw(AREA SUPPLYGRAPH SCENARIO)],
 );
@@ -840,11 +844,12 @@ sub translate {
                                      : { orifice_mm => size_mm($p[1], $units{SIZE}), count => $a->{opt}[0],
                                          temp => $a->{opt}[1], static => $a->{opt}[2] };
             $dpvdata{ $p[0] }{"${slot}_line"} = $n;
-        } elsif ($k eq 'NRV' || $k eq 'NRVMODEL') {
-            my $slot = $k eq 'NRV' ? 'valve' : 'model';
-            $at->($n, 'SUPPLY %s ALREADY HAS AN %s, ON LINE %d', $p[0], $k, $nrv{ $p[0] }{"${slot}_line"})
+        } elsif ($k eq 'NRV' || $k eq 'NRVMODEL' || $k eq 'NRVLOSS') {
+            my $slot = $k eq 'NRV' ? 'valve' : $k eq 'NRVMODEL' ? 'model' : 'loss';
+            $at->($n, 'SUPPLY %s ALREADY HAS A %s, ON LINE %d', $p[0], $k, $nrv{ $p[0] }{"${slot}_line"})
                 if $nrv{ $p[0] }{$slot};
-            $nrv{ $p[0] }{$slot} = $k eq 'NRV' ? { cv => $p[1], crack => $a->{opt}[0] } : $a->{text};
+            $nrv{ $p[0] }{$slot} = $k eq 'NRV' ? { cv => $p[1], crack => $a->{opt}[0] }
+                                    : $k eq 'NRVMODEL' ? $a->{text} : [ @{ $a->{rest} } ];
             $nrv{ $p[0] }{"${slot}_line"} = $n;
         } elsif ($k eq 'SCENARIO') {
             $at->($n, 'SCENARIO %s IS ALREADY DEFINED ON LINE %d', $p[0], $scenario{ $p[0] }{line})
@@ -986,15 +991,29 @@ sub translate {
     }
 
     #---------------------------------------------------- supply check valves
-    # An NRV names a water supply (WATER, or a copy of one); an NRVMODEL
-    # describes an NRV, so its supply must have one.
+    # A traceable flow/loss curve is an alternative to Cv, not an extra loss.
+    # Its zero-flow datum is zero: the cracking pressure belongs to NRV.
     for my $sname (sort keys %nrv) {
         my $v = $nrv{$sname};
-        my $ln = $v->{valve_line} // $v->{model_line};
+        my $ln = $v->{valve_line} // $v->{model_line} // $v->{loss_line};
         $at->($ln, '%s IS NOT DEFINED', $sname) unless $node{$sname};
         $at->($ln, '%s IS NOT A WATER SUPPLY: A CHECK VALVE (NRV) GOES AT A WATER SUPPLY', $sname)
             unless $is_water->($sname);
         $at->($ln, 'SUPPLY %s HAS NO CHECK VALVE (NRV) FOR THIS TO DESCRIBE', $sname) unless $v->{valve};
+        next unless $v->{loss};
+        $at->($v->{loss_line}, 'NRVLOSS %s REQUIRES CV 0 (DO NOT COUNT LOSSES TWICE)', $sname)
+            if $v->{valve}{cv} != 0;
+        $at->($v->{loss_line}, 'NRVLOSS %s REQUIRES NRVMODEL WITH MANUFACTURER DATA SOURCE', $sname)
+            unless $v->{model};
+        my @pairs = @{ $v->{loss} };
+        $at->($v->{loss_line}, 'NRVLOSS %s MUST BEGIN WITH FLOW 0 LOSS 0', $sname)
+            if $pairs[0] != 0 || $pairs[1] != 0;
+        for (my $i = 2; $i < @pairs; $i += 2) {
+            $at->($v->{loss_line}, 'NRVLOSS %s: FLOWS MUST STRICTLY INCREASE', $sname)
+                if $pairs[$i] <= $pairs[$i-2];
+            $at->($v->{loss_line}, 'NRVLOSS %s: LOSSES MUST NOT DECREASE WITH FLOW', $sname)
+                if $pairs[$i+1] < $pairs[$i-1];
+        }
     }
 
     #---------------------------------------------------- auto sizing
@@ -1305,7 +1324,16 @@ sub read_string {
         $e->{nrv} = { cv => 0 + $d->{valve}{cv},
                       crack => defined $d->{valve}{crack} ? $d->{valve}{crack} * $net->{f_pres} : 0,
                       crack_given => defined $d->{valve}{crack} ? 1 : 0,
-                      model => $d->{model} };
+                      model => $d->{model},
+                      basis => $d->{loss} ? 'CURVE' : $d->{valve}{cv} > 0 ? 'CV' : 'PIPEWORK' };
+        if (my $pairs = $d->{loss}) {
+            my $c = { q => [], p => [] };
+            for (my $i = 0; $i < @$pairs; $i += 2) {
+                push @{ $c->{q} }, $pairs->[$i] * $net->{f_flow};
+                push @{ $c->{p} }, $pairs->[$i+1] * $net->{f_pres};
+            }
+            $e->{nrv}{curve} = HardyCross::fit_curve($c, 1);
+        }
     }
     # Pipes to be sized (size 0) and how (HardyCross::Sizing).
     $net->{auto_sizing} = $areas->{auto} if @{ $areas->{auto} };
