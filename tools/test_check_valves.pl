@@ -121,6 +121,26 @@ print "1. DEFECTS\n";
     my ($n2, $ok2, $as2) = assessed($HEAD . "WATER W 0 0\nSPRINKLER S1 0 60 80\nPIPE A1 W S1 10 100\n");
     is('a supply at 0 kPa on the level delivers nothing: not ACCEPTED',
        $as2->{validation}{acceptance} ne 'ACCEPTED', $as2->{validation}{acceptance});
+
+    # The floor trial is made only when every other trial passed.  Tried
+    # first on every model, behind a backflow preventer and a pressure
+    # reducing valve a 0 kPa supply cannot drive the network, and that trial
+    # ran the Hardy Cross iteration to its limit: the round 2 device
+    # benchmark ran 26 times slower (comparison/RERUN_2026-11-11.md).  So
+    # count the searches' trials at 0 kPa on such a model: there must be none.
+    my @zero;
+    my $real = \&HardyCross::Demand::solve_at;
+    no warnings 'redefine';
+    local *HardyCross::Demand::solve_at = sub { push @zero, $_[2] if $_[2] < 0.005; $real->(@_) };
+    use warnings 'redefine';
+    my ($n3, $ok3, $as3) = assessed($HEAD . "WATER W 0 500\nNODE J 0\nNODE K 0\nSPRINKLER S1 0 80 50\n"
+        . "PIPE P1 W J 10 100\nBFP P1 0 40 1000 60 2000 100\nPIPE P2 J K 10 100\nPRV P2 0 80\nPIPE P3 K S1 5 50\n");
+    my $dm3 = $as3->{demand};
+    is('behind a BFP and a PRV: demand point FOUND, well above 0 kPa',
+       ($dm3->{status} // '') eq 'FOUND' && $dm3->{p_demand} > 100 && !$dm3->{at_floor},
+       sprintf('%s at %s', $dm3->{status} // '-', $dm3->{p_demand} // '-'));
+    is('behind a BFP and a PRV: no search tries a 0 kPa supply it does not need', !@zero,
+       scalar(@zero) . ' trials at 0 kPa');
 }
 
 #==============================================================================

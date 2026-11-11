@@ -1612,7 +1612,7 @@ others on the page, and the report says which check to make.
 | the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
 | independent benchmarks: element equations against their published forms, eight networks (two with a supply check valve) against a nodal Newton solve (`tools/test_benchmarks.pl`) | 32 / 32 |
 | impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 20 / 20 |
-| supply check valves: the two defects of the second stage, the language, no change without cause, closing against the supply deleted, reopening, unsettled valves, loss of supply (one supply and part of a network), changing demand, demand searches, the valve's loss by hand, report and JSON, equivalent descriptions (`tools/test_check_valves.pl`) | 92 / 92 |
+| supply check valves: the two defects of the second stage, the language, no change without cause, closing against the supply deleted, reopening, unsettled valves, loss of supply (one supply and part of a network), changing demand, demand searches, the valve's loss by hand, report and JSON, equivalent descriptions, no needless 0 kPa trial in the demand search (`tools/test_check_valves.pl`) | 94 / 94 |
 | water supply graph, and in a model's report | 60 / 60 |
 | database editing and location | 42 / 42 |
 | fitting resolver fuzz | 0 problems |
@@ -1645,6 +1645,16 @@ round 1.  With the devices, AU Calc Program reads +0.67% (median) and EPANET
 +0.35%, and PHCP's default orifice model agrees with the AS 2118.1 Appendix C
 method.  PHCP's Hardy Cross iteration stays the slowest, by design, since every
 loop correction is traceable; with devices it slows most on large grids.
+
+**Re-run on 11 November 2026** (`comparison/RERUN_2026-11-11.md`): PHCP on
+`main` re-solved all 900 models.  No required supply pressure moved by more
+than 0.004% from 1.0.0, so every figure above stands.  The re-run found a
+slowdown: models with a backflow preventer and a pressure reducing valve ran
+26 times slower (median), because the demand search tried a 0 kPa supply
+first and that trial ran to the iteration limit.  It now tries 0 kPa only
+when every other trial passed.  The comparison can be re-run on any commit:
+`comparison/tools/rerun_phcp.py`, or push a branch named `comparison-run/...`
+to run the `comparison` workflow on 16 runners.
 
 ## Stress testing
 
