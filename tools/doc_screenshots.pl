@@ -131,6 +131,11 @@ if ($PROG eq 'editor') {
 } else {
     main::select_tab($top, 'ISOMETRIC');
     main::iso_fit(1);          # the FIT button: the whole network in the canvas
+    # FIT places the network 60 pixels into the canvas, but the canvas can be
+    # left scrolled past that, cutting off the top of the drawing; show it
+    # from the top of its scroll region (the whole drawing and its margin).
+    $main::iso_cv->yview(moveto => 0);
+    $main::iso_cv->xview(moveto => 0);
     shot('drawing',    $top => 'ISOMETRIC');
 }
 $mw->destroy;
