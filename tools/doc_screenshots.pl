@@ -12,7 +12,8 @@
 #
 # Each window (the text editor, the spreadsheet and the isometric drawing) is
 # opened on examples/02_full_network.phc, validated and calculated, and each
-# tab the guide describes is saved as a PNG with ImageMagick's import.  So the
+# tab the guide describes is saved as a PNG with ImageMagick's import.  The
+# GRAPH tab is given examples/10_supply_graph.phg, so it has a graph to draw.  So the
 # guide shows the programs as they are, not as they were when it was written.
 #
 # Needs Perl/Tk, ImageMagick and an X display.  With no display it re-runs
@@ -114,6 +115,8 @@ if ($PROG eq 'editor') {
     shot('validation', $top => 'NETWORK', $res => 'VALIDATION');
     shot('report',     $top => 'NETWORK', $res => 'REPORT');
     shot('project',    $top => 'PROJECT');
+    main::graph_open("$ROOT/examples/10_supply_graph.phg") or die "doc_screenshots: the graph did not open
+";
     shot('graph',      $top => 'GRAPH');
     shot('quick_tools', $top => 'QUICK TOOLS');
     shot('orifice',    $top => 'ORIFICE PLATE');
@@ -126,6 +129,8 @@ if ($PROG eq 'editor') {
     shot('supplies',   $top => 'SUPPLIES', $res => 'OUTLETS');
     shot('devices',    $top => 'PRESSURE DEVICES', $res => 'VALIDATION');
 } else {
+    main::select_tab($top, 'ISOMETRIC');
+    main::iso_fit(1);          # the FIT button: the whole network in the canvas
     shot('drawing',    $top => 'ISOMETRIC');
 }
 $mw->destroy;
