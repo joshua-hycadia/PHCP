@@ -1478,6 +1478,11 @@ sub solve_model {
     my $net = shift;
     # A network solved again is validated again (HardyCross::Validate::assess).
     delete $net->{assessment};
+    # The trial reopening of an isolated supply (supply_status) is one per
+    # solve, not one per network: a network solved again after its inputs
+    # changed -- a supply's pressure raised -- gets its own trial.  Left set,
+    # an island cut off once stayed cut off however strong its supply became.
+    delete $_->{isolation_retry} for @{ $net->{elems} }[1 .. $#{ $net->{elems} }];
     link_devices($net);
     build_tree($net);
     build_loops($net);

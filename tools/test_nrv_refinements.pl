@@ -104,10 +104,22 @@ check('recovered solution passes mandatory validation',
       $new_validation->{acceptance});
 
 print "4. PUMP SWITCHING STATE\n";
-my $PUMP = $U . "USE BORE 120\nWATER W1 0 700\nWATER W2 0 900\nNODE A 0\nNODE B 0\nSPRINKLER S1 0 -50 80\nPIPE P1 W1 A 10 100\nPUMP PU A B 300 500 280 1000 200\nPIPE P2 W2 B 10 100\nPIPE P3 B S1 10 50\n";
-my ($pumpnet, $pumpok) = solve($PUMP);
+# Two supplies, one behind a pump (churn 300 kPa on a 700 kPa supply, so at
+# most 1000 kPa on its outlet).  With W2 at 900 kPa the pump can beat it and
+# must run, on its curve; with W2 at 1100 kPa it cannot, and its check valve
+# must shut.  The closed one is the reference for the switch-limit checks.
+my $PUMP = $U . "USE BORE 120\nWATER W1 0 700\nWATER W2 0 %d\nNODE A 0\nNODE B 0\nSPRINKLER S1 0 -50 80\nPIPE P1 W1 A 10 100\nPUMP PU A B 300 500 280 1000 200\nPIPE P2 W2 B 10 100\nPIPE P3 B S1 10 50\n";
+my ($runnet) = solve(sprintf $PUMP, 900);
+my $run = elem($runnet, 'PU');
+my $boost = $runnet->{nodes}[ $run->{n2} ]{h} - $runnet->{nodes}[ $run->{n1} ]{h};
+my $curve = HardyCross::curve_eval($run->{curve}, $run->{q});
+check('a pump that can beat the other supply runs forward, on its curve',
+      !$run->{closed} && $run->{q} > 0 && abs($boost - $curve) < 0.01,
+      sprintf('closed %d, q %.2f, boost %.3f against the curve\'s %.3f',
+              $run->{closed} // 0, $run->{q}, $boost, $curve));
+my ($pumpnet, $pumpok) = solve(sprintf $PUMP, 1100);
 my $pu = elem($pumpnet, 'PU');
-check('reference pump settles closed', $pu->{closed});
+check('a pump that cannot reach the other supply\'s pressure settles closed', $pu->{closed} && $pumpok);
 $pu->{nflips} = 99;
 my $pumpok2 = HardyCross::solve_model($pumpnet);
 check('settled pump at flip limit is not spuriously unresolved',

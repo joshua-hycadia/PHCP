@@ -1414,6 +1414,9 @@ the result INDETERMINATE (SUPPLY_CHECK_UNRESOLVED).  Validation re-checks a
 shut valve against the final heads (SUPPLY_CHECK_INCONSISTENT). A previously
 isolated section can be retried with a bounded reopening trial if its
 supply's local no-flow head permits opening, without forcing an invalid pass.
+The trial is one per solve: a model solved again after a supply's pressure
+changed gets a trial of its own, so a section cut off once is not cut off for
+good.
 
 Every demand search re-solves the model as written, so the valves operate in
 the demand point, the conditional minima, the joint demand and the scenarios.

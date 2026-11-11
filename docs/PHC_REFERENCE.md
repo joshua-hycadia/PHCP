@@ -743,8 +743,9 @@ model is not accepted. Without a check valve the same model is REJECTED,
 because the supply would take water in.
 
 An isolated section may be reconsidered once through a bounded reopening
-trial when its source could reopen based on local no-flow head. A failed
-trial never becomes an accepted design.
+trial when its source could reopen based on local no-flow head. The trial is
+once per solve: solving again, after a supply's pressure has changed, makes a
+new trial. A failed trial never becomes an accepted design.
 
 A valve that keeps opening and closing on alternate solves is stopped after
 8 changes. If it is still in the wrong state, the calculation is
