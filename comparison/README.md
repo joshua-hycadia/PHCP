@@ -2,6 +2,11 @@
 
 Run 4 November 2026 on PHCP 1.0.0 (`phcp.exe --json`, release v1.0.0).
 Round 2, the same networks with fittings and devices, is in [ROUND2.md](ROUND2.md).
+PHCP was re-run on all 900 models on 11 November 2026, on `main` after 1.5.0:
+nothing moved by more than 0.004%, see [RERUN_2026-11-11.md](RERUN_2026-11-11.md).
+The stored PHCP results in `results*/` are still 1.0.0's; to re-run PHCP on
+any commit, `python tools/rerun_phcp.py` (or the `comparison` workflow, on a
+push to `comparison-run/...`) then `python tools/compare_versions.py`.
 
 PHCP and five other programs were each given the same 300 generated sprinkler
 networks: 100 trees, 100 looped-main systems and 100 grids, from 4 to 240

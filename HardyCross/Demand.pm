@@ -240,21 +240,9 @@ sub demand_point {
     my ($lo, $hi) = (0, $p_now > 1 ? $p_now : 100);
     my $at = sub { trial(solve_at($text, $s->{id}, shift)) };
 
-    # The floor.  A supply's pressure is gauge at its connection and cannot be
-    # below zero (a tank surface is at atmosphere), so 0 kPa is the lowest
-    # trial.  If every outlet is met THERE, the elevation alone does it: the
-    # demand is at or below zero gauge and is reported as 0, at_floor -- the
-    # least pressure the supply can have, and a conservative figure, since
-    # the true requirement is lower.  Without this the bisection below crept
-    # down towards 0 from above and stopped a hair over it, so a gravity tank
-    # at 0 kPa failed its adequacy check by -0.006 kPa (found 11 November
-    # 2026, tools/test_check_valves.pl part 1).
-    my $t0 = $at->(0);
-    my $floor = $t0->{status} eq 'PASS';
     # Make sure the bracket holds the answer: at $hi every outlet must be met,
     # in a valid solve.
-    my $th = $floor ? $t0 : $at->($hi);
-    $hi = 0 if $floor;
+    my $th = $at->($hi);
     my @seen = ($th);
     for (1 .. 30) {
         last if $th->{status} eq 'PASS';
@@ -274,11 +262,33 @@ sub demand_point {
     # the last one below the answer is kept, so that a boundary reached
     # against an invalid or unconverged trial is not reported as a demand.
     my $tb;
-    for ($floor ? () : 1 .. 60) {
+    for (1 .. 60) {
         my $mid = 0.5 * ($lo + $hi);
         my $t = $at->($mid);
         if ($t->{status} eq 'PASS') { ($hi, $th) = ($mid, $t) } else { ($lo, $tb) = ($mid, $t) }
         last if $hi - $lo < 0.01;
+    }
+    # The floor.  A supply's pressure is gauge at its connection and cannot be
+    # below zero (a tank surface is at atmosphere), so 0 kPa is the lowest
+    # trial.  If every outlet is met THERE, the elevation alone does it: the
+    # demand is at or below zero gauge and is reported as 0, at_floor -- the
+    # least pressure the supply can have, and a conservative figure, since
+    # the true requirement is lower.  Without this the bisection crept down
+    # towards 0 from above and stopped a hair over it, so a gravity tank at
+    # 0 kPa failed its adequacy check by -0.006 kPa (found 11 November 2026,
+    # tools/test_check_valves.pl part 1).
+    #
+    # 0 kPa is tried only when it can matter: when every trial passed, all
+    # the way down to the bisection's resolution.  It used to be tried first,
+    # on every model; behind a backflow preventer and a pressure reducing
+    # valve a 0 kPa supply cannot drive the network at all, and that trial ran
+    # the Hardy Cross iteration to its limit before failing -- the round 2
+    # device benchmark ran 26 times slower (comparison/RERUN_2026-11-11.md).
+    my $floor = 0;
+    unless (defined $tb) {
+        my $t0 = $at->(0);
+        if ($t0->{status} eq 'PASS') { ($floor, $hi, $th) = (1, 0, $t0) }
+        else                         { ($lo, $tb) = (0, $t0) }
     }
     if (search_status($tb) ne 'FOUND') {
         return { status => 'UNRESOLVED', boundary => $tb->{status}, p_boundary => $lo,
