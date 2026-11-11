@@ -32,7 +32,7 @@
 # interface 1, with the fields marked [2] added.
 #
 #   interface      2
-#   program        "PHCP 1.5.0"
+#   program        "PHCP 1.6.0"
 #   model          the model file's name, or "-" for standard input
 #   status         "converged", "not_converged" or "error": how the
 #                  iteration ended, and nothing more

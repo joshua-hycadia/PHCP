@@ -2,6 +2,8 @@
 
     python tools/build_docs.py                 both documents, .docx and .pdf
     python tools/build_docs.py --no-pdf        the .docx only
+    python tools/build_docs.py --release       in a release commit: the version
+                                               alone, as the tag will name it
 
 The text is written once, in Markdown: docs/USER_GUIDE.md and
 docs/PHC_REFERENCE.md.  Those stay the source because tools/test_manual.pl
@@ -52,6 +54,7 @@ INK = RGBColor(0x1C, 0x1F, 0x24)        # the windows' ink
 MUTED = RGBColor(0x5A, 0x63, 0x70)
 BODY_FONT = "Arial"
 CODE_FONT = "Consolas"
+RELEASE = False                         # --release: see version()
 
 DOCUMENTS = [
     ("USER_GUIDE.md", "PHCP_User_Guide", "PHCP User Guide",
@@ -64,9 +67,12 @@ DOCUMENTS = [
 def version() -> str:
     """The program version, as HardyCross.pm states it; with the commit when
     the checkout is not exactly a release tag, so a document built from main
-    between releases does not claim to describe the release."""
+    between releases does not claim to describe the release.  --release drops
+    the commit: the release commit is built before its tag exists."""
     m = re.search(r"\$VERSION\s*=\s*'([^']+)'", (ROOT / "HardyCross.pm").read_text(encoding="utf-8"))
     v = m.group(1) if m else "unknown"
+    if RELEASE:
+        return v
     try:
         d = subprocess.run(["git", "describe", "--tags", "--always"], cwd=ROOT, capture_output=True,
                            text=True, check=True).stdout.strip()
@@ -485,7 +491,10 @@ def pdf_soffice(docx: Path, pdf: Path) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-pdf", action="store_true")
+    ap.add_argument("--release", action="store_true")
     a = ap.parse_args()
+    global RELEASE
+    RELEASE = a.release
     for src, stem, title, subtitle in DOCUMENTS:
         docx = DOCS / f"{stem}.docx"
         pdf = DOCS / f"{stem}.pdf"

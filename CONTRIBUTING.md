@@ -71,6 +71,8 @@ A stale README is a defect.
   (`docs/PHCP_User_Guide.*`, `docs/PHCP_Reference_Manual.*`).  Edit the
   Markdown, never the .docx, and rebuild both with `python tools/build_docs.py`
   in the same commit: on a PC with Word for the best PDF, or LibreOffice.
+  In a release commit add `--release`, so the title page and footers name
+  the version alone, as the tag will, not the commit before it.
 
 ### Style
 
@@ -116,6 +118,7 @@ perl tools/test_acceptance.pl       # the audit of 11 November 2026: each false 
 perl tools/test_benchmarks.pl       # reference values PHCP did not compute: published forms, nodal Newton
 perl tools/test_impossible.pl       # tools/impossible/: models that must not be accepted
 perl tools/test_check_valves.pl     # supply check valves (NRV), and the defects of the audit's second stage
+perl tools/test_nrv_refinements.pl  # NRVLOSS curves, the reopening trial, stored valve states, pump switch limits
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no
