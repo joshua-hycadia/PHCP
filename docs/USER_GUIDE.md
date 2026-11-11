@@ -337,7 +337,9 @@ database a calculation used.
 - **Pumps** follow their curve.  A pump with a check valve that would run
   backwards is shut, and the network is solved again.
 - **A check valve at a supply** is not assumed.  Give one with
-  `NRV <SUPPLY> <CV> [CRACK]` (and `NRVMODEL` for its make and model).  A
+  `NRV <SUPPLY> <CV> [CRACK]` (and `NRVMODEL` for its make and model).
+  With the valve's data sheet, `NRVLOSS` gives its loss as a flow and loss
+  curve instead of a Cv; `NRV` then gives CV 0.  A
   supply with a check valve that would take water in shuts and gives
   nothing.  If every supply that can reach part of the network has shut,
   that part has **lost its supply**: the result is NONCOMPLIANT and the

@@ -11,7 +11,7 @@ Handbook, the transit a rudimentary lower bound that ignores the air.  No
 steady-state result changed since 1.4.0.
 
 Since 1.5.0, on `main` and not yet released: check valves at water supplies
-(`NRV`, `NRVMODEL`) with LOSS OF SUPPLY reported as NONCOMPLIANT, two
+(`NRV`, `NRVMODEL`, `NRVLOSS`) with LOSS OF SUPPLY reported as NONCOMPLIANT, two
 corrections for a gravity tank at 0 kPa, `--strict`, and the independent
 benchmarks (see Hydraulic validation).
 
