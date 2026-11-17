@@ -14,6 +14,7 @@
 #   tools/compare_python.py G001 G007        the models named
 #   tools/compare_python.py --text-only      the text output only
 #   tools/compare_python.py --json-only      the JSON output only
+#   tools/compare_python.py --report         the report.txt output only
 #   tools/compare_python.py -v               show the first diff of each
 
 import glob
@@ -27,6 +28,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def run(cmd):
     p = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     return p.returncode, p.stdout, p.stderr
+
+
+def _first_diff(pa, pb, m, what):
+    pl, yl = pa.splitlines(), pb.splitlines()
+    for i in range(max(len(pl), len(yl))):
+        a = pl[i] if i < len(pl) else '<missing>'
+        b = yl[i] if i < len(yl) else '<missing>'
+        if a != b:
+            print('%s: %s line %d: perl %r, python %r' % (m, what, i + 1, a, b))
+            return
 
 
 def compare(models, json_too=True, verbose=False):
@@ -43,26 +54,14 @@ def compare(models, json_too=True, verbose=False):
         if out_p != out_y:
             ok = False
             if verbose:
-                pl, yl = out_p.splitlines(), out_y.splitlines()
-                for i in range(max(len(pl), len(yl))):
-                    a = pl[i] if i < len(pl) else '<missing>'
-                    b = yl[i] if i < len(yl) else '<missing>'
-                    if a != b:
-                        print('%s: text line %d: perl %r, python %r' % (m, i + 1, a, b))
-                        break
+                _first_diff(out_p, out_y, m, 'text')
         if json_too:
             jr_p, jout_p, jerr_p = run(['perl', 'phcp.pl', '--json', path])
             jr_y, jout_y, jerr_y = run(['python3', 'phcp.py', '--json', path])
             if jr_p != jr_y or jout_p != jout_y:
                 ok = False
                 if verbose:
-                    pl, yl = jout_p.splitlines(), jout_y.splitlines()
-                    for i in range(max(len(pl), len(yl))):
-                        a = pl[i] if i < len(pl) else '<missing>'
-                        b = yl[i] if i < len(yl) else '<missing>'
-                        if a != b:
-                            print('%s: json line %d: perl %r, python %r' % (m, i + 1, a, b))
-                            break
+                    _first_diff(jout_p, jout_y, m, 'json')
                     if jr_p != jr_y:
                         print('%s: json exit status perl %d, python %d' % (m, jr_p, jr_y))
         if not ok:
@@ -71,9 +70,44 @@ def compare(models, json_too=True, verbose=False):
     return bad
 
 
+def compare_report(models, verbose=False):
+    # The full text report (phcp.pl model out.txt): every section, the
+    # cover sheet, the demand point search and the supply graphs.
+    import tempfile
+    bad = 0
+    for m in models:
+        path = os.path.join('comparison', 'models', m + '.phc')
+        outs = []
+        for prog in ('perl phcp.pl', 'python3 phcp.py'):
+            with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tf:
+                out_path = os.path.abspath(tf.name)
+            rc, out, err = run(prog.split() + [path, out_path])
+            try:
+                with open(out_path, encoding='utf-8', errors='replace') as f:
+                    outs.append((rc, f.read(), err))
+            except OSError:
+                outs.append((rc, None, err))
+            finally:
+                os.unlink(out_path)
+        (rc_p, rep_p, err_p), (rc_y, rep_y, err_y) = outs
+        if rc_p != rc_y or rep_p != rep_y:
+            bad += 1
+            print('%s: MISMATCH' % m)
+            if verbose:
+                if rc_p != rc_y:
+                    print('%s: exit status perl %d, python %d' % (m, rc_p, rc_y))
+                if rep_p is not None and rep_y is not None and rep_p != rep_y:
+                    _first_diff(rep_p, rep_y, m, 'report')
+                if err_y:
+                    print('%s: python stderr: %s' % (m, err_y[-500:]))
+    print('%d of %d models differ' % (bad, len(models)))
+    return bad
+
+
 def main():
     args = sys.argv[1:]
     json_too = True
+    report_only = False
     verbose = False
     models = []
     for a in args:
@@ -81,6 +115,8 @@ def main():
             json_too = False
         elif a == '--json-only':
             pass
+        elif a == '--report':
+            report_only = True
         elif a == '-v':
             verbose = True
         else:
@@ -88,8 +124,10 @@ def main():
     if not models:
         models = sorted(os.path.basename(p)[:-4]
                        for p in glob.glob(os.path.join(ROOT, 'comparison', 'models', '*.phc')))
-    bad = compare(models, json_too=json_too, verbose=verbose)
-    print('%d of %d models differ' % (bad, len(models)))
+    if report_only:
+        bad = compare_report(models, verbose=verbose)
+    else:
+        bad = compare(models, json_too=json_too, verbose=verbose)
     sys.exit(1 if bad else 0)
 
 
