@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+#
+# Copyright (c) 2026 Hycadia Pty Ltd
+# SPDX-License-Identifier: MIT -- see LICENSE.  The MIT licence covers this
+# source code; it does not cover the third-party data in data/.
+#
+#==============================================================================
+# phcp.py -- PHCP from the command line.  Python port of phcp.pl: same
+# arguments, same printed lines, same JSON, same exit statuses.  Exit
+# status is the contract other programs rely on:
+#   0  ACCEPTED or NONCOMPLIANT    a valid solution
+#   1  INDETERMINATE               did not converge or settle
+#   2  input or topology error     nothing was solved
+#   3  REJECTED                    converged, but fails a numerical or
+#                                  physical check
+#   4  NONCOMPLIANT, with --strict
+#==============================================================================
+
+import sys
+
+sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+
+import hardycross as HardyCross
+from hardycross import VERSION, GAMMA_W, solve_model, continuity_error, is_model_error
+from hardycross import validate as _validate
+from hardycross import jsonout
+
+USAGE = 'usage: phcp.py [--json] [--strict] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n'
+
+
+def fail_out(e):
+    if json:
+        print(jsonout.encode(jsonout.error_result(e, model)), end='')
+    sys.stderr.write('MODEL ERROR: %s\n' % (e.msg if is_model_error(e) else e))
+    sys.exit(2)
+
+
+def main():
+    global json, model
+    json = 0
+    model = report_path = annotate = None
+    save = strict = 0
+    argv = sys.argv[1:]
+    while argv:
+        a = argv.pop(0)
+        if a == '--json':
+            json = 1
+        elif a == '--save':
+            save = 1
+        elif a == '--strict':
+            strict = 1
+        elif a == '--report':
+            if not argv:
+                sys.stderr.write(USAGE)
+                sys.exit(1)
+            report_path = argv.pop(0)
+        elif a == '--annotate':
+            if not argv:
+                sys.stderr.write(USAGE)
+                sys.exit(1)
+            annotate = argv.pop(0)
+        elif model is None:
+            model = a
+        elif report_path is None:
+            report_path = a
+        else:
+            sys.stderr.write(USAGE)
+            sys.exit(1)
+    if model is None:
+        sys.stderr.write(USAGE)
+        sys.exit(1)
+
+    from hardycross.parse import read_model
+    from hardycross.phc import read_string
+    try:
+        if model == '-':
+            text = sys.stdin.read()
+            # A supply graph (SUPPLYGRAPH) is then found from the current folder.
+            net = read_string(text, '.')
+        else:
+            net = read_model(model)
+    except Exception as e:
+        fail_out(e)
+    try:
+        ok = solve_model(net)
+    except Exception as e:
+        fail_out(e)
+    # Pipes given size 0 are sized, then, with design areas (AREA), each area
+    # is solved and the governing one reported.
+    if net.get('auto_sizing'):
+        from hardycross import sizing
+        text = net.get('source_text')
+        try:
+            net, ok = sizing.size(net, ok)
+        except Exception as e:
+            fail_out(e)
+        if annotate is not None:
+            with open(annotate, 'w') as af:
+                af.write(sizing.annotate(text, net['sizing']))
+    if net.get('areas'):
+        from hardycross import areas
+        try:
+            net, ok = areas.governing(net, ok)
+        except Exception as e:
+            fail_out(e)
+
+    # With a report path, write the full calculation report there.
+    if report_path is not None:
+        from hardycross import report
+        name = 'STDIN.PHC' if model == '-' else model
+        if report_path.lower().endswith('.pdf'):
+            report.write_pdf_report(net, ok, name, report_path)
+        else:
+            with open(report_path, 'w') as rf:
+                rf.write(report.write_report(net, ok, name))
+
+    # --save: the results back into the model file, as comments at its end.
+    if save:
+        if model == '-':
+            sys.stderr.write('--save needs a model file, not standard input\n')
+            sys.exit(1)
+        from hardycross import results
+        with open(model, 'r') as fh:
+            text = fh.read()
+        text = text.replace('\r\n', '\n')
+        with open(model, 'w') as out:
+            out.write(results.with_results(text, net, ok))
+
+    if json:
+        j = jsonout.results(net, ok, model)
+        sys.stdout.write(jsonout.encode(j))
+        sys.exit(jsonout.exit_code(j['acceptance'], strict))
+    # Without --json the acceptance is still worked out (with the demand
+    # point only when a report asked for it, as it re-solves the model many
+    # times), so the exit status means the same thing either way.
+    with_demand = 1 if (report_path is not None or strict or save) else 0
+    va = _validate.assess(net, ok, demand=with_demand)['validation']
+
+    sys.stdout.write('# PHCP - Perl Hydraulic Calculation Program %s\n' % VERSION)
+    sys.stdout.write('# converged %s  iterations %d  loops %d  continuity %.4e\n'
+                     % ('yes' if ok else 'NO', net['iters'], len(net['loops']),
+                        continuity_error(net)))
+    sys.stdout.write('# units flow %s pressure %s\n' % (net['u_flow'], net['u_pres']))
+    sys.stdout.write('# acceptance %s%s\n'
+                     % (va['acceptance'],
+                        '' if with_demand
+                        else ' (supply demand not assessed: use --strict, --json or a report)'))
+    for ei in range(1, len(net['elems'])):
+        e = net['elems'][ei]
+        sys.stdout.write('Q %s %.4f\n' % (e['id'], e['q'] / net['f_flow']))
+    for i in range(1, len(net['nodes'])):
+        n = net['nodes'][i]
+        if n['id'] == 'REF':
+            continue
+        sys.stdout.write('P %s %.4f\n'
+                         % (n['id'], (n['h'] - GAMMA_W * n['z']) / net['f_pres']))
+    sys.exit(jsonout.exit_code(va['acceptance'], strict))
+
+
+if __name__ == '__main__':
+    main()

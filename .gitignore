@@ -1,1 +1,2 @@
-comparison/rerun/
+__pycache__/
+*.pyc

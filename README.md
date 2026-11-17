@@ -25,9 +25,12 @@ the reference manual to the program).
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a
 spreadsheet and an isometric drawing - and a monospace ASCII calculation
-report.  The solver, the editor and the report are Perl.  A pyRevit
-extension for Revit 2022 to 2027, in Python, walks a model and calls that
-engine; see Revit.
+report.  The solver, the editor and the report are Perl - and, stage by
+stage, the same program in Python: `phcp.py` and the `hardycross/` package
+are a byte-for-byte port of the engine and the command line (see
+[PYTHON_PORT.md](PYTHON_PORT.md)), verified against the Perl on the frozen
+comparison set.  A pyRevit extension for Revit 2022 to 2027, in Python, walks
+a model and calls that engine; see Revit.
 
 ```
 perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
@@ -37,6 +40,8 @@ perl phcp_isometric.pl model.phc         # the same calculation, drawn on an iso
 ./phcp.pl model.phc report.txt           # ...or as plain ASCII text
 ./phcp.pl --json model.phc               # the results as JSON, for another program
 ./phcp.pl model.phc --annotate out.phc   # with auto sizing: the model with each size as //AS - <size>
+python3 phcp.py model.phc               # the Python port of the engine: same output, same exit statuses
+python3 tools/compare_python.py         # both programs on every comparison model, byte for byte
 perl tools/test_phc.pl                   # verify the .phc language
 perl tools/test_editor.pl                # verify the editor's logic
 perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
