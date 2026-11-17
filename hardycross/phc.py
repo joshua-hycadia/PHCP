@@ -1296,3 +1296,10 @@ def read_model(path):
     except OSError:
         fail('cannot open input file %s', path)
     return read_string(text, os.path.dirname(path))
+
+# reset_db_cache -- forget the pick lists, after the database is edited and
+# reloaded.  (The Perl original clears memoised look-up tables here; this
+# port computes them from the database each call, so there is nothing to
+# clear -- the call is kept for the interface's sake.)
+def reset_db_cache():
+    pass
