@@ -65,11 +65,11 @@ DOCUMENTS = [
 
 
 def version() -> str:
-    """The program version, as HardyCross.pm states it; with the commit when
+    """The program version, as hardycross states it; with the commit when
     the checkout is not exactly a release tag, so a document built from main
     between releases does not claim to describe the release.  --release drops
     the commit: the release commit is built before its tag exists."""
-    m = re.search(r"\$VERSION\s*=\s*'([^']+)'", (ROOT / "HardyCross.pm").read_text(encoding="utf-8"))
+    m = re.search(r"^VERSION = '([^']+)'", (ROOT / "hardycross" / "__init__.py").read_text(encoding="utf-8"), re.M)
     v = m.group(1) if m else "unknown"
     if RELEASE:
         return v
@@ -416,7 +416,7 @@ def build(src: Path, out: Path, title: str, subtitle: str):
     r.font.color.rgb = MUTED
     for _ in range(3):
         doc.add_paragraph()
-    for text in (f"PHCP {version()}  -  Perl Hydraulic Calculation Program",
+    for text in (f"PHCP {version()}  -  Python Hydraulic Calculation Program",
                  f"Built {dt.date.today():%d %B %Y} from {src.relative_to(ROOT).as_posix()}",
                  "Copyright (c) 2026 Hycadia Pty Ltd"):
         p = doc.add_paragraph()

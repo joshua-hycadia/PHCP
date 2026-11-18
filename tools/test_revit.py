@@ -142,7 +142,7 @@ if walked.ok:
 
 solved = None
 if text:
-    solved = run(command_for(os.path.join(ROOT, "phcp.pl")), text, cwd=ROOT)
+    solved = run(command_for(os.path.join(ROOT, "phcp")), text, cwd=ROOT)
     is_("the engine converges", solved.converged, "exit %s" % solved.code)
 
 
@@ -480,7 +480,7 @@ size_text = "\n".join([
     "PIPE      P1 SUP S1 10.000 0",
     "",
 ])
-sized = run(command_for(os.path.join(ROOT, "phcp.pl")), size_text, cwd=ROOT)
+sized = run(command_for(os.path.join(ROOT, "phcp")), size_text, cwd=ROOT)
 is_("the engine sizes a pipe given size 0",
     sized.code == 0 and bool(sized.data.get("sized")),
     "exit %s sized %s" % (sized.code, sized.data.get("sized")))
@@ -583,7 +583,7 @@ if devices.ok:
         "BFP       P6 0.000 10.000 500.000 25.000",
     ):
         is_("writes " + line[:40], line in body, "missing from the model")
-    solved_dev = run(command_for(os.path.join(ROOT, "phcp.pl")), body, cwd=ROOT)
+    solved_dev = run(command_for(os.path.join(ROOT, "phcp")), body, cwd=ROOT)
     is_("the engine accepts the devices", solved_dev.code != 2, summary_text_of(solved_dev))
 
 
@@ -657,7 +657,7 @@ is_("every parameter has its own GUID and its own name",
 is_("the result parameters are a subset of the element parameters",
     set(RESULT_PARAMS) <= set(names))
 is_("the pipe database beside the repo is the one sizes are matched against",
-    find_database(os.path.join(ROOT, "phcp.pl")) == os.path.join(ROOT, "data", "pipes.dat")
+    find_database(os.path.join(ROOT, "phcp")) == os.path.join(ROOT, "data", "pipes.dat")
     or load(os.path.join(ROOT, "data", "pipes.dat")).match("ASAM", 114.3) == 100)
 is_("DN100's outside diameter matches DN100, not DN125",
     load(os.path.join(ROOT, "data", "pipes.dat")).match("ASAM", 114.3) == 100)
@@ -719,11 +719,11 @@ is_("the extension writes .phc, not the old format", not hcx, ", ".join(hcx))
 # review -- but is never approved; exit 0 alone does not make it so.
 HEAD_PHC = ("UNITS LENGTH M\nUNITS ELEVATION M\nUNITS SIZE MM\nUNITS PRESSURE KPA\nUNITS FLOW LPM\n"
             "UNITS KFACTOR LPM/KPA\nMETHOD HW\nUSE BORE 120\n")
-weak = run(command_for(os.path.join(ROOT, "phcp.pl")),
+weak = run(command_for(os.path.join(ROOT, "phcp")),
            HEAD_PHC + "WATER N1 0 300\nSPRINKLER N2 0 -250 80\nPIPE P1 N1 N2 100 100\n", cwd=ROOT)
 is_("a NONCOMPLIANT design exits 0 and is usable", weak.code == 0 and weak.usable, weak.acceptance)
 is_("  ... but is not approved", not weak.approved and weak.acceptance == "NONCOMPLIANT", weak.acceptance)
-good = run(command_for(os.path.join(ROOT, "phcp.pl")),
+good = run(command_for(os.path.join(ROOT, "phcp")),
            HEAD_PHC + "WATER N1 0 900\nSPRINKLER N2 0 -50 80\nPIPE P1 N1 N2 100 100\n", cwd=ROOT)
 is_("an ACCEPTED design is approved", good.approved, good.acceptance)
 

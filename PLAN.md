@@ -8,11 +8,11 @@ dry pipe valve (DPV) and JSON interface 2.  The solver's outer loop and pump
 check valve revert changed with it; no solved number of a valid model
 changed (checked against the frozen results and baselines).
 
-On branch `job/python-port`, not yet merged: the same engine and command
-line in Python (`phcp.py`, `hardycross/`), a byte-for-byte port verified
-against the Perl on the frozen comparison set - see `PYTHON_PORT.md`, which
-is the execution plan for that work and says which pull request is next
-within it.
+The Python port is complete on branch `job/python-port`: the engine, the
+command line, the three windows, the packaging and the CI, the whole
+program (`phcp`, `hardycross/`), a byte-for-byte port verified against
+the Perl on the frozen comparison set before the Perl was retired - see
+`PYTHON_PORT.md`, the execution plan for that work.
 
 The source has three windows on the same `.phc` file and the same engine:
 the text editor (`phcp_editor.pl`), the spreadsheet (`phcp_sheet.pl`) and

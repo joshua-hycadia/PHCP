@@ -160,8 +160,15 @@ text (`0 + $dn`), now `_numify` in `hardycross/jsonout.py`.  After both,
 `tools/impossible/dpv_no_loss_data.phc` is byte-identical in text and
 JSON and the impossible-model suite is 20/20 against the Perl's 20/20.
 
-## Stage 6 - remove the Perl
+## Stage 6 - remove the Perl (done on this branch)
 
-Branch: `job/remove-perl`.  The Perl files, the PAR packaging and the Perl
-CI legs deleted; `phcp.py` becomes `phcp`.  Not before stage 5 has run in
-the field for a release cycle.
+The Perl files, the PAR packaging and the Perl CI legs deleted; `phcp.py`
+became `phcp` (run as `./phcp`, built as `phcp.exe`).  PHCP now names the
+Python Hydraulic Calculation Program: the banner, the report cover, the
+graph sheet and the README say so.  The Perl test suites retired with the
+program they tested - their ground is held by the frozen comparison set,
+kept in `comparison/`, which the port was verified against, and by the
+examples the build's smoke test solves; the parity harness
+(`tools/compare_python.py`, retired) compared the two programs on every
+one of them, text, JSON, report and exit status, before the Perl was
+deleted.

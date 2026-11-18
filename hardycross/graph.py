@@ -430,7 +430,7 @@ def sheet(g, page, npages, **meta):
     m = {'header': 'PHCP  Q^1.85 WATER SUPPLY GRAPH', 'title': clean(pj.get('PROJECT')),
          'job': clean(pj.get('JOB')), 'date': clean(pj.get('DATE')),
          'designer': clean(pj.get('BY')),
-         'program': meta.get('program') or 'PHCP %s - Perl Hydraulic Calculation Program' % VERSION,
+         'program': meta.get('program') or 'PHCP %s - Python Hydraulic Calculation Program' % VERSION,
          'model': meta.get('model') or ''}
     s = pdfout.frame(page, npages, **m)
 

@@ -564,7 +564,7 @@ number of solves and the seconds gone.
 
   A comment already on the line is kept after the size. An old `//AS`
   comment is replaced.
-- On the command line, `phcp.pl model.phc --annotate out.phc` writes the
+- On the command line, `phcp model.phc --annotate out.phc` writes the
   model with the comments.
 - The report's Section 1 lists every sized pipe, its size and velocity, and
   the margin met against the margin asked for. If even the largest sizes do

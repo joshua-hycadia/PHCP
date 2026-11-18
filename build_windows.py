@@ -6,9 +6,7 @@
 #
 #==============================================================================
 # build_windows.py -- the PyInstaller build of phcp.exe, phcp_editor.exe,
-# phcp_sheet.exe and phcp_isometric.exe.  The Python counterpart of
-# build_windows.bat, which builds the same four from the Perl with
-# PAR::Packer; run it on Windows in this folder:
+# phcp_sheet.exe and phcp_isometric.exe; run it on Windows in this folder:
 #
 #       python build_windows.py
 #
@@ -16,8 +14,7 @@
 # (Tk only for the three windows) and is always built.  The text editor,
 # phcp_editor.exe, the spreadsheet, phcp_sheet.exe, and the isometric
 # window, phcp_isometric.exe, also need tkinter, which the Windows
-# Python installers carry with them -- there is nothing to compile, the
-# one step of the Perl build that could fail on a toolchain clash.
+# Python installers carry with them -- there is nothing to compile.
 #
 # The program icon goes straight in with PyInstaller's --icon, and is
 # checked afterwards by reading the finished .exe back, the way the Perl
@@ -88,13 +85,13 @@ def main():
     # This script builds the program files that sit BESIDE it.  Run on its
     # own, copied out of the package, it has nothing to build -- so it
     # says so plainly instead of failing later with a packager error.
-    for f in ('phcp.py', os.path.join('hardycross', 'win.py'),
+    for f in ('phcp', os.path.join('hardycross', 'win.py'),
               os.path.join('data', 'pipes.dat')):
         if not os.path.isfile(f):
             print()
             print('ERROR: this folder does not contain the PHCP program files.')
             print('       build_windows.py must be run from INSIDE the phcp')
-            print('       folder (phcp.py, hardycross, data, examples).')
+            print('       folder (phcp, hardycross, data, examples).')
             print('       Currently in: %s' % os.getcwd())
             sys.exit(1)
 
@@ -115,7 +112,7 @@ def main():
     print('       ok' if gui else '       SKIPPED - tkinter is not available.')
 
     step(3, 6, 'Building phcp.exe (command line)...')
-    build('phcp', 'phcp.py', True)
+    build('phcp', 'phcp', True)
 
     if gui:
         step(4, 6, 'Building phcp_editor.exe (text editor)...')

@@ -47,14 +47,14 @@ Each is a single file with the pipe and fitting database inside.  Nothing
 needs installing.  All four read and write the same `.phc` file, so a model
 can be started in one window and finished in another.
 
-**From source** (any system with Perl 5.38 or later, and Perl/Tk for the
+**From source** (any system with Python 3.10 or later, and tkinter for the
 windows):
 
 ```
-perl phcp_editor.pl model.phc
-perl phcp_sheet.pl model.phc
-perl phcp_isometric.pl model.phc
-perl phcp.pl model.phc report.pdf
+python phcp_editor.py model.phc
+python phcp_sheet.py model.phc
+python phcp_isometric.py model.phc
+phcp model.phc report.pdf
 ```
 
 The `examples/` folder holds worked models.  `02_full_network.phc` is the one

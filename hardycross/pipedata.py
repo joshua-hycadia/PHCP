@@ -44,7 +44,7 @@ _SHA256 = None
 
 def _prog_dir():
     # The directory of the program that started us, as $0 / PAR_PROGNAME in
-    # Perl.  phcp.py sets this from its own path at startup; the tests use it
+    # program.  phcp sets this from its own path at startup; the tests use it
     # so the database they see is the one beside the program under test.
     return getattr(sys, 'phcp_program_dir', None) or os.path.dirname(os.path.abspath(sys.argv[0]))
 

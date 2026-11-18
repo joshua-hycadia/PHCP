@@ -8,7 +8,7 @@
 # test_impossible.py -- models that must NOT be accepted, run through the
 # program a user runs.  Python port of test_impossible.pl.
 #
-#   python3 tools/test_impossible.py                through phcp.py
+#   python3 tools/test_impossible.py                through phcp
 #   python3 tools/test_impossible.py phcp.exe       through the built program
 #
 # Every model in tools/impossible/ states, on a line "// EXPECT: <exit>
@@ -31,7 +31,7 @@ ROOT = os.path.dirname(TOOLS)
 
 def main():
     exe = sys.argv[1] if len(sys.argv) > 1 else None
-    cmd = [exe] if exe else [sys.executable, os.path.join(ROOT, 'phcp.py')]
+    cmd = [exe] if exe else [sys.executable, os.path.join(ROOT, 'phcp')]
     passed = failed = 0
 
     def is_(name, ok, why=None):

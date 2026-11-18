@@ -22,7 +22,7 @@ from .report import sym
 
 INTERFACE = 2
 
-# exit_code -- the exit status for a solve, from its acceptance.  phcp.py
+# exit_code -- the exit status for a solve, from its acceptance.  phcp
 # uses it with and without --json, so the two agree.
 _EXIT = {'ACCEPTED': 0, 'NONCOMPLIANT': 0, 'INDETERMINATE': 1, 'ERROR': 2,
          'REJECTED': 3}

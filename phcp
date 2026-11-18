@@ -5,9 +5,10 @@
 # source code; it does not cover the third-party data in data/.
 #
 #==============================================================================
-# phcp.py -- PHCP from the command line.  Python port of phcp.pl: same
-# arguments, same printed lines, same JSON, same exit statuses.  Exit
-# status is the contract other programs rely on:
+# phcp -- PHCP, the Python Hydraulic Calculation Program, from the
+# command line: the former Perl program ported whole, same arguments,
+# same printed lines, same JSON, same exit statuses.  Exit status is the
+# contract other programs rely on:
 #   0  ACCEPTED or NONCOMPLIANT    a valid solution
 #   1  INDETERMINATE               did not converge or settle
 #   2  input or topology error     nothing was solved
@@ -136,7 +137,7 @@ def main():
     with_demand = 1 if (report_path is not None or strict or save) else 0
     va = _validate.assess(net, ok, demand=with_demand)['validation']
 
-    sys.stdout.write('# PHCP - Perl Hydraulic Calculation Program %s\n' % VERSION)
+    sys.stdout.write('# PHCP - Python Hydraulic Calculation Program %s\n' % VERSION)
     sys.stdout.write('# converged %s  iterations %d  loops %d  continuity %.4e\n'
                      % ('yes' if ok else 'NO', net['iters'], len(net['loops']),
                         continuity_error(net)))

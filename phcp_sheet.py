@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# phcp_sheet.py -- the PHCP spreadsheet window, a faithful port of
-# phcp_sheet.pl.  PHCP - the Perl Hydraulic Calculation Program (the
-# Python port keeps the name; the window is hardycross.sheetwindow,
+# phcp_sheet.py -- the PHCP spreadsheet window: the whole of the
+# former Perl program, ported.  PHCP - the Python Hydraulic Calculation
+# Program (the name is historical; the window is hardycross.sheetwindow,
 # this file the one that opens it).
 #
 # Usage:  phcp_sheet [file.phc ...]

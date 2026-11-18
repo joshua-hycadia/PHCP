@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# phcp_isometric.py -- the network drawn, rather than typed: a port of
-# phcp_isometric.pl.  PHCP - the Perl Hydraulic Calculation Program (the
-# Python port keeps the name; the window is hardycross.window, this
-# file the one that opens it).
+# phcp_isometric.py -- the network drawn, rather than typed: the whole
+# of the former Perl program, ported.  PHCP - the Python Hydraulic
+# Calculation Program (the name is historical; the window is
+# hardycross.window, this file the one that opens it).
 #
 # Usage:  phcp_isometric [model.phc]
 #

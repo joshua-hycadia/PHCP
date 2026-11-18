@@ -1132,7 +1132,7 @@ def write_pdf_report(net, ok, model_path, pdf_path):
     text = write_report(net, ok, model_path)
     pj = net.get('project') or {}
     model = re.sub(r'.*[/\\]', '', model_path or '')
-    program = 'PHCP %s - Perl Hydraulic Calculation Program' % VERSION
+    program = 'PHCP %s - Python Hydraulic Calculation Program' % VERSION
 
     def sheet_fn(g, model=model, program=program):
         def draw(w, h):

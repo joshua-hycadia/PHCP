@@ -811,7 +811,7 @@ def write_report_file(net, ok, model_path, out):
 # The window shows only the network in its editor.  The title, the project
 # details, the units, the method and the options are set in the PROJECT tab.
 # The .phc file still holds them all, as lines at its head, so a file is
-# complete on its own and phcp.py reads it unchanged.
+# complete on its own and phcp reads it unchanged.
 #
 # A document is { settings => {...}, network => text }.  The functions below
 # build the whole .phc text from it (join_file) and run the checks of this

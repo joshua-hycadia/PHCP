@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# phcp_editor.py -- the PHCP editor window, a faithful port of
-# phcp_editor.pl.  PHCP - the Perl Hydraulic Calculation Program (the
-# Python port keeps the name; the window is HardyCross::Window, this
-# file the one that opens it).
+# phcp_editor.py -- the PHCP editor window: the whole of the former
+# Perl program, ported.  PHCP - the Python Hydraulic Calculation Program
+# (the name is historical; the window is hardycross.window, this file
+# the one that opens it).
 #
 # Usage:  phcp_editor [file.phc ...]
 #         -v, --version      print the version and exit
