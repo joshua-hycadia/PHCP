@@ -62,6 +62,9 @@ def default_path():
     name = 'pipes.dat'
     try_ = [user_path(),
             os.path.join(os.path.dirname(_module_dir()), 'data', name)]
+    # A PyInstaller build unpacks its bundled files to sys._MEIPASS.
+    if getattr(sys, '_MEIPASS', None):
+        try_.append(os.path.join(sys._MEIPASS, 'data', name))
     if os.environ.get('PAR_TEMP'):
         try_.append(os.path.join(os.environ['PAR_TEMP'], 'inc', 'lib', 'data', name))
     for p in try_:
@@ -75,7 +78,9 @@ def origin(path=None):
     if d is not None and p == os.path.abspath(os.path.join(d, 'pipes.dat')):
         return 'TEAM FOLDER'
     src = os.path.abspath(os.path.join(os.path.dirname(_module_dir()), 'data', 'pipes.dat'))
-    if p == src or (os.environ.get('PAR_TEMP') and p.startswith(os.environ['PAR_TEMP'])):
+    meipass = getattr(sys, '_MEIPASS', None)
+    if (p == src or (os.environ.get('PAR_TEMP') and p.startswith(os.environ['PAR_TEMP']))
+            or (meipass and p.startswith(meipass))):
         return 'BUILT-IN'
     def collapse(x):
         return re.sub(r'[^/\\]+[/\\]\.\.[/\\]', '', x)
@@ -164,7 +169,7 @@ def pipe_row(type_, dn):
 def dry_valve(maker, model, dn):
     r = (_DRYVALVE.get((maker or '').upper(), {})
               .get((model or '').upper(), {})
-              .get(dn))
+              .get(_dnkey(dn)))
     if r is None:
         return None
     v = dict(r)

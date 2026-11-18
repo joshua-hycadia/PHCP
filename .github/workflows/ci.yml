@@ -2,14 +2,25 @@
 #
 #   test-linux      every test suite, including the Revit extension without
 #                   Revit, and the editor, spreadsheet and isometric windows
-#                   under a virtual display; then the user guide's pictures
-#                   (tools/doc_screenshots.pl), kept as the run's artefact
+#                   under a virtual display; the same suites in Python, the
+#                   port's own test files, run beside the Perl's; then the
+#                   user guide's pictures (tools/doc_screenshots.pl), kept as
+#                   the run's artefact
+#   test-parity     the byte-parity harness: every model on the frozen
+#                   comparison set solved by the Perl and by the Python,
+#                   the text output, the JSON and the exit status of each
+#                   identical byte for byte
 #   build-windows   build_windows.bat on a Windows runner, exactly as on a PC:
 #                   phcp.exe, phcp_editor.exe, phcp_sheet.exe and
 #                   phcp_isometric.exe, the smoke test, the icon read back out
 #                   of each, then the test suites that need no display,
 #                   including the Revit extension; the programs are kept as
 #                   the run's artefacts
+#   build-windows-  build_windows.py on a Windows runner: the same four
+#   python          programs from the Python source with PyInstaller, the
+#                   same smoke test, and the test suites run through the
+#                   built phcp.exe; the programs are kept as the run's
+#                   artefacts
 #   release         on a version tag (v1.2.3) or a release published on
 #                   GitHub: the programs, the user guide and the reference
 #                   manual (docs/*.docx, docs/*.pdf) attached to the release,
@@ -36,10 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Perl/Tk and a virtual display
+      - name: Perl/Tk, Python/Tk and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y perl-tk xvfb xauth imagemagick
+          sudo apt-get install -y perl-tk xvfb xauth imagemagick python3-tk
       - name: Test suites
         run: |
           set -e
@@ -49,6 +60,21 @@ jobs:
             echo "== $t"
             perl tools/$t.pl
           done
+      # The same ground in Python: the port's own test files, run beside the
+      # Perl's so a change that passes one and not the other is seen at once.
+      - name: Python test suites
+        run: |
+          set -e
+          for t in test_editor test_isometric test_revit; do
+            echo "== $t (python)"
+            python3 tools/$t.py
+          done
+      - name: Python windows, under Xvfb
+        run: |
+          set -e
+          python3 tools/test_editor_window.py
+          python3 tools/test_sheet_window.py
+          python3 tools/test_isometric_window.py
       - name: Revit extension, without Revit
         run: python3 tools/test_revit.py
       - name: Editor window, under Xvfb
@@ -73,6 +99,17 @@ jobs:
         run: |
           pip install python-docx
           python3 tools/build_docs.py --no-pdf
+
+  # The byte-parity harness: the frozen comparison set, every model solved
+  # by the Perl and by the Python, the text output, the JSON and the exit
+  # status of each identical.  It runs on its own runner so the suites
+  # above do not wait for it; the stress models make it the slowest job.
+  test-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Perl and Python side by side
+        run: python3 tools/compare_python.py
 
   build-windows:
     runs-on: windows-latest
@@ -141,9 +178,36 @@ jobs:
             tk_build.log
           if-no-files-found: warn
 
+  # The same four programs from the Python source, with PyInstaller, the
+  # way build_windows.bat builds them from the Perl with PAR::Packer.  The
+  # smoke test in the script itself checks the built phcp.exe solves an
+  # example, writes a PDF and writes JSON; the impossible models are then
+  # run through the built phcp.exe, the program a user runs, not the
+  # script it was built from.
+  build-windows-python:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with build_windows.py
+        shell: pwsh
+        run: python build_windows.py
+      - name: Impossible models refused by the built phcp.exe
+        shell: pwsh
+        run: python tools/test_impossible.py dist\phcp.exe
+      - name: Keep the programs
+        uses: actions/upload-artifact@v4
+        with:
+          name: phcp-windows-python
+          path: |
+            dist/phcp.exe
+            dist/phcp_editor.exe
+            dist/phcp_sheet.exe
+            dist/phcp_isometric.exe
+          if-no-files-found: warn
+
   release:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
-    needs: [test-linux, build-windows]
+    needs: [test-linux, test-parity, build-windows, build-windows-python]
     runs-on: ubuntu-latest
     permissions:
       contents: write

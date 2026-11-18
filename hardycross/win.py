@@ -508,6 +508,10 @@ def icon_file():
     # .exe.  None if neither exists.
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cands = [os.path.join(here, 'data', 'phcp.ico')]
+    # A PyInstaller build unpacks its bundled files to sys._MEIPASS.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        cands.append(os.path.join(meipass, 'data', 'phcp.ico'))
     par = os.environ.get('PAR_TEMP')
     if par:
         cands.append(os.path.join(par, 'inc', 'lib', 'data', 'phcp.ico'))

@@ -108,18 +108,57 @@ original text of unchanged fields, add/delete with the cross-checks,
 check_all on a broken file, save with the SHA-256 guard, unchanged file
 round-trips to the same bytes).
 
-## Stage 4 - the windows
+## Stage 4 - the windows (done on this branch)
 
-Branch: `job/python-port-windows`.  The editor, spreadsheet and isometric
-windows in Tkinter (already the toolkit of `phcp_editor.pl`), one window
-per pull request if they are large.  Headless test harnesses first, driven
-windows second, as the Perl's are.
+The editor, spreadsheet and isometric windows in Tkinter (already the
+toolkit of `phcp_editor.pl`), one window per pull request if they are
+large.  Headless test harnesses first, driven windows second, as the
+Perl's are.  All three are ported and green, each beside the Perl suite
+it mirrors:
 
-## Stage 5 - packaging and CI
+- `hardycross/editor.py` + `hardycross/window/editor.py` +
+  `phcp_editor.py`: `tools/test_editor.py` 117/117,
+  `tools/test_editor_window.py` 167/167.
+- `hardycross/sheet.py` + `phcp_sheet.py`:
+  `tools/test_sheet_window.py` 62/62.
+- `hardycross/isometric.py` + `hardycross/window/isometric.py` +
+  `phcp_isometric.py`: `tools/test_isometric.py` 42/42 (the model,
+  including byte-identical read/write round-trips against the Perl on
+  the smoke networks), `tools/test_isometric_window.py` 31/31 (the
+  Perl's own suite is 29/29; the Python's has the two checks the
+  Perl's empty-list bug left vacuous, probed and asserted for real).
 
-Branch: `job/python-port-ci`.  Windows executables by PyInstaller in place of
-PAR::Packer; CI runs the Perl and Python test suites side by side and the
-byte-parity harness on every push.
+One vacuous Perl check was found and confirmed live in the process: a
+`run-in-progress` click on an existing off-axis point is refused by the
+Perl and the Python alike; the Perl's test never actually verified its
+intended claim through the `is(name, COND1 && COND2, $why)` empty-list
+path.  The Python suite asserts both the shared refusal and the intended
+join after the tool switch.
+
+## Stage 5 - packaging and CI (done on this branch)
+
+`build_windows.py` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe`
+and `phcp_isometric.exe` from the Python source with PyInstaller, the
+counterpart of `build_windows.bat` (the Perl, PAR::Packer): the database,
+the PDF typefaces and the icon packed inside the one file, the same
+smoke test run against the built `phcp.exe`.  `hardycross.pipedata`,
+`pdfout` and `win` look for their data in `sys._MEIPASS` as well, so a
+one-file build is self-contained.
+
+CI runs the Perl and Python suites side by side (`test-linux`), the
+byte-parity harness on every push (`test-parity`: the frozen comparison
+set, text, JSON and exit status, solved both ways), and the PyInstaller
+build on Windows (`build-windows-python`) beside the PAR::Packer one
+(`build-windows`).  `tools/test_impossible.py` ports the last
+Perl-only suite the CI ran through the built program.
+
+Two port bugs this stage's own checks caught, both in the dry pipe
+valve path the comparison set does not reach: the database DN lookup
+(Perl stringifies a hash key, the port's `dry_valve` now normalises
+with `_dnkey`) and the JSON writer's Perl numification of database
+text (`0 + $dn`), now `_numify` in `hardycross/jsonout.py`.  After both,
+`tools/impossible/dpv_no_loss_data.phc` is byte-identical in text and
+JSON and the impossible-model suite is 20/20 against the Perl's 20/20.
 
 ## Stage 6 - remove the Perl
 

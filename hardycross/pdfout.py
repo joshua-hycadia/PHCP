@@ -304,6 +304,10 @@ def font_dir():
     # its own, in data/fonts.
     here = _module_dir()
     try_dirs = [os.path.join(here, os.pardir, 'data', 'fonts')]
+    # A PyInstaller build unpacks its bundled files to sys._MEIPASS.
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        try_dirs.append(os.path.join(meipass, 'data', 'fonts'))
     par = os.environ.get('PAR_TEMP')
     if par:
         try_dirs.append(os.path.join(par, 'inc', 'lib', 'data', 'fonts'))

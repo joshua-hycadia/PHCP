@@ -44,6 +44,22 @@ def r4(v):
 def r3(v):
     return None if v is None else 0 + float('%.3f' % v)
 
+# _numify -- the Perl's numification, 0 + $v, for values that reach JSON
+# as text: a database DN or Cv is read from pipes.dat as a string and
+# must print as a number, '100' as 100 and not "100".  (_num, further
+# down, stringifies a number for the JSON writer.)
+def _numify(v):
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return 1 if v else 0
+    if isinstance(v, (int, float)):
+        return v
+    try:
+        return int(str(v).strip())
+    except ValueError:
+        return float(v)
+
 # units -- the unit of each quantity, as the report prints it.
 def units(net):
     return {'flow': sym(net['u_flow']), 'pressure': sym(net['u_pres']),
@@ -269,13 +285,13 @@ def check_valves_json(net):
             'pressure': r4(demand.gauge(net, s['n2']) / up),
             'supply_pressure': r4(demand.avail_of(s, q if q > 0 else 0) / up),
             'loss': (r4(v['loss'] / up) if (v and not s.get('closed')) else None),
-            'cv': (0 + v['cv'] if v else None),
+            'cv': (_numify(v['cv']) if v else None),
             'loss_basis': v.get('basis') if v else None,
             'loss_curve_max_flow': (r4(v['curve']['qhi'] / uf) if (v and v.get('curve')) else None),
             'opening_pressure': (r4(v['crack'] / up) if v else None),
             'opening_pressure_given': (TRUE if v and v.get('crack_given') else (FALSE if v else None)),
             'model': v.get('model') if v else None,
-            'switches': (0 + v['switches'] if v else None),
+            'switches': (_numify(v['switches']) if v else None),
         })
     return out
 
@@ -329,11 +345,11 @@ def supplies_json(net, s):
         j['scenarios'] = [{'name': sc['name'], 'description': sc['description'],
                            'required': TRUE if sc.get('required') else FALSE,
                            'line': sc.get('line'),
-                           'definition': {k: 0 + v for k, v in sc['shares'].items()},
+                           'definition': {k: _numify(v) for k, v in sc['shares'].items()},
                            'acceptance': sc.get('acceptance'),
                            'governing': sc.get('governing'), 'margin': P(sc.get('margin')),
                            'findings': sc.get('findings') or [], 'error': sc.get('error'),
-                           'supplies': [{'id': r['id'], 'percent': 0 + r['percent'],
+                           'supplies': [{'id': r['id'], 'percent': _numify(r['percent']),
                                          'flow': Q(r['flow']), 'pressure': P(r['pressure']),
                                          'status': r['status']} for r in sc['supplies']]}
                           for sc in s['scenarios']]
@@ -397,10 +413,10 @@ def dpv_json(net, va, dry):
             'accelerator': e.get('accelerator'),
             'loss_basis': e.get('loss'), 'equivalent_length': r4(e.get('eql')),
             'loss_source': e.get('loss_source'), 'data_status': e.get('data_status'),
-            'database_valve': ({'maker': db['maker'], 'model': db['model'], 'dn': 0 + db['dn'],
+            'database_valve': ({'maker': db['maker'], 'model': db['model'], 'dn': _numify(db['dn']),
                                 'reference_bore': r4(e.get('ref_bore')),
-                                'reference_c': (None if e.get('ref_c') is None else 0 + e['ref_c']),
-                                'cv': (None if e.get('cv') is None else 0 + e['cv']),
+                                'reference_c': (None if e.get('ref_c') is None else _numify(e['ref_c'])),
+                                'cv': (None if e.get('cv') is None else _numify(e['cv'])),
                                 'published_trip': db.get('trip'),
                                 'rated_pressure': db.get('pmax'),
                                 'status': db.get('status'), 'source': db.get('source')}
