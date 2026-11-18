@@ -58,7 +58,8 @@ BORE = 'BORE'
 EPS_DEFAULT = 0.045     # mm, as parse gives a pipe with none
 
 def blank(v):
-    return v is None or not re.search(r'\S', v or '')
+    # as in Perl, a number is its own text: 50 is not blank.
+    return v is None or not re.search(r'\S', str(v))
 
 #------------------------------------------------------------------------------
 # Units.
@@ -95,7 +96,9 @@ def show(q, v, units=None):
     return v / factor(q, units_of(units)[q])
 
 def is_num(v):
-    return v is not None and re.match(r'^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*\Z', v) is not None
+    # as in Perl, a number is its own text: 500 is a valid field value.
+    return v is not None and re.match(
+        r'^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*\Z', str(v)) is not None
 
 # pipe_types -- the choices for PIPE TYPE: every type in the database, then
 # BORE for a bore typed in.
@@ -144,7 +147,7 @@ def number(label, v, rule='pos'):
     if blank(v):
         return None, '%s IS NEEDED' % label
     if not is_num(v):
-        return None, "%s '%s' IS NOT A NUMBER" % (label, re.sub(r'^\s+|\s+$', '', v))
+        return None, "%s '%s' IS NOT A NUMBER" % (label, re.sub(r'^\s+|\s+$', '', str(v)))
     n = float(v)
     if rule == 'pos' and n <= 0:
         return None, '%s MUST BE ABOVE ZERO' % label

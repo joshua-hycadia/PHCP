@@ -50,7 +50,9 @@ def choices(type_, fits, unit):
                 continue
         tok = inch.get(dn) if (unit or 'MM') == 'IN' else dn
         if tok is not None:
-            out.append([dn, tok, bore])
+            # bore as a number: the database holds it as text ('53.0'), and
+            # the sums below use it as one (Perl numified it silently).
+            out.append([dn, tok, float(bore)])
     return out
 
 #------------------------------------------------------------------------------

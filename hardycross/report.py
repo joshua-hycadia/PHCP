@@ -1271,13 +1271,16 @@ def supply_graph_data(net, dm):
         # The key figures as Section 9 prints them, for the key beside the
         # drawn graph: [ label, flow or '', pressure ].
         'figures': (
-            [
-                ['COMBINED DUTY', at(dm['q_demand'], uf, qu), at(dm['p_demand'], up, pu)],
-                ['COMBINED SUPPLY', '', at(dm['p_avail'], up, pu)],
-                ['MARGIN' if dm['margin'] >= 0 else 'SHORTFALL', '', at(abs(dm['margin']), up, pu)],
-                (['OPERATING', at(dm['q_oper'], uf, qu), at(dm['p_oper'], up, pu)]
-                 if dm.get('one_pressure') else []),
-            ] if combined else
+            [r for r in (
+                [
+                    ['COMBINED DUTY', at(dm['q_demand'], uf, qu), at(dm['p_demand'], up, pu)],
+                    ['COMBINED SUPPLY', '', at(dm['p_avail'], up, pu)],
+                    ['MARGIN' if dm['margin'] >= 0 else 'SHORTFALL', '',
+                     at(abs(dm['margin']), up, pu)],
+                ] +
+                ([['OPERATING', at(dm['q_oper'], uf, qu), at(dm['p_oper'], up, pu)]]
+                 if dm.get('one_pressure') else []))
+             if r] if combined else
             [
                 ['OPERATING', at(dm['q_oper'], uf, qu), at(dm['p_oper'], up, pu)],
                 ['SHARE OF ALL SUPPLIES', '',

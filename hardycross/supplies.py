@@ -70,7 +70,7 @@ def solve_variant(text, mutate):
 
 # trial_of -- a variant solved and classified (Demand.trial).
 def trial_of(text, mutate):
-    ok, net = solve_variant(text, mutate)
+    ok, net = solve_variant(text, mutate)[:2]
     return demand.trial(ok, net)
 
 # state_of -- what a supply is doing, in one word.

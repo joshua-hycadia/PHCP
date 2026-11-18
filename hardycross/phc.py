@@ -57,6 +57,13 @@ INCH_DN = {'0.5': 15, '0.75': 20, '1': 25, '1.25': 32, '1.5': 40,
 
 FIT_SHORT = {'G': 'GV', 'C': 'CV', 'B': 'BV'}
 
+
+# ascii -- a database string shown in the editor: degrees as DEG, anything
+# else beyond ASCII dropped, in capitals.
+def _ascii(s):
+    s = '' if s is None else s.replace('\N{DEGREE SIGN}', ' DEG')
+    return re.sub(r'[^\x20-\x7E]', '', s).upper()
+
 CMD = {
     'TITLE':     {'kind': 'setting', 'fixed': [['TEXT', 'text']]},
     'PROJECT':   {'kind': 'setting', 'fixed': [['FIELD', 'field'], ['TEXT', 'text']]},
@@ -331,7 +338,7 @@ def analyse(raw, partial=False):
         if len(f) % 3:
             return more('%s', 'START END' if len(f) % 3 == 1 else 'END')
         for i in range(len(f)):
-            err = check_field('node' if i % 3 else 'new', f[i], {},
+            err = check_field('node' if i % 3 else 'new', f[i], {'pos': [], 'opt': []},
                               'NODE' if i % 3 else 'NAME')
             if err is not None:
                 return bad('%s', err)
@@ -339,14 +346,14 @@ def analyse(raw, partial=False):
         if not f:
             return more('OUTLET')
         for t in f:
-            err = check_field('node', t, {}, 'OUTLET')
+            err = check_field('node', t, a, 'OUTLET')
             if err is not None:
                 return bad('%s', err)
     elif rest == 'names':
         if not f:
             return more('NAME')
         for t in f:
-            err = check_field('new', t, {}, 'NAME')
+            err = check_field('new', t, {'pos': [], 'opt': []}, 'NAME')
             if err is not None:
                 return bad('%s', err)
     elif rest == 'dpvloss':
@@ -390,7 +397,7 @@ def analyse(raw, partial=False):
                 if float(f[i]) < 0 or float(f[i]) > 100:
                     return bad('A SUPPLY RUNS AT 0 (OUT OF SERVICE) TO 100 PERCENT OF ITS PRESSURE')
             else:
-                err = check_field('node', f[i], {}, 'SUPPLY')
+                err = check_field('node', f[i], {'pos': [], 'opt': []}, 'SUPPLY')
                 if err is not None:
                     return bad('%s', err)
     elif f:
@@ -1041,7 +1048,7 @@ def translate(text):
             p = a['pos']
             elems.append(['PUMPS', ' '.join([p[0], p[1], p[2], '0', p[3]] + a['rest']), n])
         elif what == 'DEVICE':
-            elems.append([device_row(device[name], pipe[name], name, units, at)])
+            elems.append(list(device_row(device[name], pipe[name], name, units, at)))
 
     #---------------------------------------------------- pump duties
     duty_rows = []
@@ -1100,7 +1107,7 @@ def pipe_row(p, name, frm, eqv, units, dw, at):
         if fit:
             row.append('FIT=' + ','.join(fit))
     if use.get('c') is not None:
-        row.append(('EPS=%s' % fmt(size_mm(float(use['c']), units['SIZE']))) if dw
+        row.append(('EPS=%s' % fmt(size_mm(use['c'], units['SIZE']))) if dw
                    else ('C=%s' % use['c']))
     if eqv:
         row.append('EQV=%s' % fmt(length_metres(eqv['len'], units['LENGTH'])))
@@ -1297,9 +1304,232 @@ def read_model(path):
         fail('cannot open input file %s', path)
     return read_string(text, os.path.dirname(path))
 
-# reset_db_cache -- forget the pick lists, after the database is edited and
-# reloaded.  (The Perl original clears memoised look-up tables here; this
-# port computes them from the database each call, so there is nothing to
-# clear -- the call is kept for the interface's sake.)
+# The fitting pick lists, read once from the database file and cleared by
+# reset_db_cache after it is edited: FIT => { source => { code => label } },
+# KPRIME => { code => label }, and each pipe type's DNs, smallest first.
+FITCODE = {}
+KPCODE = {}
+DNS = {}
+
+
+def fitting_tables():
+    if FITCODE:
+        return
+    ensure_db()
+    try:
+        fh = open(pipedata.path(), encoding='utf-8')
+    except OSError:
+        return
+    with fh:
+        for l in fh:
+            l = l.rstrip('\n')
+            if re.match(r'^\s*(#|$)', l):
+                continue
+            f = l.split('|')
+            if f[0] == 'FIT':
+                FITCODE.setdefault(f[1], {}).setdefault(f[2], _ascii(f[3]))
+            elif f[0] == 'KPRIME':
+                KPCODE.setdefault(f[1], _ascii(f[2]))
+            elif f[0] == 'PIPE':
+                DNS.setdefault(f[1], []).append(f[2])
+    # DNS entries stay as they are written in the file; the comparisons
+    # against a DN numify in the original, so compare as strings here
+
+
 def reset_db_cache():
-    pass
+    # forget the pick lists, after the database is edited and reloaded
+    FITCODE.clear()
+    KPCODE.clear()
+    DNS.clear()
+
+
+# pipe_type_choices -- the USE pick list: every type in the database with
+# its name, then BORE.
+def pipe_type_choices():
+    ensure_db()
+    out = [[t, _ascii(pipedata.pipe_type(t)['name'])] for t in pipedata.pipe_types()]
+    out.append(['BORE', 'PIPES GIVEN BY THEIR BORE, WITH NO PIPE TYPE'])
+    return out
+
+
+# fitting_choices -- the codes a pipe of this type can take at this DN (or
+# at any of its sizes when the DN is not known yet), short forms first.
+def fitting_choices(type_, dn):
+    if type_ is None or type_ == 'BORE':
+        return []
+    fitting_tables()
+    dns = DNS.get(type_) or []
+    if dn is not None and str(dn) in dns:
+        dns = [str(dn)]
+    label = {}
+    order = []
+    src = {pipedata.governing_source(type_, d)['table'] for d in dns}
+    for s in sorted(src):
+        tbl = KPCODE if s == 'PPI' else FITCODE.get(s, {})
+        for code in sorted(tbl):
+            if code not in label:
+                order.append(code)
+            label.setdefault(code, tbl[code])
+    out = []
+    for s in sorted(FIT_SHORT):
+        if FIT_SHORT[s] in label:
+            out.append([s, 'SHORT FOR %s: %s' % (FIT_SHORT[s], label[FIT_SHORT[s]])])
+    out += [[code, label[code]] for code in order]
+    return out
+
+
+# step_id -- the next name in a series: P7 -> P8, N09 -> N10, 4101 -> 4102.
+def step_id(id_):
+    id_ = id_ or ''
+    m = re.match(r'^(.*?)(\d+)\Z', id_)
+    if m:
+        return m.group(1) + ('%0*d' % (len(m.group(2)), int(m.group(2)) + 1))
+    return id_ + '2'
+
+
+# propose -- the likely next line after a complete line.
+#
+# The same command with its names stepped.  A pipe starts where the last one
+# ended, keeps its length and size, and drops its fittings.  Settings, USE and
+# the copy and change commands propose nothing.
+def propose(line):
+    a = analyse(line)
+    if a['status'] != 'ok':
+        return None
+    k = a['key']
+    p = list(a['pos'])
+    more = list(a['opt']) + list(a['rest'])
+    if k == 'PIPE':
+        return ' '.join(['PIPE', step_id(p[0]), p[2], step_id(p[2])] + [p[3], p[4]])
+    if k in ('NODE', 'WATER', 'SPRINKLER', 'HYDRANT', 'HREEL', 'PUMP') \
+            or command_spec(k)['kind'] == 'device':
+        return ' '.join([k, step_id(p[0])] + p[1:] + more)
+    if k == 'FIXEDFLOW':
+        return ' '.join([k, step_id(p[0]), step_id(p[1])] + p[2:] + more)
+    return None
+
+
+# check_line -- one line, checked as it is typed.
+#
+#   $context  {
+#     use     => 'ASAM' or 'BORE', or { type, c }: the USE in force
+#     units   => { LENGTH => 'M', ... }: the file's units (defaults otherwise)
+#     method  => 'HW' or 'DW'
+#     options => { FITTING_BASIS => 'STANDARD' }
+#     nodes   => [ names ] or { name => 1 }: the defined nodes
+#     cursor  => the cursor's column (default: end of line)
+#   }
+#
+# Returns { status, message, template => { command, text, fields, current },
+# choices => [ [code, description] ], proposal, undefined => [ nodes ] }.
+#
+# A PIPE, outlet, PUMP or WATER line the language accepts is also built as its
+# row by the network builder itself, so a DN the pipe type does not make
+# or a fitting the database lacks is an error as it is typed -- by the same
+# rule and in the same words as when the model is solved.
+def check_line(line, ctx=None):
+    ctx = ctx or {}
+    line = line if line is not None else ''
+    cursor = ctx.get('cursor', len(line))
+    use = ctx.get('use', 'BORE')
+    if not isinstance(use, dict):
+        use = {'type': str(use).upper()}
+    units = dict(UNIT_DEFAULT)
+    units.update(ctx.get('units') or {})
+
+    a = analyse(line, cursor >= len(strip_comment(line)))
+    r = {'status': 'ok' if a['status'] == 'blank' else a['status'],
+         'message': a.get('msg') or '', 'choices': [], 'proposal': None,
+         'undefined': []}
+    if a['status'] == 'blank':
+        return r
+    c = command_spec(a.get('key') or '')
+    if c and a['status'] == 'incomplete':
+        r['message'] = '%s NEEDS %s' % (c['name'], a['msg'])
+
+    #---------------------------------------------- the cursor's field
+    # Words before the cursor; inside or at the end of a word, that word is
+    # the current one, otherwise a new one is starting.
+    before = strip_comment(line)[:cursor]
+    w = before.split()
+    idx = len(w) - 1 if re.search(r'\S\Z', before) else len(w)   # 0 is the command
+    if c:
+        fields = template_fields(c)
+        cur = -1 if idx <= 0 else idx - 1
+        if cur > len(fields) - 1:
+            cur = len(fields) - 1              # text, fittings, pairs run on
+        r['template'] = {'command': c['name'], 'text': template_text(c['name']),
+                         'fields': fields, 'current': cur}
+        label = fields[cur] if cur >= 0 else ''
+        q = str(w[1]).upper() if len(w) > 1 else ''
+        if c['name'] == 'USE' and cur == 0:
+            r['choices'] = pipe_type_choices()
+        elif c['name'] in ('PIPE', 'CHANGEPIPE') and label == 'FITTINGS ...':
+            i = 4 if c['name'] == 'PIPE' else 2
+            sz = a['pos'][i] if i < len(a['pos']) else None
+            r['choices'] = fitting_choices(use['type'],
+                                           size_dn(sz, units['SIZE']) if sz is not None else None)
+        elif c['name'] == 'UNITS' and cur == 0:
+            r['choices'] = [[x, ' '.join(UNIT_CHOICES[x])] for x in UNIT_QUANTITIES]
+        elif c['name'] == 'UNITS' and cur == 1 and q in UNIT_CHOICES:
+            r['choices'] = [[x, 'DEFAULT' if x == UNIT_DEFAULT[q] else '']
+                            for x in UNIT_CHOICES[q]]
+        elif c['name'] == 'METHOD' and cur == 0:
+            r['choices'] = [['HW', 'HAZEN-WILLIAMS'], ['DW', 'DARCY-WEISBACH']]
+        elif c['name'] == 'OPTION' and cur == 0:
+            r['choices'] = [[x, ''] for x in OPTIONS]
+    else:
+        r['template'] = {'command': '', 'text': '', 'fields': [], 'current': -1}
+    if r['status'] != 'ok':
+        return r
+
+    #---------------------------------------------- the parser's verdict
+    from . import sizing
+    net = new_net()
+    try:
+        set_unit(net, 'FLOW', units['FLOW'])
+        set_unit(net, 'PRESSURE', units['PRESSURE'])
+        opts = ctx.get('options') or {}
+        for k_ in sorted(x for x in opts if opts[x] is not None):
+            parse_row(net, 'OPTIONS', [k_, opts[k_]])
+
+        def at(n, msg, *args):
+            fail(msg, *args)
+            # the caller's line number is 0 here; the editor owns the real one
+        k, p = a['key'], list(a['pos'])
+        if k == 'PIPE':
+            # SIZE 0: the pipe is to be sized - checked as the reader checks it.
+            auto = None
+            if is_num(p[4]) and float(p[4]) == 0:
+                if (use.get('type') or 'BORE') == 'BORE':
+                    fail('SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE - '
+                                    'PUT A USE <PIPETYPE> LINE BEFORE IT')
+                ch = sizing.choices(use['type'], a['rest'], units['SIZE'])
+                if not ch:
+                    fail('NO SIZE OF %s HAS ALL ITS FITTINGS IN THE DATABASE, '
+                                    'SO IT CANNOT BE SIZED', use['type'])
+                auto = ch[0][0]
+            row = pipe_row({'line': 0, 'use': use, 'start': p[1], 'end': p[2],
+                            'auto_dn': auto, 'len': p[3], 'size': p[4], 'fits': a['rest']},
+                           p[0], None, None, units, (ctx.get('method') or '') == 'DW', at)
+            parse_row(net, 'PIPES', tokenize(row))
+        elif c.get('otype') and float(p[3]) != 0:
+            req = ('P=' + fmt(-float(p[2]))) if float(p[2]) < 0 else ('Q=%s' % (p[2],))
+            parse_row(net, 'DISCHARGES',
+                           [p[0], p[0], c['otype'],
+                            'K=' + fmt(k_factor_to_model(float(p[3]), units)), req])
+        elif k == 'PUMP':
+            parse_row(net, 'PUMPS', list(p[0:3]) + ['0', p[3]] + list(a['rest']))
+        elif k == 'WATER' and a['rest']:
+            parse_row(net, 'SUPPLIES', [p[0], p[0], 'CURVE', '0', p[2]] + list(a['rest']))
+    except ModelError as e:
+        r['status'], r['message'] = 'error', str(e.msg).upper()
+        return r
+
+    #---------------------------------------------- nodes, and what is next
+    known = ctx.get('nodes')
+    if known:
+        k = known if isinstance(known, dict) else {x: 1 for x in known}
+        r['undefined'] = [n for n in nodes_used(a) if n not in k]
+    r['proposal'] = propose(line)
+    return r

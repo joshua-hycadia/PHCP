@@ -78,21 +78,35 @@ comparison set exercises - ported and verified:
   (results block identical, timestamp line aside) all verified against the
   Perl.
 
-Still to port in later stages: the full ASCII report (`Report.pm`), the
-PDF writer, the supply graph (`Graph.pm`), auto sizing, design areas, the
-three windows, the QUICK TOOLS and the Windows packaging.
+Still to port in later stages: the three windows and the Windows packaging.
 
-## Stage 2 - the ASCII report and the PDF
+## Stage 2 - the ASCII report and the PDF (done on this branch)
 
-Branch: `job/python-port-report`.  `Report.pm` (132-column ASCII) and
-`PDF.pm` ported; verified byte for byte on the comparison set
-(`phcp.py model.phc report.txt` against `phcp.pl model.phc report.txt`).
+`Report.pm` ported in full (`hardycross/report.py`): the cover sheet, the
+15 numbered sections, the supply graph appendices and `--save`-side helpers,
+verified byte for byte on the comparison set
+(`phcp.py model.phc report.txt` against `phcp.pl model.phc report.txt`;
+`tools/compare_python.py --report` runs both on a model and diffs).
+`PDF.pm` ported as `hardycross/pdfout.py`: the same paginated print of the
+ASCII report, with the fonts embedded whole and the supply graph drawn from
+the same numbers.  A report PDF written by each agrees byte for byte except
+the creation timestamp and the compressed font streams (the zlib in this
+sandbox's Perl and its Python differ); the fonts themselves decompress to
+identical bytes.  The `.phg` supply-graph file, its sheet and its PDF page
+(`Graph.pm` -> `hardycross/graph.py`) are ported with the same parity
+checks (text sheet identical; sheet content stream identical).
 
-## Stage 3 - the remaining engine surface
+## Stage 3 - the remaining engine surface (done on this branch)
 
-Branch: `job/python-port-engine-rest`.  `Sizing.pm`, `Areas.pm`, `Graph.pm`,
-`Tools.pm` ported, with the corresponding `tools/test_*.py` harnesses run
-against the Perl's expected outputs.
+`Sizing.pm` -> `hardycross/sizing.py`, `Areas.pm` -> `hardycross/areas.py`,
+`Tools.pm` -> `hardycross/tools.py` and `DbEdit.pm` -> `hardycross/dbedit.py`
+ported.  The calculators behind QUICK TOOLS and ORIFICE PLATE were checked
+case by case against the Perl (velocity, K-factor, K conversion, loss by
+both methods, fittings, orifice plate in both modes, unit conversions, every
+error message), and the database editor headlessly (row edits that keep the
+original text of unchanged fields, add/delete with the cross-checks,
+check_all on a broken file, save with the SHA-256 guard, unchanged file
+round-trips to the same bytes).
 
 ## Stage 4 - the windows
 

@@ -145,14 +145,20 @@ def sha256():    return _SHA256 or ''
 def pipe_type(code): return _PIPETYPE.get(code)
 def pipe_types(): return sorted(_PIPETYPE)
 
+# _dnkey -- a DN as the database writes it.  The database file keys its
+# tables by the DN as text ('25'); callers arrive with either the text or
+# the number, and the original's look-ups stringified the same way.
+def _dnkey(dn):
+    return str(dn) if isinstance(dn, int) else dn
+
 def bore(type_, dn):
-    r = _PIPE.get(type_, {}).get(dn)
+    r = _PIPE.get(type_ or '', {}).get(_dnkey(dn))
     if r is None:
         return None
     return None if r['bore'] == 'DASH' else r['bore']
 
 def pipe_row(type_, dn):
-    return _PIPE.get(type_, {}).get(dn)
+    return _PIPE.get(type_ or '', {}).get(_dnkey(dn))
 
 # ---------------------------------------------------------------- dry valves
 def dry_valve(maker, model, dn):
@@ -256,7 +262,7 @@ def parse_fittings(spec):
     return (items, None)
 
 def resolve(**a):
-    type_ = a.get('type'); dn = a.get('dn'); c = a.get('c'); spec = a.get('spec')
+    type_ = a.get('type'); dn = _dnkey(a.get('dn')); c = a.get('c'); spec = a.get('spec')
     out = {'total': 0, 'records': [], 'errors': []}
     items, err = parse_fittings(spec)
     if err:
