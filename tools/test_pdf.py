@@ -84,6 +84,15 @@ def slurp(p):
         return f.read().decode('latin-1')
 
 
+def slurp_text(p):
+    # As the Perl's open '<': text mode, so CRLF is read as LF on Windows.
+    with open(p, 'rb') as f:
+        b = f.read()
+    if os.name == 'nt':
+        b = b.replace(b'\r\n', b'\n')
+    return b.decode('latin-1')
+
+
 tmpfiles = []
 for m in models:
     name = re.sub(r'.*/', '', m)
@@ -96,7 +105,7 @@ for m in models:
     run(m, pdf)
     try:
         P = slurp(pdf)
-        T = slurp(txt)
+        T = slurp_text(txt)
     except OSError:
         continue
 
