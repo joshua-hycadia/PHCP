@@ -131,7 +131,12 @@ def read_curve(net, tk, frm, rising):
     return fit_curve(c, rising)
 
 def read_model(path):
-    # Kept for the Perl API's shape; phc.read_model does the work.
+    # A .phc command file is the one file type PHCP reads: any other file
+    # (an old .hcx above all) is refused here, with the reason, before the
+    # .phc reader sees it -- as Parse.pm's read_model does.  phc.read_model
+    # does the work.
+    if not re.search(r'\.phc\Z', path, re.I):
+        fail('%s IS NOT A .PHC MODEL. PHCP READS .PHC FILES ONLY', path)
     from . import phc
     return phc.read_model(path)
 

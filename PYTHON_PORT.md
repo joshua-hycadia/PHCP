@@ -172,3 +172,35 @@ examples the build's smoke test solves; the parity harness
 (`tools/compare_python.py`, retired) compared the two programs on every
 one of them, text, JSON, report and exit status, before the Perl was
 deleted.
+
+## Suites ported after stage 6
+
+`tools/test_phc.py` (314), `test_json.py` (109), `test_results.py` (28),
+`test_acceptance.py` (99), `test_report_checks.py` (615 checks) and
+`test_pdf.py` (188 checks): check-for-check ports of the Perl suites, run
+against the Perl original first for their counts, which the Python matches.
+Part 3 of `test_phc.py` reproduces Perl's drand48 and List::Util's shuffle,
+so the same shuffled orders are solved.  Four checks the Perl passed
+vacuously (a failed match in `is()`'s list context: the CD and PRA band
+messages are in capitals, the patterns were not) are tested for real,
+against the messages the Perl gives.
+
+Port bugs these suites found, each checked against the Perl on the same
+input and fixed to match it:
+
+- a `.hcx` (or any non-`.phc`) file reached the `.phc` reader and failed on
+  its first line; `parse.read_model` now refuses it by name first, as
+  `Parse.pm` does (exit 2, `... IS NOT A .PHC MODEL. PHCP READS .PHC FILES
+  ONLY`).
+- a database dry pipe valve on Schedule 40 pipe (TYCO DPV-1) crashed the
+  solve: the reference bore was the database's text.  `pipedata.dry_valve`
+  now makes it a number.
+- `DPVTRIP`'s open-sprinkler count and air temperature stayed text, so the
+  trip estimate crashed and the JSON would print `"open" : "1"` where the
+  Perl prints `1`; `phc.py` now stores them as numbers.
+- the report's Section 13 printed `DN%d` from the database's text (a
+  crash), and dropped every estimated-time row (`dry_time_rows` built the
+  rows and threw them away); both fixed, and its note names
+  `HardyCross::DryTime` as the Perl's does.
+- `jsonout.FALSE` was true in a boolean test; it now tests false, as
+  `JSON::PP::false` does.

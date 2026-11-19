@@ -43,7 +43,8 @@ jobs:
       - name: Test suites
         run: |
           set -e
-          for t in test_editor test_isometric test_revit; do
+          for t in test_editor test_isometric test_revit test_phc test_json test_results \
+                   test_acceptance test_report_checks test_pdf test_impossible; do
             echo "== $t"
             python3 tools/$t.py
           done

@@ -763,9 +763,17 @@ def translate(text):
             elif k == 'DPVAIR':
                 d[slot] = p[1]
             else:
+                # The open count and the air temperature are checked as
+                # numbers above and in check_field, and the Perl carries them
+                # on as numbers from there (they reach the JSON as 1, not
+                # "1"; the trip estimate does arithmetic with them), so they
+                # are made numbers here.
+                cnt = a['opt'][0] if len(a['opt']) > 0 else None
+                tmp = a['opt'][1] if len(a['opt']) > 1 else None
                 d[slot] = {'orifice_mm': size_mm(p[1], units['SIZE']),
-                           'count': a['opt'][0] if len(a['opt']) > 0 else None,
-                           'temp': a['opt'][1] if len(a['opt']) > 1 else None,
+                           'count': (None if cnt is None else
+                                     int(cnt) if re.match(r'^\d+$', cnt) else float(cnt)),
+                           'temp': None if tmp is None else float(tmp),
                            'static': a['opt'][2] if len(a['opt']) > 2 else None}
             d[slot + '_line'] = n
         elif k in ('NRV', 'NRVMODEL', 'NRVLOSS'):
