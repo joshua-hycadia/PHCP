@@ -95,6 +95,12 @@ python3 tools/test_editor_window.py     # the editor window (re-runs under xvfb-
 python3 tools/test_sheet_window.py     # the spreadsheet window (re-runs under xvfb-run)
 python3 tools/test_isometric_window.py  # the isometric window (re-runs under xvfb-run)
 python3 tools/test_impossible.py       # tools/impossible/: models that must not be accepted
+python3 tools/test_validate.py             # validation and the false positives it catches
+python3 tools/test_velocity_pressure.py    # OPTION VELOCITY_PRESSURE, against a hand check
+python3 tools/test_curves.py               # supply, pump and loss curves, the orifice plate Cd
+python3 tools/test_drytime.py              # the dry pipe valve trip and transit estimates
+python3 tools/test_sizing.py               # auto pipe sizing
+python3 tools/test_graph.py                # the Q^1.85 supply graph, its file, sheet and report appendix
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux and the build on

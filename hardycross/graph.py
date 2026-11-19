@@ -293,14 +293,21 @@ def series(chk):
 #------------------------------------------------------------------------------
 # The .phg file.
 #------------------------------------------------------------------------------
+# _pstr -- a field as Perl interpolates it: text as it is, a number (a
+# graph built in code, or a unit conversion) as %.15g, so 1500/60 is 25.
+def _pstr(v):
+    if isinstance(v, float):
+        return '%.15g' % v
+    return str(v)
+
 def write_file(g, path):
     l = ['// PHCP Q^1.85 WATER SUPPLY GRAPH', '']
     for k in PROJECT:
         if not blank(g['project'].get(k)):
-            l.append('%-7s %s' % (k, g['project'][k]))
+            l.append('%-7s %s' % (k, _pstr(g['project'][k])))
     for k in AXIS:
         if not blank(g['axis'].get(k)):
-            l.append('%-7s %s' % (k, g['axis'][k]))
+            l.append('%-7s %s' % (k, _pstr(g['axis'][k])))
     u = units(g)
     l += ['UNITS   FLOW %s' % u['FLOW'], 'UNITS   PRESSURE %s' % u['PRESSURE']]
     for c in CURVES:
@@ -308,24 +315,34 @@ def write_file(g, path):
         for r in g[c]:
             if blank(r[0]) and blank(r[1]):
                 continue
-            l.append('%-7s %s %s' % (c, r[0] if not blank(r[0]) else '-',
-                                     r[1] if not blank(r[1]) else '-'))
+            l.append('%-7s %s %s' % (c, _pstr(r[0]) if not blank(r[0]) else '-',
+                                     _pstr(r[1]) if not blank(r[1]) else '-'))
     l += ['', '// DUTY: FLOW, PRESSURE, LABEL, DESCRIPTION']
     for r in g['duty']:
         if all(blank(x) for x in r):
             continue
         label, desc, q, p = r
-        l.append(' '.join(['DUTY   ', ('-' if blank(q) else q), ('-' if blank(p) else p),
-                           ('-' if blank(label) else re.sub(r'\s+', '_', label))]
-                          + ([] if blank(desc) else [desc])))
-    with open(path, 'w') as fh:
+        l.append(' '.join(['DUTY   ', ('-' if blank(q) else _pstr(q)), ('-' if blank(p) else _pstr(p)),
+                           ('-' if blank(label) else re.sub(r'\s+', '_', _pstr(label)))]
+                          + ([] if blank(desc) else [_pstr(desc)])))
+    try:
+        fh = open(path, 'w')
+    except OSError as e:
+        raise ModelFileError('CANNOT WRITE %s: %s\n' % (path, e.strerror))
+    with fh:
         fh.write(''.join(x + '\n' for x in l))
     return 1
 
 # read_file -- a graph from a .phg file; dies with the line at fault.
 def read_file(path):
-    with open(path) as fh:
-        lines = fh.readlines()
+    # Read as bytes, as the Perl does: each byte outside printable ASCII is
+    # one space below, and only \n ends a line.  A file that cannot be
+    # opened says so in the Perl's words.
+    try:
+        with open(path, encoding='latin-1', newline='') as fh:
+            lines = fh.readlines()
+    except OSError as e:
+        raise ModelFileError('CANNOT READ %s: %s\n' % (path, e.strerror))
     g = new_graph()
     n = {'A': 0, 'B': 0, 'D': 0, 'DUTY': 0}
     for ln, l in enumerate(lines, 1):

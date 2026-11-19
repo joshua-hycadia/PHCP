@@ -47,6 +47,12 @@ python3 tools/test_isometric.py         # verify the isometric drawing, and the 
 python3 tools/test_isometric_window.py   # drive the isometric window (uses xvfb-run if no display)
 python3 tools/test_revit.py              # the Revit extension, without Revit
 python3 tools/test_impossible.py [phcp.exe]  # verify the models in tools/impossible/ are not accepted, through the program
+python3 tools/test_validate.py             # validation and the false positives it catches
+python3 tools/test_velocity_pressure.py    # OPTION VELOCITY_PRESSURE, against a hand check
+python3 tools/test_curves.py               # supply, pump and loss curves, the orifice plate Cd
+python3 tools/test_drytime.py              # the dry pipe valve trip and transit estimates
+python3 tools/test_sizing.py               # auto pipe sizing
+python3 tools/test_graph.py                # the Q^1.85 supply graph, its file, sheet and report appendix
 python tools/build_docs.py              # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
 python build_windows.py                 # build phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe (PyInstaller)
 ```
@@ -1550,12 +1556,20 @@ built on.  The suites that remain, in Python:
 | isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
 | isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
 | impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
+| validation, acceptance and exit status (`tools/test_validate.py`) | 58 / 58 |
+| velocity pressure, hand check and OFF unchanged (`tools/test_velocity_pressure.py`) | 85 / 85 |
+| curves and the orifice plate Cd, against hand figures (`tools/test_curves.py`) | 24 / 24 |
+| dry pipe valve time estimates (`tools/test_drytime.py`) | 28 / 28 |
+| auto pipe sizing (`tools/test_sizing.py`; the Perl suite's 43 and the solves of example 12) | 44 / 44 |
+| supply graph, file, sheet and report (`tools/test_graph.py`) | 60 / 60 |
 
 The Perl suites behind the other figures in the table below - the .phc
 language (314), the JSON interface (109), the report hand-checks (615),
-the PDF (188), validation (58), the supplies, the dry pipe valve, the
+the PDF (188), the supplies, the dry pipe valve, the
 results saved back, the benchmarks (32), the check valves (94) and the
-rest - ran against the Perl original and are retired with it; their
+rest - ran against the Perl original and are retired with it (the
+validation, velocity pressure, curve, dry time, sizing and supply graph
+suites are ported, check for check, and listed above); their
 ground is held by the comparison set, which solved the same models, and
 by the examples, which the build's smoke test solves.
 

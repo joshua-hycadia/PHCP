@@ -1239,10 +1239,14 @@ def read_string(text, dir_=None):
         t = d.get('trip')
         if t:
             e['transient']['orifice_mm'] = t['orifice_mm']
+            # The count and temperature are the model's text; the Perl
+            # numifies them where they are used (DryTime's n * pi and
+            # T + 273.15), and the JSON then prints them as numbers.  The
+            # count is checked a whole number above.
             if t.get('count') is not None:
-                e['transient']['open_count'] = t['count']
+                e['transient']['open_count'] = int(t['count'])
             if t.get('temp') is not None:
-                e['transient']['air_temp_c'] = t['temp']
+                e['transient']['air_temp_c'] = float(t['temp'])
             if t.get('static') is not None:
                 e['transient']['static_water'] = float(t['static']) * net['f_pres']
     # The check valve of each supply that has one, on the supply itself.
