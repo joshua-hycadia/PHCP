@@ -169,66 +169,6 @@ jobs:
           if-no-files-found: warn
 
   release:
-    types: [published]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  test-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Python/Tk and a virtual display
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb xauth imagemagick python3-tk
-      - name: Test suites
-        run: |
-          set -e
-          for t in test_editor test_isometric test_revit; do
-            echo "== $t"
-            python3 tools/$t.py
-          done
-      - name: Windows suites, under Xvfb
-        run: |
-          set -e
-          python3 tools/test_editor_window.py
-          python3 tools/test_sheet_window.py
-          python3 tools/test_isometric_window.py
-      # The Word documents are built from the Markdown here, so a broken
-      # table or a missing picture fails the run.  The .docx and .pdf in
-      # docs/ are built on a PC with Word (tools/build_docs.py) and committed.
-      - name: The user guide and reference manual as Word documents
-        run: |
-          pip install python-docx
-          python3 tools/build_docs.py --no-pdf
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build with build_windows.py
-        shell: pwsh
-        run: python build_windows.py
-      # The models that must not be accepted, through the program a user
-      # runs: the built phcp.exe, not the script it was built from.
-      - name: Impossible models refused by the built phcp.exe
-        shell: pwsh
-        run: python tools/test_impossible.py dist\phcp.exe
-      - name: Keep the programs
-        uses: actions/upload-artifact@v4
-        with:
-          name: phcp-windows
-          path: |
-            dist/phcp.exe
-            dist/phcp_editor.exe
-            dist/phcp_sheet.exe
-            dist/phcp_isometric.exe
-          if-no-files-found: warn
-
-  release:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     needs: [test-linux, parity, build-windows]
     runs-on: ubuntu-latest

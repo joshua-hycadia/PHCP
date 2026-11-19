@@ -56,6 +56,12 @@ python3 tools/test_isometric.py         # verify the isometric drawing, and the 
 python3 tools/test_isometric_window.py   # drive the isometric window (uses xvfb-run if no display)
 python3 tools/test_revit.py              # the Revit extension, without Revit
 python3 tools/test_impossible.py [phcp.exe]  # verify the models in tools/impossible/ are not accepted, through the program
+python3 tools/test_phc.py [--full]       # the .phc language and its line checker (--full also solves example 04)
+python3 tools/test_json.py              # phcp --json against the plain output of the same solve
+python3 tools/test_results.py           # the results block --save writes back into the .phc
+python3 tools/test_acceptance.py        # the audit of 11 November 2026: each false positive refused
+python3 tools/test_report_checks.py     # the report's arithmetic, worked from the printed figures
+python3 tools/test_pdf.py               # the PDF report's structure, text and drawn graph
 python tools/build_docs.py              # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
 python build_windows.py                 # build phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe (PyInstaller)
 ```
@@ -1559,12 +1565,19 @@ built on.  The suites that remain, in Python:
 | isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
 | isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
 | impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
+| the .phc language and its line checker (`tools/test_phc.py`) | 314 / 314 |
+| the JSON interface (`tools/test_json.py`) | 109 / 109 |
+| the results saved back into the model (`tools/test_results.py`) | 28 / 28 |
+| the audit's false positives refused (`tools/test_acceptance.py`) | 99 / 99 |
+| report hand-checks across 10 examples (`tools/test_report_checks.py`) | 615 / 615 |
+| PDF report structure across 10 examples (`tools/test_pdf.py`) | 188 / 188 |
 
-The Perl suites behind the other figures in the table below - the .phc
-language (314), the JSON interface (109), the report hand-checks (615),
-the PDF (188), validation (58), the supplies, the dry pipe valve, the
-results saved back, the benchmarks (32), the check valves (94) and the
-rest - ran against the Perl original and are retired with it; their
+The .phc language, JSON, results, acceptance, report hand-check and PDF
+suites above are check-for-check ports of the Perl suites, with the same
+counts the Perl gave.  The other Perl suites behind the figures in the
+table below - validation (58), the supplies, the dry pipe valve, the
+benchmarks (32), the check valves (94) and the rest - ran against the
+Perl original and are retired with it; their
 ground is held by the comparison set, which solved the same models, and
 by the examples, which the build's smoke test solves.
 

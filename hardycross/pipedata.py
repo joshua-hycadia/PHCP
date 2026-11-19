@@ -185,7 +185,11 @@ def dry_valve(maker, model, dn):
     if m:
         v['bore_mm'] = float(m.group(1)) * 25.4
     elif (r['ref'] or '').upper() == 'S40':
-        v['bore_mm'] = bore('S40', dn)
+        # bore() gives the database's own text; the Perl numifies it where
+        # it is used (the Hazen-Williams loss, the JSON, the report), so it
+        # is made a number here, as the IN branch above is.
+        b = bore('S40', dn)
+        v['bore_mm'] = float(b) if b is not None else None
     else:
         v['bore_mm'] = None
     m = num.match(r['trip'] or '')

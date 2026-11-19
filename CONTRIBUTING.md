@@ -103,6 +103,12 @@ python3 tools/test_editor_window.py     # the editor window (re-runs under xvfb-
 python3 tools/test_sheet_window.py     # the spreadsheet window (re-runs under xvfb-run)
 python3 tools/test_isometric_window.py  # the isometric window (re-runs under xvfb-run)
 python3 tools/test_impossible.py       # tools/impossible/: models that must not be accepted
+python3 tools/test_phc.py              # .phc language (--full also solves 04)
+python3 tools/test_json.py             # phcp --json, the interface other programs call
+python3 tools/test_results.py          # the results saved back into the .phc
+python3 tools/test_acceptance.py       # the audit of 11 November 2026: each false positive refused
+python3 tools/test_report_checks.py    # report hand-checks across the examples
+python3 tools/test_pdf.py              # PDF structure checks
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux and the build on

@@ -514,6 +514,11 @@ class _Bool:
     def __init__(self, v):
         self.v = v
 
+    # JSON::PP::true and ::false are overloaded to be true and false in a
+    # boolean test, so a caller reading results() sees false as false.
+    def __bool__(self):
+        return bool(self.v)
+
 TRUE = _Bool(True)
 FALSE = _Bool(False)
 
