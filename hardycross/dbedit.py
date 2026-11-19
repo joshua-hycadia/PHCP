@@ -368,7 +368,12 @@ def save(db, path=None, date=None):
         if os.access(db['path'], os.R_OK):
             pipedata.load(db['path'])
         return {'ok': 0, 'problems': [{'message': _exc_msg(e).upper()}]}
-    os.rename(tmp, path)
+    # Perl's rename replaces an existing file on Windows too; os.rename
+    # does not there, os.replace does.
+    try:
+        os.replace(tmp, path)
+    except OSError as e:
+        hardycross.fail('CANNOT REPLACE %s: %s', path, (e.strerror or str(e)).upper())
     pipedata.load(path)
     phc.reset_db_cache()
     db['path'] = path

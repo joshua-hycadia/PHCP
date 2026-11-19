@@ -2964,7 +2964,8 @@ def write_file(f):
     if not text.endswith('\n'):
         text = text + '\n'
     try:
-        with open(f, 'w') as fh:
+        # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
+        with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
         message('CANNOT WRITE %s: %s' % (f, e), True)

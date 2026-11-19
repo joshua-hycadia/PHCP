@@ -1716,7 +1716,8 @@ def write_buffer(f):
         text = _results_mod.with_results(text, solved['net'],
                                          solved['converged'])
     try:
-        with open(f, 'w', encoding='utf-8', newline='\n') as fh:
+        # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
+        with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
         message('CANNOT WRITE %s: %s' % (f, e), True)

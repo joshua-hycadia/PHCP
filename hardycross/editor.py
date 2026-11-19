@@ -800,7 +800,8 @@ def write_report_file(net, ok, model_path, out):
     if re.search(r'\.pdf\Z', out, re.I):
         report.write_pdf_report(net, ok, model_path, out)
     else:
-        with open(out, 'w', encoding='utf-8', newline='') as fh:
+        # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
+        with open(out, 'w', encoding='utf-8', errors='surrogateescape') as fh:
             fh.write(report.write_report(net, ok, model_path))
     return 1
 

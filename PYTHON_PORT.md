@@ -266,6 +266,8 @@ What the comparison set does not reach, found by porting the suites and by
 | supply graph file | crashed writing a number; own message for a missing file | as written; `CANNOT READ` |
 | JSON false | true when tested | false |
 | spreadsheet problems before to_text | KeyError | none |
+| database editor SAVE on Windows | failed: os.rename will not replace pipes.dat (found by CI's Windows run) | replaced; a failure is `CANNOT REPLACE` |
+| the editor's and spreadsheet's .phc, the editor's text report, on Windows | LF; the sheet in the locale's encoding | text mode: CRLF on Windows, UTF-8 |
 
 Outside the engine: the Revit ENGINE button ran `phcp` directly, which
 Windows cannot start (now run with Python); `comparison/tools/rerun_phcp.py`
