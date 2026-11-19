@@ -513,6 +513,10 @@ class _Bool:
     __slots__ = ('v',)
     def __init__(self, v):
         self.v = v
+    # JSON::PP::true and ::false overload bool: a caller testing a result's
+    # 'pass' (if (!$o->{pass})) sees the truth value, not a defined object.
+    def __bool__(self):
+        return bool(self.v)
 
     # JSON::PP::true and ::false are overloaded to be true and false in a
     # boolean test, so a caller reading results() sees false as false.

@@ -112,6 +112,10 @@ def size(net, ok, **arg):
     goal = o.get('SIZING_GOAL') or 'SMALLEST'
     ntrials = o.get('SIZING_TRIALS')
     ntrials = TRIALS if ntrials is None else ntrials
+    # OPTION SIZING_TRIALS is kept as its text (the report prints it as
+    # given, as the Perl does); the search counts with its number, as the
+    # Perl's 1 .. $ntrials and %d numify it.
+    nt = int(ntrials)
     progress = arg.get('progress')
     trial = 0
     m = margin_of(o.get('SIZING_MARGIN'), net)
@@ -150,7 +154,7 @@ def size(net, ok, **arg):
         if progress:
             progress('AUTO SIZING %d PIPE%s - TRIAL %d OF %d - %d SOLVES'
                      % (len(units), '' if len(units) == 1 else 'S',
-                        trial or 1, ntrials, solves))
+                        trial or 1, nt, solves))
         short = 0
         vel = [None] * len(units)
         for case in cases:
@@ -178,9 +182,13 @@ def size(net, ok, **arg):
             except Exception:
                 return {'short': 1e12}
             solves += 1
+            # As the Perl's eval { solve_model($f) } or return: a solve
+            # that does not converge fails the trial, as one that dies.
             try:
-                solve_model(f)
+                cf = solve_model(f)
             except Exception:
+                cf = None
+            if not cf:
                 return {'short': 1e9}
             emap = {e.get('id') or '': e for e in f['elems'][1:]}
             for i in range(len(units)):
@@ -243,7 +251,9 @@ def size(net, ok, **arg):
             # the fastest pipe.
             if bscore <= 0:
                 open_ = [i for i in range(len(units)) if idx[i] < top(i)]
-                best = sorted(open_, key=lambda b: -(now['vel'][b] or 0))[0]
+                # A failed assessment has no velocities: all count as 0.
+                vel = now.get('vel') or [None] * len(units)
+                best = sorted(open_, key=lambda b: -(vel[b] or 0))[0]
                 t = list(idx)
                 t[best] += 1
                 bres = assess(t)
@@ -257,9 +267,11 @@ def size(net, ok, **arg):
         changed = True
         while changed:
             changed = False
+            # The biggest saving first, and among equal savings the largest
+            # DN first (the Perl sorts both descending, numerically).
             order = sorted([i for i in range(len(units)) if idx[i] > 0],
                            key=lambda b: (-cost(b, idx[b], idx[b] - 1),
-                                          units[b]['choices'][idx[b]][0]))
+                                          -float(units[b]['choices'][idx[b]][0])))
             for i in order:
                 t = list(idx)
                 t[i] -= 1
@@ -311,7 +323,7 @@ def size(net, ok, **arg):
         trials = []
         best = None
         bobj = None
-        for k in range(1, ntrials + 1):
+        for k in range(1, nt + 1):
             trial = k
             before = solves
             if k == 1:

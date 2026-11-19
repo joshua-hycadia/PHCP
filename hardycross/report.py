@@ -75,6 +75,11 @@ def ascii_(t):
     return t
 
 # A number as Perl stringifies it for a hash key or a %s field: 120.0 is "120".
+# _dn -- a database DN for %d.  It is the text of pipes.dat; Perl's %d
+# numifies it ("100" prints 100), Python's needs the number.
+def _dn(v):
+    return int(float(v))
+
 def _s(v):
     if v is None:
         return ''
@@ -1517,9 +1522,9 @@ def auto_sizing(net):
     out += '\n' + wrap(' ', ('Pipes given size 0 in the model were sized by PHCP from the sizes the database has for '
                  'their pipe type, for %s, keeping a margin under the supply of %s and no sized pipe faster '
                  'than %s m/s.  A PIPE line sizes its pipe and its unchanged copies (PC).  %s  The search made '
-                 '%d trial(s) (OPTION SIZING_TRIALS), each from a different start, and kept the best that passes: a '
+                 '%s trial(s) (OPTION SIZING_TRIALS), each from a different start, and kept the best that passes: a '
                  'good answer, not always the least possible.  The model keeps size 0, with each size after its line as '
-                 '//AS - <size>.' % (goal, s['margin'], _s(s['vel_limit']), res, s['ntrials'])))
+                 '//AS - <size>.' % (goal, s['margin'], _s(s['vel_limit']), res, _s(s['ntrials']))))
     return out
 
 #------------------------------------------------------------------------------

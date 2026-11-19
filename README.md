@@ -62,6 +62,12 @@ python3 tools/test_results.py           # the results block --save writes back i
 python3 tools/test_acceptance.py        # the audit of 11 November 2026: each false positive refused
 python3 tools/test_report_checks.py     # the report's arithmetic, worked from the printed figures
 python3 tools/test_pdf.py               # the PDF report's structure, text and drawn graph
+python3 tools/test_validate.py             # validation and the false positives it catches
+python3 tools/test_velocity_pressure.py    # OPTION VELOCITY_PRESSURE, against a hand check
+python3 tools/test_curves.py               # supply, pump and loss curves, the orifice plate Cd
+python3 tools/test_drytime.py              # the dry pipe valve trip and transit estimates
+python3 tools/test_sizing.py               # auto pipe sizing
+python3 tools/test_graph.py                # the Q^1.85 supply graph, its file, sheet and report appendix
 python tools/build_docs.py              # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
 python build_windows.py                 # build phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe (PyInstaller)
 ```
@@ -1545,41 +1551,52 @@ others on the page, and the report says which check to make.
 
 ## Verification
 
-The port itself was verified before the Perl was retired: the frozen
-comparison set of 300 models, text output, JSON, exit status and the full
-text report, byte for byte against the Perl, on the branch the port was
-built on.  The suites that remain, in Python:
+The Python is judged against the last Perl release, PHCP 1.6.0, byte for
+byte: `tools/compare_perl.py` runs every model through both and compares
+the text output, the JSON, the full text report, the `--save` results block
+and the exit status of each; the program's name, the solve's time to the
+minute and the checkout's own path are the only things set aside.  CI runs
+it on every pull request (every 10th model, every example) and on main (all
+of them).  Every Perl test suite is ported to Python check for check, with
+the counts the Perl gave:
 
 | suite | result |
 |---|---|
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
-| the frozen comparison set, text + JSON + exit status, Perl against Python | 300 / 300 |
-| the frozen comparison set, the full text report, Perl against Python | 300 / 300 |
-| AutoCAD exporter, structure | 5 / 5 |
-| Revit extension, without Revit (`tools/test_revit.py`) | 91 / 91 |
-| text editor logic, headless (`tools/test_editor.py`) | 117 / 117 |
-| text editor window, under Xvfb (`tools/test_editor_window.py`) | 167 / 167 |
-| spreadsheet window, under Xvfb (`tools/test_sheet_window.py`) | 62 / 62 |
-| isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
-| isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
-| impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
+| the comparison set, text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 300 / 300 identical |
 | the .phc language and its line checker (`tools/test_phc.py`) | 314 / 314 |
 | the JSON interface (`tools/test_json.py`) | 109 / 109 |
 | the results saved back into the model (`tools/test_results.py`) | 28 / 28 |
 | the audit's false positives refused (`tools/test_acceptance.py`) | 99 / 99 |
 | report hand-checks across 10 examples (`tools/test_report_checks.py`) | 615 / 615 |
 | PDF report structure across 10 examples (`tools/test_pdf.py`) | 188 / 188 |
-
-The .phc language, JSON, results, acceptance, report hand-check and PDF
-suites above are check-for-check ports of the Perl suites, with the same
-counts the Perl gave.  The other Perl suites behind the figures in the
-table below - validation (58), the supplies, the dry pipe valve, the
-benchmarks (32), the check valves (94) and the rest - ran against the
-Perl original and are retired with it; their
-ground is held by the comparison set, which solved the same models, and
-by the examples, which the build's smoke test solves.
+| validation, acceptance and exit status (`tools/test_validate.py`) | 58 / 58 |
+| velocity pressure, hand check and OFF unchanged (`tools/test_velocity_pressure.py`) | 85 / 85 |
+| curves and the orifice plate Cd, against hand figures (`tools/test_curves.py`) | 24 / 24 |
+| dry pipe valve time estimates (`tools/test_drytime.py`) | 28 / 28 |
+| auto pipe sizing (`tools/test_sizing.py`; the Perl suite's 43 and the solves of example 12) | 44 / 44 |
+| supply graph, file, sheet and report (`tools/test_graph.py`) | 60 / 60 |
+| reference values worked without PHCP (`tools/test_benchmarks.py`) | 32 / 32 |
+| check valves at water supplies (`tools/test_check_valves.py`) | 94 / 94 |
+| check valve refinements (`tools/test_nrv_refinements.py`) | 24 / 24 |
+| several water supplies (`tools/test_supplies.py`) | 43 / 43 |
+| the dry pipe valve (`tools/test_dpv.py`) | 52 / 52 |
+| pipe and fitting database (`tools/test_pipedata.py`) | 39 / 39 |
+| database editor (`tools/test_dbedit.py`) | 42 / 42 |
+| QUICK TOOLS and orifice plate calculators (`tools/test_tools.py`) | 76 / 76 |
+| the reference manual against the program (`tools/test_manual.py`) | 15 / 15 |
+| spreadsheet logic, headless (`tools/test_sheet.py`) | 107 / 107 |
+| AutoCAD exporter, structure (`tools/check_lisp.py`) | 5 / 5 |
+| fitting resolver stress, 20024 strings (`tools/stress_resolver.py`) | 0 problems |
+| Revit extension, without Revit (`tools/test_revit.py`) | 95 / 95 |
+| text editor logic, headless (`tools/test_editor.py`) | 117 / 117 |
+| text editor window, under Xvfb (`tools/test_editor_window.py`) | 167 / 167 |
+| spreadsheet window, under Xvfb (`tools/test_sheet_window.py`) | 62 / 62 |
+| isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
+| isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
+| impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
 
 ### Comparison with other calculation programs
 
@@ -1621,8 +1638,8 @@ to run the `comparison` workflow on 16 runners.
 
 ## Stress testing
 
-The invariance stress (run before the port against the Perl, and kept in
-the git history) takes a random
+The invariance stress (`tools/stress_invariance.py`, ported with the
+Perl's random numbers, so a seed gives the same networks) takes a random
 looped network and describes it differently -- elements shuffled, pipes
 reversed, the whole site raised, a pipe split in two, nodes renamed, every
 quantity in different units, the same text solved twice -- and demands the
