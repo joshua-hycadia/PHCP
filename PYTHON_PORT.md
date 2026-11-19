@@ -1,12 +1,13 @@
 # PHCP execution plan - the Python port, and replacing Perl
 
-Status, 17 November 2026.  On branch `job/python-port`, not yet merged: the
-engine and the command-line program ported to Python (`hardycross/`,
-`phcp.py`), verified byte for byte against the Perl on the frozen comparison
-set.  Nothing in the Perl has been changed: the port runs beside it, and the
-Perl stays the released program until the last stage is merged.  Read
-`CONTRIBUTING.md` before starting.  Its rules are binding, and apply to the
-Python source exactly as to the Perl.
+Status, 19 November 2026.  All six stages done, the Perl removed, and an
+audit after them: every Perl test suite and tool ported check for check
+(stage 7 and the sections after it), the command line's error paths and byte
+handling made the Perl's, and the parity harness kept for good as
+`tools/compare_perl.py`, run in CI against the last Perl release (PHCP 1.6.0,
+commit cfafeef), which stays the specification.  Read `CONTRIBUTING.md`
+before starting.  Its rules are binding, and apply to the Python source
+exactly as to the Perl.
 
 ## Goal
 
@@ -240,3 +241,41 @@ input and fixed to match it:
   `HardyCross::DryTime` as the Perl's does.
 - `jsonout.FALSE` was true in a boolean test; it now tests false, as
   `JSON::PP::false` does.
+
+## The audit of 19 November 2026
+
+What the comparison set does not reach, found by porting the suites and by
+`tools/compare_perl.py` beyond it, each fixed to do what the Perl does:
+
+| area | the port did | the Perl does |
+|---|---|---|
+| usage error | exit 1 | exit 255 (die) |
+| report, PDF, --annotate or --save file not writable | a traceback, exit 1 | `cannot write X: reason`, exit errno |
+| a file that is not .phc | read it as .phc | `X IS NOT A .PHC MODEL`, exit 2 |
+| a model with a Latin-1 byte | refused (UTF-8 decode error) | solved; bytes passed through |
+| stdout and --save on Windows | CRLF | LF (binmode) |
+| CRLF model, model_sha256 on Linux | hashed without the CRs | hashed as read |
+| CPVC pipe with fittings | refused, `MODEL ERROR: 'basis_type'` | solved |
+| database dry pipe valve on Schedule 40 | crashed in the friction loss | solved |
+| DPVTRIP counts and temperature | text: the trip estimate crashed | numbers |
+| report section 13 | crashed on a database DN; trip, transit and delivery rows dropped | printed |
+| SCENARIO percentages | crashed the assessment and the JSON | numbers where used |
+| auto sizing, tied savings | smallest DN first (example 12: 226 solves in trial 2) | largest first (242) |
+| auto sizing, unconverged operating point | went on with its velocities | trial failed |
+| OPTION SIZING_TRIALS | crashed | used |
+| supply graph file | crashed writing a number; own message for a missing file | as written; `CANNOT READ` |
+| JSON false | true when tested | false |
+| spreadsheet problems before to_text | KeyError | none |
+
+Outside the engine: the Revit ENGINE button ran `phcp` directly, which
+Windows cannot start (now run with Python); `comparison/tools/rerun_phcp.py`
+still ran the deleted `phcp.pl`; `build_windows.py` left the programs in
+dist\, away from the office `data\pipes.dat`, and did not read the icon
+back as it said (now beside the source, checked by `tools/check_exe_icon.py`);
+CI ran 3 of the suites and no parity check (now every suite, the stress,
+the screenshots, the icon checks, the Windows suites and the parity job).
+
+Five Perl checks (four in test_phc, one in test_tools) passed without
+testing anything: a failed match inside `is(...)`'s arguments shifts the
+explanation into the result.  The Python checks test the messages both
+programs really give; the counts are unchanged.
