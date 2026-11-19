@@ -25,6 +25,8 @@
 #   --modes LIST      comma list of text,json,report,save,annotate,strict
 #                     (default: text,json,report,save)
 #   --every N         every Nth model of each set only (a quick sample)
+#   --skip REGEX      leave out the models whose name matches (e.g. the
+#                     largest grids, whose demand search is slow in Perl)
 #   --all             include the stress model examples/04_grid1000
 #   -j N              models run in parallel (default: the CPU count)
 #   -v                show the first differing line of each mismatch
@@ -170,10 +172,11 @@ def main():
     sets, names = [], []
     modes = ['text', 'json', 'report', 'save']
     every, jobs, verbose, everything = 1, os.cpu_count() or 2, False, False
+    skip = None
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ('--perl', '--set', '--modes', '--every', '-j'):
+        if a in ('--perl', '--set', '--modes', '--every', '--skip', '-j'):
             if i + 1 >= len(args):
                 sys.exit('%s needs a value' % a)
             v = args[i + 1]
@@ -189,6 +192,8 @@ def main():
                 for m in modes:
                     if m not in MODES:
                         sys.exit('unknown mode %s' % m)
+            elif a == '--skip':
+                skip = re.compile(v)
             elif a == '--every':
                 every = max(1, int(v))
             else:
@@ -210,7 +215,10 @@ def main():
         found = sorted(glob.glob(os.path.join(ROOT, SETS[s], '*.phc')))
         if s == 'examples' and not everything:
             found = [f for f in found if '04_grid1000' not in f]
-        models.extend(found[::every])
+        found = found[::every]
+        if skip:
+            found = [f for f in found if not skip.search(os.path.splitext(os.path.basename(f))[0])]
+        models.extend(found)
     if names:
         # A name is a model of the sets (G001), or a path to any .phc.
         paths = [os.path.abspath(n) for n in names if os.path.isfile(n)]

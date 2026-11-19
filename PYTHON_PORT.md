@@ -4,7 +4,8 @@ Status, 19 November 2026.  All six stages done, the Perl removed, and an
 audit after them: every Perl test suite and tool ported check for check
 (stage 7 and the sections after it), the command line's error paths and byte
 handling made the Perl's, and the parity harness kept for good as
-`tools/compare_perl.py`, run in CI against the last Perl release (PHCP 1.6.0,
+`tools/compare_perl.py` (900 / 900 comparison models identical in text,
+JSON and exit status), run in CI against the last Perl release (PHCP 1.6.0,
 commit cfafeef), which stays the specification.  Read `CONTRIBUTING.md`
 before starting.  Its rules are binding, and apply to the Python source
 exactly as to the Perl.

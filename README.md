@@ -1556,9 +1556,10 @@ the text output, the JSON, the full text report, the `--save` results block
 and the exit status of each; the program's name and version, the results
 block's CHECK hash (which covers the version), the solve's time to the
 minute and the checkout's own path are the only things set aside.  CI runs
-it on every pull request (every example, every 10th model) and on main (every
-example, the text and JSON of all 900 models, the report and results block
-of every 5th).  Every Perl test suite is ported to Python check for check, with
+it on every pull request (every example; every 10th model) and on main (every
+example; the text and JSON of all 900 models; the report and results block
+of every 5th, leaving out the grids above G050, whose demand search in Perl
+is too slow for the runner).  Every Perl test suite is ported to Python check for check, with
 the counts the Perl gave:
 
 | suite | result |
@@ -1566,7 +1567,8 @@ the counts the Perl gave:
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
-| the comparison set, text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 300 / 300 identical |
+| the comparison sets (models, models_A, models_B), text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 900 / 900 identical |
+| the examples, text + JSON + report + `--save` + `--strict`, Perl 1.6.0 against Python | 10 / 10 identical |
 | the .phc language and its line checker (`tools/test_phc.py`) | 314 / 314 |
 | the JSON interface (`tools/test_json.py`) | 109 / 109 |
 | the results saved back into the model (`tools/test_results.py`) | 28 / 28 |

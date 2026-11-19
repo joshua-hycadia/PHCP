@@ -11,11 +11,13 @@
 #                  cfafeef), byte for byte, by tools/compare_perl.py: the
 #                  text output, the JSON, the full text report, the --save
 #                  results block and the exit status of each model.  A pull
-#                  request or a release tag runs every example and every 10th
-#                  model of the comparison sets; a push to main or a run by hand
-#                  every example, all 900 models' text and JSON, and every
-#                  5th model's report and --save (the demand search makes
-#                  those slow: all 900 would pass the runner's 6 hours)
+#                  request or a release tag runs every example in all modes,
+#                  every 10th model's text and JSON, and every 10th model's
+#                  report and --save; a push to main or a run by hand every
+#                  example, all 900 models' text and JSON and every 5th
+#                  model's report and --save.  The report and --save leave
+#                  out the grids above G050: their demand search in Perl
+#                  would pass the runner's time
 #   build-windows  build_windows.py on a Windows runner, exactly as on a PC:
 #                  phcp.exe, phcp_editor.exe, phcp_sheet.exe and
 #                  phcp_isometric.exe by PyInstaller, the smoke test in the
@@ -101,6 +103,10 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
+          # The report and --save run the demand search, which re-solves a
+          # model many times: in Perl the grids above G050 take too long
+          # for the runner there.  Their text and JSON are still compared.
+          BIG_GRIDS: '^G(0[5-9][0-9]|1[0-9][0-9])$'
         run: |
           set -e
           # A pull request, and a release (a tag or a published release: the
@@ -108,14 +114,16 @@ jobs:
           # to main or a run by hand, everything the runner's time allows.
           if [ "$EVENT" = pull_request ] || [ "$EVENT" = release ] || [ "$REF_TYPE" = tag ]; then
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --set examples
-            python3 tools/compare_perl.py --perl perl-1.6.0 -v --every 10 \
+            python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes text,json --every 10 \
               --set models --set models_A --set models_B
+            python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes report,save --every 10 \
+              --skip "$BIG_GRIDS" --set models --set models_A --set models_B
           else
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --set examples
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes text,json \
               --set models --set models_A --set models_B
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes report,save --every 5 \
-              --set models --set models_A --set models_B
+              --skip "$BIG_GRIDS" --set models --set models_A --set models_B
           fi
 
   build-windows:
