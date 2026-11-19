@@ -102,7 +102,7 @@ for m in models:
     if os.name == 'nt':
         b = b.replace(b'\r\n', b'\n')
     L = b.decode('utf-8', 'surrogateescape').splitlines(True)
-    name = re.sub(r'.*/', '', m)
+    name = os.path.basename(m)
 
     sec = ''
     for li in range(len(L)):

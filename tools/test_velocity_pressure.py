@@ -90,7 +90,7 @@ def node_p(n):
 
 
 def base(m):
-    return re.sub(r'.*/', '', m)
+    return os.path.basename(m)
 
 
 EXAMPLES = [m for m in sorted(glob.glob(os.path.join(EX, '*.phc'))) if 'grid1000' not in m]

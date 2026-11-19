@@ -95,7 +95,7 @@ def slurp_text(p):
 
 tmpfiles = []
 for m in models:
-    name = re.sub(r'.*/', '', m)
+    name = os.path.basename(m)
     fd, txt = tempfile.mkstemp(suffix='.txt')
     os.close(fd)
     fd, pdf = tempfile.mkstemp(suffix='.pdf')

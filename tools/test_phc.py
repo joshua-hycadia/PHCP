@@ -204,7 +204,7 @@ def expected(path):
 
 
 for phcpath in sorted(glob.glob(os.path.join(EX, '*.phc'))):
-    base = re.sub(r'.*/', '', phcpath)
+    base = os.path.basename(phcpath)
     want = re.sub(r'\.phc\Z', '.expected', os.path.join(TOOLS, 'baseline', base))
     p, err = read_phc(slurp(phcpath))
     is_('%s reads' % base, p, err)
@@ -324,7 +324,7 @@ rng = PerlRand(20261028)
 for phcpath in sorted(glob.glob(os.path.join(EX, '*.phc'))):
     if re.search(r'grid1000', phcpath):
         continue
-    base = re.sub(r'.*/', '', phcpath)
+    base = os.path.basename(phcpath)
     lines = [l for l in perl_lines(tighten_phc(slurp(phcpath)))
              if re.search(r'\S', l) and not re.match(r'^\s*//', l)]
     units, group = [], None
