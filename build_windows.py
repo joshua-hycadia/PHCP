@@ -17,9 +17,15 @@
 # Python installers carry with them -- there is nothing to compile.
 #
 # The program icon goes straight in with PyInstaller's --icon, and is
-# checked afterwards by reading the finished .exe back, the way the Perl
-# build does: if the icon step fails the program is built the plain way,
-# without it -- an icon never costs a working program.
+# checked afterwards by reading the finished .exe back
+# (tools/check_exe_icon.py), the way the Perl build did: if the icon step
+# fails the program is built the plain way, without it -- an icon never
+# costs a working program.
+#
+# The finished programs are put in this folder, beside data\, as the Perl
+# build did: a phcp.exe run from here reads (and the editor's DATABASE tab
+# saves) the data\pipes.dat beside it, the office copy that wins over the
+# one packed inside.  PyInstaller's own output stays in dist\.
 #
 # The database (data/pipes.dat), the PDF typefaces (data/fonts) and the
 # icon are packed INSIDE each program: hardycross.pipedata, pdfout and
@@ -29,6 +35,7 @@
 #==============================================================================
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -49,7 +56,7 @@ def have(mod):
     return run([sys.executable, '-c', 'import %s' % mod]) == 0
 
 
-def build(name, script, console):
+def build(name, script, console, with_icon=True):
     # One file, windowed for the three windows and console for the
     # command-line program.  --clean rebuilds from scratch; the work
     # folders (build/, *.spec) are left beside the output for diagnosis.
@@ -63,7 +70,8 @@ def build(name, script, console):
         # Absolute: PyInstaller reads the icon path from the spec it
         # writes in build/, and a relative path would be looked for
         # there, not here.
-        args += ['--icon', os.path.abspath(icon)]
+        if with_icon:
+            args += ['--icon', os.path.abspath(icon)]
         args += ['--add-data',
                  os.pathsep.join([os.path.abspath(icon), 'data'])]
     for extra in ('data/pipes.dat', 'data/fonts'):
@@ -72,14 +80,31 @@ def build(name, script, console):
                      os.pathsep.join([os.path.abspath(extra), 'data'])]
     args.append(script)
     rc = run(args)
-    if rc != 0:
+    exe = name + ('.exe' if sys.platform == 'win32' else '')
+    out = os.path.join('dist', exe)
+    if rc != 0 or not os.path.isfile(out):
+        if with_icon and os.path.isfile(os.path.join('data', 'phcp.ico')):
+            print('WARNING: building %s with the icon failed; built without it' % name)
+            return build(name, script, console, with_icon=False)
         print('ERROR: PyInstaller failed building %s' % name)
         sys.exit(1)
-    out = os.path.join('dist', name + ('.exe' if sys.platform == 'win32' else ''))
-    if not os.path.isfile(out):
-        print('ERROR: %s was not built' % out)
-        sys.exit(1)
-    return out
+    if with_icon and sys.platform == 'win32':
+        sys.path.insert(0, os.path.join(ROOT, 'tools'))
+        import check_exe_icon
+        try:
+            rc, lines = check_exe_icon.check(out, os.path.join('data', 'phcp.ico'))
+        except Exception as e:  # noqa: BLE001 -- a report, never a failed build
+            rc, lines = 1, ['check_exe_icon: %s' % e]
+        for line in lines:
+            print('       ' + line)
+        if rc:
+            print('WARNING: %s does not carry the PHCP icon' % exe)
+    # Beside the source, as the Perl build left it.  Only a .exe: elsewhere
+    # the built program is named phcp, as the script it was built from is.
+    if sys.platform != 'win32':
+        return out
+    shutil.copyfile(out, exe)
+    return exe
 
 
 def main():
@@ -131,7 +156,7 @@ def main():
         print('  The Windows Python installers carry tkinter; reinstall with')
         print('  tcl/tk included to build the windows.')
 
-    exe = os.path.join('dist', 'phcp.exe' if sys.platform == 'win32' else 'phcp')
+    exe = os.path.abspath('phcp.exe' if sys.platform == 'win32' else os.path.join('dist', 'phcp'))
 
     print()
     print('Smoke test: solve an example with %s...' % os.path.basename(exe))
@@ -168,7 +193,7 @@ def main():
         built = ['phcp.exe']
         if gui:
             built += ['phcp_editor.exe', 'phcp_sheet.exe', 'phcp_isometric.exe']
-        print('  Built: %s (in dist\\)' % ', '.join(built))
+        print('  Built: %s (in this folder)' % ', '.join(built))
     else:
         print('  ERROR: the smoke test failed - see above')
         sys.exit(1)

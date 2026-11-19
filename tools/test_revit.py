@@ -727,5 +727,13 @@ good = run(command_for(os.path.join(ROOT, "phcp")),
            HEAD_PHC + "WATER N1 0 900\nSPRINKLER N2 0 -50 80\nPIPE P1 N1 N2 100 100\n", cwd=ROOT)
 is_("an ACCEPTED design is approved", good.approved, good.acceptance)
 
+print("engine command")
+py = "python" if os.name == "nt" else "python3"
+is_("phcp.exe is run directly", command_for(r"C:\PHCP\phcp.exe") == [r"C:\PHCP\phcp.exe"])
+is_("the Python program phcp is run with Python",
+    command_for(os.path.join(ROOT, "phcp")) == [py, os.path.join(ROOT, "phcp")])
+is_("phcp.py is run with Python", command_for("phcp.py") == [py, "phcp.py"])
+is_("no engine, no command", command_for("") is None)
+
 print("\n%d passed, %d failed" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

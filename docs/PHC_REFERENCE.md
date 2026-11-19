@@ -7,7 +7,7 @@ This manual is the reference for every command, field, unit and option the
 `.phc` reader accepts. The README explains how PHCP works and what its report
 contains. This manual explains how to write a model.
 
-`tools/test_manual.pl` checks the manual against the program, so it cannot
+`tools/test_manual.py` checks the manual against the program, so it cannot
 fall behind. It confirms that every command, option, unit and fitting code the
 reader knows is described here, and that every complete example in this
 manual reads and solves.

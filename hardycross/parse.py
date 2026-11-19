@@ -131,7 +131,10 @@ def read_curve(net, tk, frm, rising):
     return fit_curve(c, rising)
 
 def read_model(path):
-    # Kept for the Perl API's shape; phc.read_model does the work.
+    # Any file but a .phc is refused, with the reason; phc.read_model does
+    # the work.
+    if not re.search(r'\.phc\Z', path, re.I):
+        fail('%s IS NOT A .PHC MODEL. PHCP READS .PHC FILES ONLY', path)
     from . import phc
     return phc.read_model(path)
 

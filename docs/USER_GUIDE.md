@@ -7,7 +7,7 @@ PHCP Reference Manual.  How the program works, how it is tested and what it
 does not do are in the README on GitHub.
 
 The pictures are taken from the programs themselves by
-`tools/doc_screenshots.pl`, which CI runs on every pull request.  Each one
+`tools/doc_screenshots.py`, which CI runs on every pull request.  Each one
 shows `examples/02_full_network.phc` after VALIDATE and CALCULATE.  That
 example has two supplies (a tank with a booster pump, and a town main),
 pressure devices, sprinklers, a hydrant and a hose reel.

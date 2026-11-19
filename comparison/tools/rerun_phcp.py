@@ -35,7 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent      # comparison/
 REPO = ROOT.parent                                  # the PHCP checkout
-PHCP = REPO / "phcp.pl"
+PHCP = REPO / "phcp"
 
 
 def folder(suite: str, kind: str) -> Path:
@@ -43,12 +43,12 @@ def folder(suite: str, kind: str) -> Path:
 
 
 def solve(text: str, timeout: float) -> dict:
-    """One `phcp.pl --json` run on a model given as text."""
+    """One `phcp --json` run on a model given as text."""
     with tempfile.NamedTemporaryFile("w", suffix=".phc", delete=False, newline="\n") as f:
         f.write(text)
         path = f.name
     try:
-        r = subprocess.run(["perl", str(PHCP), "--json", path], capture_output=True, text=True,
+        r = subprocess.run([sys.executable, str(PHCP), "--json", path], capture_output=True, text=True,
                            cwd=REPO, timeout=timeout)
     finally:
         Path(path).unlink()

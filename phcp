@@ -26,7 +26,15 @@ from hardycross import VERSION, GAMMA_W, solve_model, continuity_error, is_model
 from hardycross import validate as _validate
 from hardycross import jsonout
 
-USAGE = 'usage: phcp.py [--json] [--strict] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n'
+USAGE = 'usage: phcp [--json] [--strict] [--save] model.phc|- [report.txt|report.pdf] [--report report.pdf] [--annotate out.phc]\n'
+
+
+def die(msg, err=None):
+    # Perl's die: the message, then exit with errno when the failure set
+    # one (2 for a missing folder, 13 for no permission), else 255.
+    sys.stderr.write(msg)
+    sys.stdout.flush()
+    sys.exit((err.errno if err is not None and err.errno else 0) or 255)
 
 
 def fail_out(e):
@@ -38,6 +46,10 @@ def fail_out(e):
 
 def main():
     global json, model
+    # Bytes out as the Perl wrote them (binmode STDOUT): LF on every
+    # platform, and the model's own bytes back unchanged.
+    sys.stdout.reconfigure(encoding='utf-8', errors='surrogateescape', newline='\n')
+    sys.stderr.reconfigure(encoding='utf-8', errors='surrogateescape')
     json = 0
     model = report_path = annotate = None
     save = strict = 0
@@ -52,30 +64,27 @@ def main():
             strict = 1
         elif a == '--report':
             if not argv:
-                sys.stderr.write(USAGE)
-                sys.exit(1)
+                die(USAGE)
             report_path = argv.pop(0)
         elif a == '--annotate':
             if not argv:
-                sys.stderr.write(USAGE)
-                sys.exit(1)
+                die(USAGE)
             annotate = argv.pop(0)
         elif model is None:
             model = a
         elif report_path is None:
             report_path = a
         else:
-            sys.stderr.write(USAGE)
-            sys.exit(1)
+            die(USAGE)
     if model is None:
-        sys.stderr.write(USAGE)
-        sys.exit(1)
+        die(USAGE)
 
     from hardycross.parse import read_model
     from hardycross.phc import read_string
     try:
         if model == '-':
-            text = sys.stdin.read()
+            from hardycross.phc import model_text
+            text = model_text(sys.stdin.buffer.read())
             # A supply graph (SUPPLYGRAPH) is then found from the current folder.
             net = read_string(text, '.')
         else:
@@ -96,7 +105,11 @@ def main():
         except Exception as e:
             fail_out(e)
         if annotate is not None:
-            with open(annotate, 'w') as af:
+            try:
+                af = open(annotate, 'w', encoding='utf-8', errors='surrogateescape')
+            except OSError as e:
+                die('cannot write %s: %s\n' % (annotate, e.strerror), e)
+            with af:
                 af.write(sizing.annotate(text, net['sizing']))
     if net.get('areas'):
         from hardycross import areas
@@ -110,21 +123,35 @@ def main():
         from hardycross import report
         name = 'STDIN.PHC' if model == '-' else model
         if report_path.lower().endswith('.pdf'):
-            report.write_pdf_report(net, ok, name, report_path)
+            try:
+                report.write_pdf_report(net, ok, name, report_path)
+            except OSError as e:
+                die('cannot write %s: %s\n' % (report_path, e.strerror), e)
         else:
-            with open(report_path, 'w') as rf:
+            try:
+                rf = open(report_path, 'w', encoding='utf-8', errors='surrogateescape')
+            except OSError as e:
+                die('cannot write %s: %s\n' % (report_path, e.strerror), e)
+            with rf:
                 rf.write(report.write_report(net, ok, name))
 
     # --save: the results back into the model file, as comments at its end.
     if save:
         if model == '-':
-            sys.stderr.write('--save needs a model file, not standard input\n')
-            sys.exit(1)
+            die('--save needs a model file, not standard input\n')
         from hardycross import results
-        with open(model, 'r') as fh:
-            text = fh.read()
+        from hardycross.phc import model_text
+        try:
+            with open(model, 'rb') as fh:
+                text = model_text(fh.read())
+        except OSError as e:
+            die('cannot read %s: %s\n' % (model, e.strerror), e)
         text = text.replace('\r\n', '\n')
-        with open(model, 'w') as out:
+        try:
+            out = open(model, 'w', encoding='utf-8', errors='surrogateescape', newline='\n')
+        except OSError as e:
+            die('cannot write %s: %s\n' % (model, e.strerror), e)
+        with out:
             out.write(results.with_results(text, net, ok))
 
     if json:

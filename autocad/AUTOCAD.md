@@ -98,7 +98,7 @@ change between exports; the PHCP-TAGS layer is refreshed on each export.
 ## Not yet tested in AutoCAD
 
 This routine was written and structurally checked away from AutoCAD
-(`perl tools/check_lisp.pl`: brackets matched, every function it calls
+(`python3 tools/check_lisp.py`: brackets matched, every function it calls
 defined, every command it announces present, no trace of the old `.hcx`
 format), and the file it writes - example 08 - solves in PHCP exactly as the
 same network did in the old format.  It has not yet been run inside AutoCAD

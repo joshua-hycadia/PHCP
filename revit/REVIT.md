@@ -31,7 +31,7 @@ extension.
    The other buttons refuse to run until it has.
 2. **ENGINE** - choose `phcp.exe` (or `phcp`).  The path is remembered in
    `%APPDATA%\PHCP\revit.ini` on this machine, or `~/.config/PHCP/revit.ini`.
-   `PHCP_EXE` overrides it.  That file is not the Perl program's
+   `PHCP_EXE` overrides it.  That file is not the PHCP program's
    `settings.ini`.
 3. **PROJECT** - the cover sheet, the method (HW or DW), velocity pressure,
    hose allowance, the velocity limit (blank is 6 m/s), the join tolerance

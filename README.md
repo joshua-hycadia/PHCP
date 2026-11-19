@@ -19,7 +19,7 @@ calculation, and how to read the result.  Every `.phc` command is in the
 Reference Manual, [docs/PHCP_Reference_Manual.pdf](docs/PHCP_Reference_Manual.pdf)
 (also as [Word](docs/PHCP_Reference_Manual.docx)).  Both are attached to each
 release.  They are built from `docs/USER_GUIDE.md` and `docs/PHC_REFERENCE.md`,
-which are the text that is edited and checked (`tools/test_manual.pl` holds
+which are the text that is edited and checked (`tools/test_manual.py` holds
 the reference manual to the program).
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
@@ -222,7 +222,7 @@ model whose fixed flow governs, are new.
 **Examples.**  Every example is supplied as `.phc`.  Its solved pipe flows and
 node pressures are frozen in `tools/baseline/<example>.expected`, taken from an
 independent description of the same network solved at tight tolerances, and
-`tools/test_phc.pl` requires the example to reproduce them to 1e-4.  Example 04,
+`tools/test_phc.py` requires the example to reproduce them to 1e-4.  Example 04,
 the 1000-node grid, has only its pipe and node names frozen: its solve takes about
 37 minutes (24 820 iterations, `OPTION MAXITER 30000`), so it is checked to hold
 every pipe and node, and solved only with `--full`, which requires it to converge.
@@ -304,7 +304,7 @@ database's DATASET name and date, its file name and the SHA-256 of the exact
 bytes read (Section 4) - with its full path when it is a team folder's or an
 office copy, so shared data and a local copy cannot be confused.  A
 calculation can always be tied back to the data it used.  Change the DATASET line whenever you change the content, and re-run
-`tools/test_pipedata.pl` after any edit.
+`tools/test_pipedata.py` after any edit.
 
 **Where it is read from**, first found wins: `data/pipes.dat` beside the source;
 inside a packaged `.exe`; `data/pipes.dat` beside the `.exe`.  The last lets the
@@ -364,7 +364,7 @@ AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 
 ### Database checks
 
-`tools/test_pipedata.pl`, 35 checks: C multipliers and diameter modifiers
+`tools/test_pipedata.py`, 35 checks: C multipliers and diameter modifiers
 reproduced to three decimals at a spread of types and sizes; every pipe K in
 the database reproduced from its own bore and C (worst 0.4%); a hand-checked
 DN300 Schedule 20 tee (20.748 m, exact modifier 1.13378); and every rule above.
@@ -450,18 +450,18 @@ there and selects it.
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
-The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
+The window is `phcp_editor.py` - its frame and the NETWORK tab - with each
 other tab in a file of its own under `hardycross/window/` (PROJECT, GRAPH,
 QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).  The isometric
-drawing is a separate program, `phcp_isometric.pl`, forked from this one.
+drawing is a separate program, `phcp_isometric.py`, forked from this one.
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
 and their sorting - is made by
 `hardycross/editor.py`, which has no Tk in it and calls the same `.phc`
 reader the solver uses, so the editor cannot call a line good that the solve
-refuses.  `tools/test_editor.pl` checks those decisions headless;
-`tools/test_editor_window.pl` drives the window itself under a virtual
+refuses.  `tools/test_editor.py` checks those decisions headless;
+`tools/test_editor_window.py` drives the window itself under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
 Linux with Tk 804.036.  The window has been run on Windows 11
@@ -518,16 +518,16 @@ refuse, and it cannot solve a different way.  A click on a problem in
 VALIDATION goes to the cell.
 
 The grids themselves are `hardycross/sheet.py`, which has no Tk in it.
-`tools/test_sheet.pl` reads every example into the grids, writes `.phc`
+`tools/test_sheet.py` reads every example into the grids, writes `.phc`
 again, and checks the solved pipe flows and node pressures against the file
-as it was.  `tools/test_sheet_window.pl` drives the window the way the
+as it was.  `tools/test_sheet_window.py` drives the window the way the
 editor's window test does.
 
 ## The isometric drawing
 
 `python phcp_isometric.py [model.phc]`
 
-A separate program, forked from the text editor.  `phcp_editor.pl` is not
+A separate program, forked from the text editor.  `phcp_editor.py` is not
 changed: it still opens on the NETWORK tab, and this program has no NETWORK
 tab.  It loads the editor for the PROJECT tab, the results, the database and
 the file commands, and the network is drawn instead of typed.  Opening a
@@ -583,7 +583,7 @@ VALIDATE and CALCULATE are unchanged, and run on the text.
 AREA, PUMPDUTY, SUPPLYGRAPH and any other comment are kept.  A copied pipe or
 point (`PC`, `NC`) is written out as the pipe or point it means, and a
 `CHANGEPIPE` stays applied to the one pipe it names, which is what the reader
-does.  `tools/test_isometric.pl` checks the drawing headless, including that
+does.  `tools/test_isometric.py` checks the drawing headless, including that
 every example written back from it solves to the same flows and pressures.
 `tools/test_isometric_window.py` drives the window.
 
@@ -633,7 +633,7 @@ is a town main with a booster pump, checked against a sprinkler and a hydrant
 duty.
 
 `hardycross/graph.py` makes every decision - what is wrong, where the curves
-go, what the sheet shows - with no Tk in it; `tools/test_graph.pl` checks
+go, what the sheet shows - with no Tk in it; `tools/test_graph.py` checks
 the curves against figures worked by a formula written out in the test,
 every refusal, the file, and the sheet's PDF (where the plot, curves, points
 and duties are drawn).
@@ -679,7 +679,7 @@ factors - the US gallon (3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5)
 
 A problem is named under its calculator and the field at fault is outlined
 red.  `hardycross/tools.py` does the work, with no Tk in it;
-`tools/test_tools.pl` checks every answer against a formula written out in
+`tools/test_tools.py` checks every answer against a formula written out in
 the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
 Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
 laminar, and the solver's blend of the two between Re 2000 and 4000) - for
@@ -838,11 +838,11 @@ paper, the supply as a solid line (straight between its entered points, which
 are marked), the system curve dashed through its solved points, D and O
 marked, the margin dimensioned at the demand flow, and beside it a key and the
 four figures of Section 9.  Black on white in the report's typeface.
-`tools/test_pdf.pl` checks that there is one drawn graph for each in the text,
+`tools/test_pdf.py` checks that there is one drawn graph for each in the text,
 that D and O sit where the report's own figures put them - worked independently from the printed numbers - and that every flow
 label is at its place on the q^1.85 axis and clear of the next.
 
-**Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
+**Tested on the page.**  `tools/test_report_checks.py` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
 rounding of the printed figures allowed for: 351 checks across the seven
 examples.  Its
@@ -872,7 +872,7 @@ It is written in core Python.  The typeface, DejaVu Sans Mono, is embedded from
 one monospace face every PDF reader supplies, printed thin and looked dated.
 The fonts are compressed into each PDF whole, about 400 kB a report; if the
 font files are missing the PDF falls back to Courier rather than fail.
-`tools/test_pdf.pl` checks each file the way the specification says a reader
+`tools/test_pdf.py` checks each file the way the specification says a reader
 should: every cross-reference offset landing on its object, stream lengths
 exact, the page count true, every line of the text report present and every
 rule drawn, the typeface embedded, and the graph as above.  Readers silently
@@ -1030,7 +1030,7 @@ sizes, elevations, heads - and exports it as a `.phc`.  See
 `autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.phc` is a file in the
 exact form the routine writes, and solves exactly as the same network did in
 the old format.  The routine has not yet been run inside AutoCAD; what can be
-checked without it is, by `tools/check_lisp.pl` - brackets matched, every
+checked without it is, by `tools/check_lisp.py` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 
@@ -1165,7 +1165,7 @@ points, but a least-squares fit through three or more that did not pass
 through the points entered.  The change moved the results of every example
 with a curve: example 02's town main by 232 L/min and 30 kPa (its supply has
 three points), examples 03, 05 and 08 by under 8 L/min and 1 kPa.
-`tools/test_curves.pl` checks the curves directly.
+`tools/test_curves.py` checks the curves directly.
 
 ## Settings
 
@@ -1180,7 +1180,7 @@ in force and whether it was set in the model or is the program default.
 in-line sprinklers discharge on the normal pressure instead of the total
 pressure.  The default is OFF: every outlet discharges on total pressure,
 q = K sqrt(Pt), and every result is exactly what it was before the option
-existed (`tools/test_velocity_pressure.pl` checks this against results frozen
+existed (`tools/test_velocity_pressure.py` checks this against results frozen
 from the earlier solver).
 
 AS 2118.1:2017 Clause 14.15 leaves the inclusion of velocity pressures to the
@@ -1263,15 +1263,15 @@ settled is not converged, and reverting a pump check valve that would
 isolate part of the network now leaves a network that balances (it used to
 leave the pump's flow at zero, out of continuity, and report it converged).
 An orifice plate's bore is no longer rounded up to its pipe's bore.  No
-result of a valid model changed: `tools/test_velocity_pressure.pl` checks
+result of a valid model changed: `tools/test_velocity_pressure.py` checks
 every example against flows and pressures frozen before, and
-`tools/test_phc.pl` against the baselines.  `tools/test_validate.pl` holds
+`tools/test_phc.py` against the baselines.  `tools/test_validate.py` holds
 each defect found as a model that must now be refused.
 
 ### The audit of 11 November 2026
 
 Each item below was a calculation PHCP accepted, or a check it did not make,
-on 1.5.0 as released; each is reproduced in `tools/test_acceptance.pl`, which
+on 1.5.0 as released; each is reproduced in `tools/test_acceptance.py`, which
 failed on 1.5.0 before the correction, and in `tools/impossible/`.
 
 - **Hydraulic constants.** `OPTION HW_CONST` 0 (no friction: 2400 L/min, 80
@@ -1336,8 +1336,8 @@ failed on 1.5.0 before the correction, and in `tools/impossible/`.
   database's name, issue and fingerprint.
 
 No result of a valid model changed: the examples solve to the same flows and
-pressures (`tools/test_phc.pl`, `tools/test_velocity_pressure.pl`,
-`tools/test_report_checks.pl`).
+pressures (`tools/test_phc.py`, `tools/test_velocity_pressure.py`,
+`tools/test_report_checks.py`).
 
 ### Supply check valves, and the second stage of the audit
 
@@ -1377,7 +1377,7 @@ JSON's `supply_check_valves` give each supply's valve, state, flow, pressure
 and loss.
 
 This stage also found and corrected two defects, each with a test written
-first that failed on main at 1e196b8 (`tools/test_check_valves.pl`, part 1):
+first that failed on main at 1e196b8 (`tools/test_check_valves.py`, part 1):
 
 | # | Defect | Now |
 |---|---|---|
@@ -1390,7 +1390,7 @@ No result of a model without an `NRV` line changed, other than those two.
 
 `HardyCross::Validate` shows that a solved network satisfies PHCP's own
 element equations - consistency, since the check and the solver share them.
-`tools/test_benchmarks.pl` checks the equations themselves against values
+`tools/test_benchmarks.py` checks the equations themselves against values
 worked without any PHCP function: Hazen-Williams against the NFPA 13 US-unit
 form (within 0.02 %), Darcy-Weisbach against Colebrook-White iterated to
 convergence (0.18 %, the density of 1000 PHCP's conventional metre of water
@@ -1440,7 +1440,7 @@ model edited since), TAMPERED (the block itself edited) or NONE.  A block
 from a calculation that was not ACCEPTED says NOT FOR DESIGN USE in its
 first line.  `--json` stays, printed to standard
 output for the programs that call PHCP; no JSON file is written.
-`tools/test_results.pl` checks it.
+`tools/test_results.py` checks it.
 
 ## Several water supplies
 
@@ -1471,7 +1471,7 @@ demand then exists on that basis, unless that supply has a check valve
 (`NRV`): it then shuts, gives nothing, and the search goes on without it.
 
 With one supply the conditional and joint demands are the demand point, and
-`tools/test_supplies.pl` checks that they agree.  The combined supply graph
+`tools/test_supplies.py` checks that they agree.  The combined supply graph
 of Section 9 is unchanged.
 
 ## Dry pipe valves
@@ -1485,7 +1485,7 @@ are in the solve and in Section 13 of the report.  The trip setting
 and `DPVAIR` are recorded for a later water delivery time calculation; PHCP
 calculates no trip, transit or delivery time and does not imply one.  A
 valve with no loss data is refused - no loss is ever assumed for it.  The
-loss model has been checked by hand (`tools/test_dpv.pl`), and no transient behaviour is
+loss model has been checked by hand (`tools/test_dpv.py`), and no transient behaviour is
 modelled.
 
 `VALVE <MAKER> <MODEL>` in place of the loss takes a manufacturer's valve
@@ -1495,7 +1495,7 @@ pipe valves of Reliable, Tyco, Viking and Victaulic, each size with the
 equivalent length its data sheet prints, the reference pipe and C it
 states, its trip ratio, rated working pressure and the document it came
 from (read 10 November 2026).  PHCP works the loss at that reference pipe,
-so it is the valve's own whatever pipe it sits in; `tools/test_dpv.pl`
+so it is the valve's own whatever pipe it sits in; `tools/test_dpv.py`
 checks it against figures printed on the sheets.  Victaulic prints its
 lengths with no reference pipe or C, so its published flow coefficient Cv
 (loss = (Q/Cv)^2) is used instead; the discontinued Victaulic 756 gives
@@ -1513,7 +1513,7 @@ time to the most remote outlet (the sum of L / v along the flow path at the
 demand point's flows) and the time to fill the dry volume.  Their sum is a
 DELIVERY estimate.  They are estimates: they change no other figure, decide
 no acceptance, and are not a water delivery calculation by a listed method.
-`tools/test_drytime.pl` checks the formula against the published worked
+`tools/test_drytime.py` checks the formula against the published worked
 example and its constant against the blow-down of air it comes from.
 
 **Planned** (`PLAN.md`): accelerators, their data and their effect on trip

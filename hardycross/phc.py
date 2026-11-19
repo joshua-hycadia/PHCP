@@ -1296,10 +1296,20 @@ def read_string(text, dir_=None):
     net['warnings'] += pumpcheck.warnings(net)
     return net
 
+def model_text(raw):
+    # The model's bytes as the Perl read them: no decoding layer, so every
+    # byte comes through (a Latin-1 file is not refused), and on Windows the
+    # :crlf layer's CRLF to LF, nothing else (a lone CR is kept).  The bytes
+    # are carried as UTF-8 with surrogateescape, so they are written back,
+    # and hashed (results.fingerprint), exactly as they were read.
+    if os.name == 'nt':
+        raw = raw.replace(b'\r\n', b'\n')
+    return raw.decode('utf-8', 'surrogateescape')
+
 def read_model(path):
     try:
-        with open(path, 'r') as fh:
-            text = fh.read()
+        with open(path, 'rb') as fh:
+            text = model_text(fh.read())
     except OSError:
         fail('cannot open input file %s', path)
     return read_string(text, os.path.dirname(path))

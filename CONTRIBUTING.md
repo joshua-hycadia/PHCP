@@ -65,7 +65,7 @@ A stale README is a defect.
   not been checked against it.
 - `docs/USER_GUIDE.md` is held to the same rule for what a designer sees: a
   window, a tab, a key, a result or an exit code.  Its pictures come from
-  `tools/doc_screenshots.pl`.  When a window changes, take them again: CI's
+  `tools/doc_screenshots.py`.  When a window changes, take them again: CI's
   Linux job keeps a fresh set as the `user-guide-screenshots` artefact on
   every run, so copy those into `docs/images/` rather than taking them by hand.
 - The guide and the reference manual are published as Word and PDF
