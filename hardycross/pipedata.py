@@ -356,8 +356,10 @@ def resolve(**a):
             basis_bore = float(bb)
             dm = 1 if a.get('standard_only') else (bore_f / basis_bore) ** 4.87
         each = float(cell['le']) * cm * dm
+        # A source without corrections (CPVC) has no basis type: the Perl
+        # stores undef there, so .get(), not a KeyError.
         r.update({'label': cell['label'], 'base': float(cell['le']),
-                  'basis_type': src['basis_type'], 'basis_bore': basis_bore,
+                  'basis_type': src.get('basis_type'), 'basis_bore': basis_bore,
                   'basis_c': 120, 'cmult': cm, 'dmult': dm,
                   'each': each, 'total': n * each})
         if src['corrections'] and a.get('standard_only'):

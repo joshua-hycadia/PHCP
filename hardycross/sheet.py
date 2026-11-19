@@ -989,7 +989,9 @@ def problems(sheet):
         n = sheet['nodes'][id_]
         t = normal_type(n['type'])
         loc = {'tab': 'NODES', 'row': row[id_], 'col': 'type', 'node': id_}
-        line = sheet['at']['node'].get(id_)
+        # Before to_text has built the line map there is none: the Perl's
+        # look-up autovivifies and gives undef, so None here, not a KeyError.
+        line = (sheet['at'].get('node') or {}).get(id_)
         if is_outlet(t) and len(trim(n['min_flow'])) and len(trim(n['min_p'])):
             l2 = dict(loc)
             l2['col'] = 'min_p'

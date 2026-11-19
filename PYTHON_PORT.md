@@ -172,3 +172,39 @@ examples the build's smoke test solves; the parity harness
 (`tools/compare_python.py`, retired) compared the two programs on every
 one of them, text, JSON, report and exit status, before the Perl was
 deleted.
+
+## Stage 7 - the remaining suites and tools ported
+
+Nine more of the retired Perl tools ported check for check, each run beside
+its Perl original on the same inputs:
+
+| Python | Perl | checks |
+|---|---|---|
+| `tools/test_pipedata.py` | `test_pipedata.pl` | 39 / 39, output identical |
+| `tools/test_dbedit.py` | `test_dbedit.pl` | 42 / 42, output identical |
+| `tools/test_tools.py` | `test_tools.pl` | 76 / 76, output identical |
+| `tools/test_manual.py` | `test_manual.pl` | 15 / 15, output identical |
+| `tools/test_sheet.py` | `test_sheet.pl` | 107 / 107, output identical |
+| `tools/check_lisp.py` | `check_lisp.pl` | 5 / 5, identical, also on a broken copy |
+| `tools/stress_resolver.py` | `stress_resolver.pl` | 0 problems, identical counts |
+| `tools/stress_invariance.py` | `stress_invariance.pl` | identical results (seeds 20260921, 7, 12345) |
+| `tools/doc_screenshots.py` | `doc_screenshots.pl` | 15 pictures, under Xvfb |
+
+The stress tools reproduce Perl's random numbers (drand48, and List::Util's
+shuffle), so a seed gives the same networks and fitting strings as it did in
+Perl; the only difference in their output is the engine named in the
+heading.
+
+Two port bugs found and fixed, both outside the comparison set:
+
+- `hardycross/pipedata.py` `resolve`: a fitting on CPVC pipe (a source with
+  no corrections, so no basis type) raised a KeyError, which the program
+  reported as `MODEL ERROR: 'basis_type'`; the Perl stores undef and solves
+  the model.
+- `hardycross/sheet.py` `problems`: called before `to_text` had built the
+  line map, it raised a KeyError; the Perl's look-up autovivifies to undef.
+
+One Perl check was vacuous: `test_tools.pl`'s "CD of 0" matches
+`/MORE THAN 0/`, but both programs answer `CD MUST BE ABOVE ZERO`; the Perl
+check passed only through the empty-list-in-`is()` bug.  The Python suite
+asserts the words both programs give.

@@ -19,7 +19,7 @@ calculation, and how to read the result.  Every `.phc` command is in the
 Reference Manual, [docs/PHCP_Reference_Manual.pdf](docs/PHCP_Reference_Manual.pdf)
 (also as [Word](docs/PHCP_Reference_Manual.docx)).  Both are attached to each
 release.  They are built from `docs/USER_GUIDE.md` and `docs/PHC_REFERENCE.md`,
-which are the text that is edited and checked (`tools/test_manual.pl` holds
+which are the text that is edited and checked (`tools/test_manual.py` holds
 the reference manual to the program).
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
@@ -40,7 +40,16 @@ python phcp_isometric.py model.phc      # the same calculation, drawn on an isom
 ./phcp model.phc report.txt             # ...or as plain ASCII text
 ./phcp --json model.phc                 # the results as JSON, for another program
 ./phcp model.phc --annotate out.phc     # with auto sizing: the model with each size as //AS - <size>
+python3 tools/test_pipedata.py          # verify the pipe and fitting database and its resolver
+python3 tools/stress_resolver.py        # every fitting code at every size, and 20000 hostile strings
+python3 tools/stress_invariance.py 60   # random networks, each solved again described another way
+python3 tools/check_lisp.py             # the AutoCAD exporter's structure (no AutoCAD here)
 python3 tools/test_editor.py            # verify the editor's logic
+python3 tools/test_sheet.py             # verify the spreadsheet's grids, headless
+python3 tools/test_dbedit.py            # verify database editing and the team folder, headless
+python3 tools/test_tools.py             # verify the QUICK TOOLS calculators and the orifice plate
+python3 tools/test_manual.py            # verify docs/PHC_REFERENCE.md against the program
+python3 tools/doc_screenshots.py        # take the user guide's pictures (uses xvfb-run if no display)
 python3 tools/test_editor_window.py     # drive the editor window (uses xvfb-run if no display)
 python3 tools/test_sheet_window.py      # drive the spreadsheet window (uses xvfb-run if no display)
 python3 tools/test_isometric.py         # verify the isometric drawing, and the .phc it writes
@@ -304,7 +313,7 @@ database's DATASET name and date, its file name and the SHA-256 of the exact
 bytes read (Section 4) - with its full path when it is a team folder's or an
 office copy, so shared data and a local copy cannot be confused.  A
 calculation can always be tied back to the data it used.  Change the DATASET line whenever you change the content, and re-run
-`tools/test_pipedata.pl` after any edit.
+`tools/test_pipedata.py` after any edit.
 
 **Where it is read from**, first found wins: `data/pipes.dat` beside the source;
 inside a packaged `.exe`; `data/pipes.dat` beside the `.exe`.  The last lets the
@@ -364,7 +373,7 @@ AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 
 ### Database checks
 
-`tools/test_pipedata.pl`, 35 checks: C multipliers and diameter modifiers
+`tools/test_pipedata.py`, 39 checks: C multipliers and diameter modifiers
 reproduced to three decimals at a spread of types and sizes; every pipe K in
 the database reproduced from its own bore and C (worst 0.4%); a hand-checked
 DN300 Schedule 20 tee (20.748 m, exact modifier 1.13378); and every rule above.
@@ -518,9 +527,9 @@ refuse, and it cannot solve a different way.  A click on a problem in
 VALIDATION goes to the cell.
 
 The grids themselves are `hardycross/sheet.py`, which has no Tk in it.
-`tools/test_sheet.pl` reads every example into the grids, writes `.phc`
+`tools/test_sheet.py` reads every example into the grids, writes `.phc`
 again, and checks the solved pipe flows and node pressures against the file
-as it was.  `tools/test_sheet_window.pl` drives the window the way the
+as it was.  `tools/test_sheet_window.py` drives the window the way the
 editor's window test does.
 
 ## The isometric drawing
@@ -679,7 +688,7 @@ factors - the US gallon (3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5)
 
 A problem is named under its calculator and the field at fault is outlined
 red.  `hardycross/tools.py` does the work, with no Tk in it;
-`tools/test_tools.pl` checks every answer against a formula written out in
+`tools/test_tools.py` checks every answer against a formula written out in
 the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
 Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
 laminar, and the solver's blend of the two between Re 2000 and 4000) - for
@@ -1030,7 +1039,7 @@ sizes, elevations, heads - and exports it as a `.phc`.  See
 `autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.phc` is a file in the
 exact form the routine writes, and solves exactly as the same network did in
 the old format.  The routine has not yet been run inside AutoCAD; what can be
-checked without it is, by `tools/check_lisp.pl` - brackets matched, every
+checked without it is, by `tools/check_lisp.py` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 

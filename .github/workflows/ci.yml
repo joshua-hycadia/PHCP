@@ -2,7 +2,9 @@
 #
 #   test-linux     the Python test suites, including the Revit extension
 #                  without Revit, and the editor, spreadsheet and isometric
-#                  windows under a virtual display; then the user guide and
+#                  windows under a virtual display; the invariance stress;
+#                  the user guide's pictures (tools/doc_screenshots.py),
+#                  kept as the run's artefact; then the user guide and
 #                  reference manual as Word documents, which fails the run if
 #                  a table or picture is broken
 #   build-windows  build_windows.py on a Windows runner, exactly as on a PC:
@@ -43,7 +45,8 @@ jobs:
       - name: Test suites
         run: |
           set -e
-          for t in test_editor test_isometric test_revit; do
+          for t in test_pipedata test_editor test_sheet test_dbedit test_isometric \
+                   test_tools test_manual test_revit test_impossible check_lisp stress_resolver; do
             echo "== $t"
             python3 tools/$t.py
           done
@@ -53,6 +56,15 @@ jobs:
           python3 tools/test_editor_window.py
           python3 tools/test_sheet_window.py
           python3 tools/test_isometric_window.py
+      - name: Invariance stress, 60 random networks
+        run: python3 tools/stress_invariance.py 60
+      - name: The user guide's pictures, under Xvfb
+        run: python3 tools/doc_screenshots.py screenshots
+      - name: Keep the pictures
+        uses: actions/upload-artifact@v4
+        with:
+          name: user-guide-screenshots
+          path: screenshots/*.png
       # The Word documents are built from the Markdown here, so a broken
       # table or a missing picture fails the run.  The .docx and .pdf in
       # docs/ are built on a PC with Word (tools/build_docs.py) and committed.

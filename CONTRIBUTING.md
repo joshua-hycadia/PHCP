@@ -65,7 +65,7 @@ A stale README is a defect.
   not been checked against it.
 - `docs/USER_GUIDE.md` is held to the same rule for what a designer sees: a
   window, a tab, a key, a result or an exit code.  Its pictures come from
-  `tools/doc_screenshots.pl`.  When a window changes, take them again: CI's
+  `tools/doc_screenshots.py`.  When a window changes, take them again: CI's
   Linux job keeps a fresh set as the `user-guide-screenshots` artefact on
   every run, so copy those into `docs/images/` rather than taking them by hand.
 - The guide and the reference manual are published as Word and PDF
@@ -88,7 +88,15 @@ A stale README is a defect.
 ## Tests - run all before every commit
 
 ```
+python3 tools/test_pipedata.py          # pipe and fitting database
+python3 tools/check_lisp.py             # the AutoCAD exporter's structure (no AutoCAD here)
+python3 tools/stress_resolver.py        # fitting resolver
+python3 tools/stress_invariance.py 20   # invariance stress (use 60 before a PR)
 python3 tools/test_editor.py            # the editor's logic, headless
+python3 tools/test_sheet.py             # the spreadsheet's grids, headless
+python3 tools/test_dbedit.py            # database editing and the team folder, headless
+python3 tools/test_tools.py             # the QUICK TOOLS calculators and the orifice plate
+python3 tools/test_manual.py            # docs/PHC_REFERENCE.md against the program
 python3 tools/test_isometric.py         # the isometric drawing, and the .phc it writes
 python3 tools/test_revit.py             # the Revit extension, without Revit
 python3 tools/test_editor_window.py     # the editor window (re-runs under xvfb-run)
