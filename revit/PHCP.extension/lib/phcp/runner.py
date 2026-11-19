@@ -54,7 +54,7 @@ def run(command, text, report_path=None, cwd=None):
     """Run PHCP on the model text.
 
     command is the argv that starts the engine, without the model arguments:
-    ["phcp.exe"], or ["perl", "phcp.pl"].  A report path, when given, is
+    ["phcp.exe"], or ["python3", "phcp"].  A report path, when given, is
     passed as --report and the engine writes the PDF there as well as the
     JSON this returns.
 
@@ -103,18 +103,29 @@ def run(command, text, report_path=None, cwd=None):
 
 
 def command_for(exe):
-    """argv for an engine path: a .pl is run with perl, anything else directly."""
+    """argv for an engine path.
+
+    The Python program (phcp, or phcp.py) is run with the Python
+    interpreter: Windows cannot start a script with no extension, and
+    sys.executable inside Revit is Revit itself, not Python.  A .pl (the
+    retired Perl program) is run with perl.  Anything else - phcp.exe - is
+    run directly.
+    """
     if not exe:
         return None
-    if exe.lower().endswith(".pl"):
+    low = exe.lower()
+    if low.endswith(".pl"):
         return ["perl", exe]
+    base = os.path.basename(low)
+    if low.endswith(".py") or base == "phcp":
+        return ["python" if os.name == "nt" else "python3", exe]
     return [exe]
 
 
 def config_path():
     """Where this machine remembers phcp.exe.
 
-    The Perl program keeps its own settings in the same PHCP folder.  This
+    The PHCP program keeps its own settings in the same PHCP folder.  This
     file is only the path the Revit buttons use, so the two do not share a
     key and cannot overwrite each other.
     """

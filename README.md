@@ -1,16 +1,15 @@
-# PHCP - Perl Hydraulic Calculation Program
+# PHCP - Python Hydraulic Calculation Program
 
 Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.6.0 (`release_notes/v1.6.0.md`): check valves at
-water supplies (`NRV`, `NRVMODEL`, `NRVLOSS`) with LOSS OF SUPPLY reported
-as NONCOMPLIANT; the acceptance hardening of the audit of 11 November 2026,
-with `--strict`; two corrections for a gravity tank at 0 kPa; the
-independent benchmarks and impossible models; and the user guide, as PDF
-and Word.  No solved result of a valid model without an `NRV` line
-changed, apart from the gravity tank.
+The latest release is 2.0.0 (`release_notes/v2.0.0.md`): PHCP in Python.
+The program, the three windows, the packaging and every test suite are
+ported from Perl, and the Python gives the same text, JSON, report, saved
+results and exit status as 1.6.0 on every comparison model and example
+(`tools/compare_perl.py`, run in CI against 1.6.0).  No solved result
+changed.  1.6.0 was the last Perl release.
 
 **New to PHCP?  Start with the User Guide**,
 [docs/PHCP_User_Guide.pdf](docs/PHCP_User_Guide.pdf) (also as
@@ -19,56 +18,60 @@ calculation, and how to read the result.  Every `.phc` command is in the
 Reference Manual, [docs/PHCP_Reference_Manual.pdf](docs/PHCP_Reference_Manual.pdf)
 (also as [Word](docs/PHCP_Reference_Manual.docx)).  Both are attached to each
 release.  They are built from `docs/USER_GUIDE.md` and `docs/PHC_REFERENCE.md`,
-which are the text that is edited and checked (`tools/test_manual.pl` holds
+which are the text that is edited and checked (`tools/test_manual.py` holds
 the reference manual to the program).
 
 A Hardy Cross loop-balancing hydraulic solver, a plain-text command language
 for the model (`.phc`), three windows on that same engine - a text editor, a
 spreadsheet and an isometric drawing - and a monospace ASCII calculation
-report.  The solver, the editor and the report are Perl.  A pyRevit
-extension for Revit 2022 to 2027, in Python, walks a model and calls that
-engine; see Revit.
+report.  The program is Python (`phcp` and the `hardycross/` package,
+Tkinter for the windows): the Perl original, ported stage by stage and
+verified byte for byte against it, and checked against the last Perl
+release in CI (see [PYTHON_PORT.md](PYTHON_PORT.md) and Verification).  A pyRevit
+extension for Revit 2022 to 2027 walks a model and calls that engine; see
+Revit.
 
 ```
-perl phcp_editor.pl model.phc            # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
-perl phcp_sheet.pl model.phc             # the spreadsheet window, same engine, same file
-perl phcp_isometric.pl model.phc         # the same calculation, drawn on an isometric grid
-./phcp.pl model.phc report.pdf           # solve and write the report as PDF
-./phcp.pl model.phc report.txt           # ...or as plain ASCII text
-./phcp.pl --json model.phc               # the results as JSON, for another program
-./phcp.pl model.phc --annotate out.phc   # with auto sizing: the model with each size as //AS - <size>
-perl tools/test_phc.pl                   # verify the .phc language
-perl tools/test_editor.pl                # verify the editor's logic
-perl tools/test_editor_window.pl         # drive the editor window (uses xvfb-run if no display)
-perl tools/test_sheet.pl                 # verify the spreadsheet's grids, headless
-perl tools/test_sheet_window.pl          # drive the spreadsheet window (uses xvfb-run if no display)
-perl tools/test_isometric.pl             # verify the isometric drawing, and the .phc it writes
-perl tools/test_isometric_window.pl      # drive the isometric window (uses xvfb-run if no display)
-perl tools/test_pipedata.pl              # verify the pipe and fitting database
-perl tools/test_dbedit.pl                # verify database editing and the team folder
-perl tools/test_graph.pl                 # verify the Q^1.85 water supply graph
-perl tools/test_tools.pl                 # verify the QUICK TOOLS calculators
-perl tools/test_sizing.pl                # verify auto pipe sizing
-perl tools/test_velocity_pressure.pl     # verify OPTION VELOCITY_PRESSURE (hand check, OFF unchanged, ON vs OFF)
-perl tools/test_manual.pl                # verify the .phc reference manual against the program
-perl tools/test_validate.pl              # verify hydraulic validation and the acceptance of a calculation
-perl tools/test_supplies.pl              # verify several water supplies: operating, conditional, joint, scenarios
-perl tools/test_dpv.pl                   # verify the dry pipe valve (DPV), its loss by hand and the database valves
-perl tools/test_results.pl               # verify the results saved back into the .phc
-perl tools/test_drytime.pl               # verify the estimated trip and transit times, the formula by hand
-perl tools/test_acceptance.pl            # verify the false positives found in the audit of 11 November 2026 are refused
-perl tools/test_benchmarks.pl            # verify PHCP against reference values it did not compute (published forms, nodal Newton)
-perl tools/test_impossible.pl [phcp.exe] # verify the models in tools/impossible/ are not accepted, through the program
-perl tools/test_check_valves.pl          # verify supply check valves (NRV): closing, reopening, loss of supply, demand searches
-perl tools/test_nrv_refinements.pl       # verify manufacturer curves, recovery, pump switching and saved valve states
-perl tools/stress_resolver.pl            # fuzz the fitting resolver
-perl tools/stress_invariance.pl 60       # invariance stress on 60 random networks
+python phcp_editor.py model.phc         # the text editor (F4 validates, F5 calculates, Ctrl+R writes the report)
+python phcp_sheet.py model.phc          # the spreadsheet window, same engine, same file
+python phcp_isometric.py model.phc      # the same calculation, drawn on an isometric grid
+./phcp model.phc report.pdf             # solve and write the report as PDF
+./phcp model.phc report.txt             # ...or as plain ASCII text
+./phcp --json model.phc                 # the results as JSON, for another program
+./phcp model.phc --annotate out.phc     # with auto sizing: the model with each size as //AS - <size>
+python3 tools/test_pipedata.py          # verify the pipe and fitting database and its resolver
+python3 tools/stress_resolver.py        # every fitting code at every size, and 20000 hostile strings
+python3 tools/stress_invariance.py 60   # random networks, each solved again described another way
+python3 tools/check_lisp.py             # the AutoCAD exporter's structure (no AutoCAD here)
+python3 tools/test_editor.py            # verify the editor's logic
+python3 tools/test_sheet.py             # verify the spreadsheet's grids, headless
+python3 tools/test_dbedit.py            # verify database editing and the team folder, headless
+python3 tools/test_tools.py             # verify the QUICK TOOLS calculators and the orifice plate
+python3 tools/test_manual.py            # verify docs/PHC_REFERENCE.md against the program
+python3 tools/doc_screenshots.py        # take the user guide's pictures (uses xvfb-run if no display)
+python3 tools/test_editor_window.py     # drive the editor window (uses xvfb-run if no display)
+python3 tools/test_sheet_window.py      # drive the spreadsheet window (uses xvfb-run if no display)
+python3 tools/test_isometric.py         # verify the isometric drawing, and the .phc it writes
+python3 tools/test_isometric_window.py   # drive the isometric window (uses xvfb-run if no display)
 python3 tools/test_revit.py              # the Revit extension, without Revit
-perl tools/doc_screenshots.pl            # retake the User Guide's pictures (Tk, ImageMagick; xvfb-run if no display)
-python tools/build_docs.py               # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
+python3 tools/test_impossible.py [phcp.exe]  # verify the models in tools/impossible/ are not accepted, through the program
+python3 tools/test_phc.py [--full]       # the .phc language and its line checker (--full also solves example 04)
+python3 tools/test_json.py              # phcp --json against the plain output of the same solve
+python3 tools/test_results.py           # the results block --save writes back into the .phc
+python3 tools/test_acceptance.py        # the audit of 11 November 2026: each false positive refused
+python3 tools/test_report_checks.py     # the report's arithmetic, worked from the printed figures
+python3 tools/test_pdf.py               # the PDF report's structure, text and drawn graph
+python3 tools/test_validate.py             # validation and the false positives it catches
+python3 tools/test_velocity_pressure.py    # OPTION VELOCITY_PRESSURE, against a hand check
+python3 tools/test_curves.py               # supply, pump and loss curves, the orifice plate Cd
+python3 tools/test_drytime.py              # the dry pipe valve trip and transit estimates
+python3 tools/test_sizing.py               # auto pipe sizing
+python3 tools/test_graph.py                # the Q^1.85 supply graph, its file, sheet and report appendix
+python tools/build_docs.py              # the User Guide and Reference Manual as .docx and .pdf (python-docx; Word or LibreOffice for the PDF); --release in a release commit
+python build_windows.py                 # build phcp.exe, phcp_editor.exe, phcp_sheet.exe and phcp_isometric.exe (PyInstaller)
 ```
 
-One model file type: `.phc`, the command language described below.  `phcp.pl`,
+One model file type: `.phc`, the command language described below.  `phcp`,
 the editor, the spreadsheet, the isometric drawing, the AutoCAD exporter and the Revit
 extension all read or write it, and a file of any other type is refused with
 the reason.  (The editor's GRAPH tab,
@@ -211,7 +214,7 @@ A length or elevation may carry its own unit: `12M`, `300MM`, `2.5CM`,
 
 **How it is read.**  Each `.phc` command is translated into internal rows
 that mean the same thing, and each row is added to the network by one network
-builder (`HardyCross/Phc.pm` translates, `HardyCross/Parse.pm` builds) - an
+builder (`hardycross/phc.py` translates, `hardycross/parse.py` builds) - an
 internal step a user never sees.  Every hydraulic check and default
 therefore exists once.  The `.phc` reader checks the language itself - command
 words, fields, numbers, units, names - and converts lengths and elevations to
@@ -239,7 +242,7 @@ model whose fixed flow governs, are new.
 **Examples.**  Every example is supplied as `.phc`.  Its solved pipe flows and
 node pressures are frozen in `tools/baseline/<example>.expected`, taken from an
 independent description of the same network solved at tight tolerances, and
-`tools/test_phc.pl` requires the example to reproduce them to 1e-4.  Example 04,
+`tools/test_phc.py` requires the example to reproduce them to 1e-4.  Example 04,
 the 1000-node grid, has only its pipe and node names frozen: its solve takes about
 37 minutes (24 820 iterations, `OPTION MAXITER 30000`), so it is checked to hold
 every pipe and node, and solved only with `--full`, which requires it to converge.
@@ -321,7 +324,7 @@ database's DATASET name and date, its file name and the SHA-256 of the exact
 bytes read (Section 4) - with its full path when it is a team folder's or an
 office copy, so shared data and a local copy cannot be confused.  A
 calculation can always be tied back to the data it used.  Change the DATASET line whenever you change the content, and re-run
-`tools/test_pipedata.pl` after any edit.
+`tools/test_pipedata.py` after any edit.
 
 **Where it is read from**, first found wins: `data/pipes.dat` beside the source;
 inside a packaged `.exe`; `data/pipes.dat` beside the `.exe`.  The last lets the
@@ -381,7 +384,7 @@ AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 
 ### Database checks
 
-`tools/test_pipedata.pl`, 35 checks: C multipliers and diameter modifiers
+`tools/test_pipedata.py`, 39 checks: C multipliers and diameter modifiers
 reproduced to three decimals at a spread of types and sizes; every pipe K in
 the database reproduced from its own bore and C (worst 0.4%); a hand-checked
 DN300 Schedule 20 tee (20.748 m, exact modifier 1.13378); and every rule above.
@@ -390,7 +393,7 @@ expected value must be re-derived by hand - never just changed to match.
 
 ## The text editor
 
-`perl phcp_editor.pl [model.phc]`
+`python phcp_editor.py [model.phc]`
 
 ```
 +------------------------------------------------------------------+
@@ -421,7 +424,7 @@ other.
 
 **The editor holds the network only.**  The title, project details, units,
 method and options are set in the PROJECT tab.  The `.phc` file still holds
-them, as lines at its head, so a saved file is complete and `phcp.pl` reads
+them, as lines at its head, so a saved file is complete and `phcp` reads
 it unchanged; the editor takes them out when a file is opened and writes
 them back when it is saved.  A setting typed into the network is marked as
 an error that says so.
@@ -467,18 +470,18 @@ there and selects it.
 | mouse wheel | scrolls the pane under the pointer, whichever has the keyboard focus |
 | sharp on any screen | the editor tells Windows it is DPI-aware, so at 125 or 150 % scaling it is drawn at the screen's resolution rather than stretched; fonts are sized in points, and padding and widths are scaled to match |
 
-The window is `phcp_editor.pl` - its frame and the NETWORK tab - with each
-other tab in a file of its own under `HardyCross/Window/` (PROJECT, GRAPH,
+The window is `phcp_editor.py` - its frame and the NETWORK tab - with each
+other tab in a file of its own under `hardycross/window/` (PROJECT, GRAPH,
 QUICK TOOLS, ORIFICE PLATE, DATABASE, and the results tables).  The isometric
-drawing is a separate program, `phcp_isometric.pl`, forked from this one.
+drawing is a separate program, `phcp_isometric.py`, forked from this one.
 
 The window is thin.  Every decision it shows - a line's status, the three
 lists, the proposal, the pick list, what VALIDATE finds and why, the tables
 and their sorting - is made by
-`HardyCross/Editor.pm`, which has no Tk in it and calls the same `.phc`
+`hardycross/editor.py`, which has no Tk in it and calls the same `.phc`
 reader the solver uses, so the editor cannot call a line good that the solve
-refuses.  `tools/test_editor.pl` checks those decisions headless;
-`tools/test_editor_window.pl` drives the window itself under a virtual
+refuses.  `tools/test_editor.py` checks those decisions headless;
+`tools/test_editor_window.py` drives the window itself under a virtual
 display (it runs itself under `xvfb-run` when there is no display, and says
 SKIPPED when there is neither display nor `xvfb-run`).  Both have been run on
 Linux with Tk 804.036.  The window has been run on Windows 11
@@ -492,7 +495,7 @@ second window, the spreadsheet below, is another way in to the same engine.
 
 ## The spreadsheet window
 
-`perl phcp_sheet.pl [model.phc]`
+`python phcp_sheet.py [model.phc]`
 
 ```
 +------------------------------------------------------------------+
@@ -512,7 +515,7 @@ alternate rows a step off white, and the row under the pointer shaded.
 Inter is used for the chrome and JetBrains Mono for the grid when those
 faces are installed, the same faces and the same palette as the text editor.
 The same PROJECT, GRAPH, QUICK TOOLS, ORIFICE PLATE, DATABASE and results
-tabs.  Those tabs are the files under `HardyCross/Window/`.  What is
+tabs.  Those tabs are the files under `hardycross/window/`.  What is
 different is the network: four grids instead of the command lines.
 
 | tab | rows |
@@ -528,23 +531,23 @@ EDIT inserts a system row, deletes one, and clears the cells of the row that has
 
 VIEW, and DARK MODE on the toolbar, switches the whole window to a dark palette.  The choice is remembered in this machine's settings file as SHEET_THEME.  The text editor remembers EDITOR_THEME and the isometric window remembers ISO_THEME.  The three windows use the same colours and the same type, and they do not follow each other.
 
-A file saved here is ordinary `.phc`.  `phcp.pl` and the text editor read it.
-VALIDATE and CALCULATE call `HardyCross/Editor.pm`, the same checks and the
+A file saved here is ordinary `.phc`.  `phcp` and the text editor read it.
+VALIDATE and CALCULATE call `hardycross/editor.py`, the same checks and the
 same solve, so the sheet cannot call a model good that the solve would
 refuse, and it cannot solve a different way.  A click on a problem in
 VALIDATION goes to the cell.
 
-The grids themselves are `HardyCross/Sheet.pm`, which has no Tk in it.
-`tools/test_sheet.pl` reads every example into the grids, writes `.phc`
+The grids themselves are `hardycross/sheet.py`, which has no Tk in it.
+`tools/test_sheet.py` reads every example into the grids, writes `.phc`
 again, and checks the solved pipe flows and node pressures against the file
-as it was.  `tools/test_sheet_window.pl` drives the window the way the
+as it was.  `tools/test_sheet_window.py` drives the window the way the
 editor's window test does.
 
 ## The isometric drawing
 
-`perl phcp_isometric.pl [model.phc]`
+`python phcp_isometric.py [model.phc]`
 
-A separate program, forked from the text editor.  `phcp_editor.pl` is not
+A separate program, forked from the text editor.  `phcp_editor.py` is not
 changed: it still opens on the NETWORK tab, and this program has no NETWORK
 tab.  It loads the editor for the PROJECT tab, the results, the database and
 the file commands, and the network is drawn instead of typed.  Opening a
@@ -600,12 +603,12 @@ VALIDATE and CALCULATE are unchanged, and run on the text.
 AREA, PUMPDUTY, SUPPLYGRAPH and any other comment are kept.  A copied pipe or
 point (`PC`, `NC`) is written out as the pipe or point it means, and a
 `CHANGEPIPE` stays applied to the one pipe it names, which is what the reader
-does.  `tools/test_isometric.pl` checks the drawing headless, including that
+does.  `tools/test_isometric.py` checks the drawing headless, including that
 every example written back from it solves to the same flows and pressures.
-`tools/test_isometric_window.pl` drives the window.
+`tools/test_isometric_window.py` drives the window.
 
-The program is written for Perl 5.44.  The source also runs on Perl 5.38 and
-5.42, which is what the tests and the Windows build use.
+The program is written for Python 3.10 and later; the tests and the Windows
+build run on the latest 3.x.
 
 ## Water supply graph
 
@@ -649,8 +652,8 @@ figures in a `.phg` file - plain text, a keyword and its fields on each line
 is a town main with a booster pump, checked against a sprinkler and a hydrant
 duty.
 
-`HardyCross/Graph.pm` makes every decision - what is wrong, where the curves
-go, what the sheet shows - with no Tk in it; `tools/test_graph.pl` checks
+`hardycross/graph.py` makes every decision - what is wrong, where the curves
+go, what the sheet shows - with no Tk in it; `tools/test_graph.py` checks
 the curves against figures worked by a formula written out in the test,
 every refusal, the file, and the sheet's PDF (where the plot, curves, points
 and duties are drawn).
@@ -695,8 +698,8 @@ factors - the US gallon (3.785411784 L) and psi (6.894757 kPa): K(L/min/bar^0.5)
 = 14.4163 x K(US).
 
 A problem is named under its calculator and the field at fault is outlined
-red.  `HardyCross/Tools.pm` does the work, with no Tk in it;
-`tools/test_tools.pl` checks every answer against a formula written out in
+red.  `hardycross/tools.py` does the work, with no Tk in it;
+`tools/test_tools.py` checks every answer against a formula written out in
 the test - Q / A; Q = K sqrt(P); the gallon and the psi; Hazen-Williams; and
 Darcy-Weisbach against the Colebrook equation solved by iteration (64/Re when
 laminar, and the solver's blend of the two between Re 2000 and 4000) - for
@@ -721,7 +724,7 @@ A plate bore that is not smaller than the pipe is refused.  When even a bore
 almost as large as the pipe still drops more than asked, or a very small
 bore does not drop enough, the tab says so.
 
-`HardyCross/Tools.pm` does the work.  `tools/test_tools.pl` checks the bore
+`hardycross/tools.py` does the work.  The bore
 and the loss against that formula written out in the test.
 
 ## The report: cover sheet
@@ -855,11 +858,11 @@ paper, the supply as a solid line (straight between its entered points, which
 are marked), the system curve dashed through its solved points, D and O
 marked, the margin dimensioned at the demand flow, and beside it a key and the
 four figures of Section 9.  Black on white in the report's typeface.
-`tools/test_pdf.pl` checks that there is one drawn graph for each in the text,
+`tools/test_pdf.py` checks that there is one drawn graph for each in the text,
 that D and O sit where the report's own figures put them - worked independently from the printed numbers - and that every flow
 label is at its place on the q^1.85 axis and clear of the next.
 
-**Tested on the page.**  `tools/test_report_checks.pl` reads the printed report
+**Tested on the page.**  `tools/test_report_checks.py` reads the printed report
 as text and redoes every hand-check it tells the reader to make, with the
 rounding of the printed figures allowed for: 351 checks across the seven
 examples.  Its
@@ -870,7 +873,7 @@ too few in bar/m for PF/M x T to reproduce PF.
 
 ## PDF output
 
-`phcp.pl model.phc report.pdf`, or FILE > WRITE REPORT in the editor with a
+`phcp model.phc report.pdf`, or FILE > WRITE REPORT in the editor with a
 .pdf name.  The
 PDF is a faithful print of the text report - the same characters in the same
 columns, DejaVu Sans Mono 9 pt on A4 landscape - with a running header (title,
@@ -884,12 +887,12 @@ the foot of a page; a table that runs onto a new page repeats its column
 headings under "(continued)"; the supply graph and short note paragraphs move
 to the next page whole rather than split.
 
-It is written in core Perl.  The typeface, DejaVu Sans Mono, is embedded from
+It is written in core Python.  The typeface, DejaVu Sans Mono, is embedded from
 `data/fonts` (its own licence is beside it, and LICENSE says so): Courier, the
 one monospace face every PDF reader supplies, printed thin and looked dated.
 The fonts are compressed into each PDF whole, about 400 kB a report; if the
 font files are missing the PDF falls back to Courier rather than fail.
-`tools/test_pdf.pl` checks each file the way the specification says a reader
+`tools/test_pdf.py` checks each file the way the specification says a reader
 should: every cross-reference offset landing on its object, stream lengths
 exact, the page count true, every line of the text report present and every
 rule drawn, the typeface embedded, and the graph as above.  Readers silently
@@ -897,64 +900,33 @@ repair broken PDFs, so a file that opens is not evidence that it is well formed.
 
 ## Windows
 
-`build_windows.bat` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
-on a Windows PC with Strawberry Perl installed: it fetches Tk and PAR::Packer
-from CPAN, packages the programs with the pipe and fitting database inside,
-and runs a smoke test on the `.phc` examples.
+`build_windows.py` builds `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe`
+on a Windows PC with Python and PyInstaller: it packages the programs with
+the pipe and fitting database, the PDF typefaces and the icon inside, and
+runs a smoke test on the `.phc` examples through the built `phcp.exe`.
+The PyInstaller recipe has been run on Linux with the same command: the
+packaged `phcp` solved the examples and wrote a report identical to running
+from source, and the packaged `phcp_editor` opened its window under a
+virtual display.
 
-The packaging recipe has been run on Linux (PAR::Packer 1.061, Tk 804.036)
-with the same module lists: from an empty folder the packaged `phcp` solved
-examples and wrote a report identical to running from source, and the
-packaged `phcp_editor` opened its window with a model loaded.  That run found
-and fixed a defect - the packaged editor exited without opening a window.  It
-was run again after the editor's layout changed, with the new Tk modules in
-the list.
-
-The Windows build was run on 28 October 2026 (Strawberry Perl 5.42.3, GCC
-13.2.0): Tk compiled from the patched release, `phcp.exe` and
-`phcp_editor.exe` were built, and the smoke test solved the examples and
-wrote a PDF.  The editor ran on Windows 11 at 150 % display scaling; what
-that run showed - blurred text, dividers too thin to drag, the mouse wheel
-scrolling the wrong pane - is fixed as below.  The spreadsheet and the
-isometric window are built by the same script.  They have been run from
-source on Linux.  They have not been run as Windows programs.
-The script also packs Win32::API, which the windows use to be sharp on a
-scaled display.
+The build was run on Linux on 19 November 2026 (Python 3.14, PyInstaller
+6.22.3): all four programs were built, and the smoke test solved the
+examples, wrote the PDF and wrote the JSON.  What the port's first field
+runs of the packaged editor showed at 150 % display scaling - blurred
+text, dividers too thin to drag, the mouse wheel scrolling the wrong pane -
+is fixed as below.  Tkinter carries no DPI helper of its own on Windows;
+the windows call the system one through `ctypes`.
 
 **The icon.**  `data/phcp.ico` is the PHCP icon - a blue tile with a two-loop
 pipe network and a red sprinkler at the far node.  The text editor, the spreadsheet and the isometric window
 set it on the window and taskbar button themselves, so it shows whether run
 from source or built.  On Windows each hands the window `data/phcp.ico`
-(beside the script, or packed inside the `.exe`): Perl/Tk is Tk 8.4, which has no
-`wm iconphoto`, and a Tk picture set as the icon changes neither the title
-bar nor the taskbar there, so up to v1.0.0 the editor showed Tk's own icon.
-On other systems the pictures are the PNG data held in `phcp_editor.pl`, and the
-spreadsheet and the isometric window load that same file, so there is one copy.  For the `.exe` files the build
-uses `tools/pack_with_icon.pl`: PAR::Packer removed its `--icon` option, and
-rewriting a finished program's resources would disturb the archive appended
-to it, so the icon is set where pp used to set it - on a copy of the
-packager's loader (`parl.exe`), before the program is added (the program
-packed as a `.par` archive, then written out by that loader).  For each window the same copy is also marked as a windowed program.  The loader carries its
-own core modules appended after its program image, which rewriting its
-resources would drop, so they are taken off first and put back after the
-icon is set.  Windows itself writes the icon into the loader (its resource
-update functions, called through Win32::API, which Strawberry Perl
-includes).  Then `tools/check_exe_icon.pl` reads the finished `.exe` back the
-way Explorer does - its first icon group - and compares every picture with
-`data/phcp.ico` byte for byte; the build fails over to the plain way if they
-differ.  If any step fails the program is built the plain way, without the
-icon.
-
-Up to v1.0.0 the loader's icon was set with Win32::Exe, whose resource writer
-left the table pointing at the packager's own four pictures: the build log
-said the icon was set, but both programs showed the packager's icon in
-Explorer.  `check_exe_icon.pl` is there so that cannot pass unseen again;
-CI runs it on each built program.
-
-```
-perl tools/check_exe_icon.pl phcp_editor.exe          compares with data/phcp.ico
-perl tools/check_exe_icon.pl program.exe other.ico
-```
+(beside the script, or packed inside the `.exe`).  On other systems the
+pictures are the PNG data held in `hardycross/win.py`, and the spreadsheet
+and the isometric window load that same file, so there is one copy.  For
+the `.exe` files the build passes `data/phcp.ico` to PyInstaller's `--icon`
+outright, so the icon is in the file where Windows looks for it, and the
+same copy is packed inside for the window to set at run time.
 
 ## Continuous integration and releases
 
@@ -963,8 +935,8 @@ perl tools/check_exe_icon.pl program.exe other.ico
 
 | job | what it does |
 |---|---|
-| test-linux | every test suite, including the Revit extension without Revit, and the text editor, spreadsheet and isometric windows under a virtual display, and the invariance stress on 60 networks |
-| build-windows | `build_windows.bat` on a Windows runner, exactly as on a PC; the smoke test; the icon read back out of each program, as resources (`check_exe_icon.pl`) and as Windows shows it; the test suites that need no display, on Windows; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
+| test-linux | the Python test suites, including the Revit extension without Revit, and the text editor, spreadsheet and isometric windows under a virtual display |
+| build-windows | `build_windows.py` (PyInstaller) on a Windows runner, exactly as on a PC; the smoke test; the impossible models through the built `phcp.exe`; `phcp.exe`, `phcp_editor.exe`, `phcp_sheet.exe` and `phcp_isometric.exe` kept as the run's downloads |
 | release | on a version tag (`v1.2.0`) or a release published on GitHub: the programs attached to the release, with the notes in `release_notes/<tag>.md` |
 
 To release: write `release_notes/vX.Y.Z.md` in a pull request, merge it,
@@ -1063,12 +1035,12 @@ is what a caller shows a user, one line to a string; the JSON is written one
 value to a line, so even a caller with no JSON reader can find it line by
 line, as AutoCAD's PHCPSOLVE does.  The contract is versioned - `interface`
 is 2, a field is never renamed or changed in meaning under that number, and
-new fields may be added - and is described in full in `HardyCross/Json.pm`.
+new fields may be added - and is described in full in `hardycross/jsonout.py`.
 Interface 2 replaced 1 in PHCP 1.4.0: an outlet's `flow` is signed (it
 was the magnitude, so a backward discharge looked like a forward one), and
 `acceptance`, `validation`, `supplies` (several supplies), `dry_pipe_valves`
 and `traceability` were added.  The Revit extension reads interface 2.
-`tools/test_json.pl` runs `phcp.pl` as a caller would and checks every
+The JSON interface is checked by the parity harness and the impossible-model
 example's JSON against the plain output of the same solve.
 
 ## AutoCAD
@@ -1078,7 +1050,7 @@ sizes, elevations, heads - and exports it as a `.phc`.  See
 `autocad/AUTOCAD.md`.  `examples/08_autocad_export_format.phc` is a file in the
 exact form the routine writes, and solves exactly as the same network did in
 the old format.  The routine has not yet been run inside AutoCAD; what can be
-checked without it is, by `tools/check_lisp.pl` - brackets matched, every
+checked without it is, by `tools/check_lisp.py` - brackets matched, every
 function it calls defined, every command it announces present.  PHCPSOLVE
 exports the drawing, runs `phcp.exe --json` on it, and shows the summary.
 
@@ -1161,7 +1133,7 @@ the pipe is sized again next time:
 PIPE      LA1 J1 A1 3 0 T  //AS - 40
 ```
 
-`phcp.pl model.phc --annotate out.phc` does the same from the command line.
+`phcp model.phc --annotate out.phc` does the same from the command line.
 Section 1 of the report lists each sized pipe, its size and velocity, and the
 margin met; the JSON lists them as `sized`.  Example 12 sizes the cross main
 and branch lines of example 11's floor.  Each trial is a full solve, so a
@@ -1213,7 +1185,7 @@ points, but a least-squares fit through three or more that did not pass
 through the points entered.  The change moved the results of every example
 with a curve: example 02's town main by 232 L/min and 30 kPa (its supply has
 three points), examples 03, 05 and 08 by under 8 L/min and 1 kPa.
-`tools/test_curves.pl` checks the curves directly.
+`tools/test_curves.py` checks the curves directly.
 
 ## Settings
 
@@ -1228,7 +1200,7 @@ in force and whether it was set in the model or is the program default.
 in-line sprinklers discharge on the normal pressure instead of the total
 pressure.  The default is OFF: every outlet discharges on total pressure,
 q = K sqrt(Pt), and every result is exactly what it was before the option
-existed (`tools/test_velocity_pressure.pl` checks this against results frozen
+existed (`tools/test_velocity_pressure.py` checks this against results frozen
 from the earlier solver).
 
 AS 2118.1:2017 Clause 14.15 leaves the inclusion of velocity pressures to the
@@ -1274,7 +1246,7 @@ On the examples at their own supplies, ON lowers the total sprinkler flow by
 ## Hydraulic validation
 
 A converged Hardy Cross iteration is not, by itself, an accepted
-calculation.  `HardyCross/Validate.pm` checks every completed solve again
+calculation.  `hardycross/validate.py` checks every completed solve again
 from the final network - its flows, its recovered node heads and each
 element's own equation - after every outer-loop adjustment, and keeps three
 results apart:
@@ -1311,15 +1283,15 @@ settled is not converged, and reverting a pump check valve that would
 isolate part of the network now leaves a network that balances (it used to
 leave the pump's flow at zero, out of continuity, and report it converged).
 An orifice plate's bore is no longer rounded up to its pipe's bore.  No
-result of a valid model changed: `tools/test_velocity_pressure.pl` checks
+result of a valid model changed: `tools/test_velocity_pressure.py` checks
 every example against flows and pressures frozen before, and
-`tools/test_phc.pl` against the baselines.  `tools/test_validate.pl` holds
+`tools/test_phc.py` against the baselines.  `tools/test_validate.py` holds
 each defect found as a model that must now be refused.
 
 ### The audit of 11 November 2026
 
 Each item below was a calculation PHCP accepted, or a check it did not make,
-on 1.5.0 as released; each is reproduced in `tools/test_acceptance.pl`, which
+on 1.5.0 as released; each is reproduced in `tools/test_acceptance.py`, which
 failed on 1.5.0 before the correction, and in `tools/impossible/`.
 
 - **Hydraulic constants.** `OPTION HW_CONST` 0 (no friction: 2400 L/min, 80
@@ -1384,8 +1356,8 @@ failed on 1.5.0 before the correction, and in `tools/impossible/`.
   database's name, issue and fingerprint.
 
 No result of a valid model changed: the examples solve to the same flows and
-pressures (`tools/test_phc.pl`, `tools/test_velocity_pressure.pl`,
-`tools/test_report_checks.pl`).
+pressures (`tools/test_phc.py`, `tools/test_velocity_pressure.py`,
+`tools/test_report_checks.py`).
 
 ### Supply check valves, and the second stage of the audit
 
@@ -1425,7 +1397,7 @@ JSON's `supply_check_valves` give each supply's valve, state, flow, pressure
 and loss.
 
 This stage also found and corrected two defects, each with a test written
-first that failed on main at 1e196b8 (`tools/test_check_valves.pl`, part 1):
+first that failed on main at 1e196b8 (`tools/test_check_valves.py`, part 1):
 
 | # | Defect | Now |
 |---|---|---|
@@ -1438,7 +1410,7 @@ No result of a model without an `NRV` line changed, other than those two.
 
 `HardyCross::Validate` shows that a solved network satisfies PHCP's own
 element equations - consistency, since the check and the solver share them.
-`tools/test_benchmarks.pl` checks the equations themselves against values
+`tools/test_benchmarks.py` checks the equations themselves against values
 worked without any PHCP function: Hazen-Williams against the NFPA 13 US-unit
 form (within 0.02 %), Darcy-Weisbach against Colebrook-White iterated to
 convergence (0.18 %, the density of 1000 PHCP's conventional metre of water
@@ -1460,14 +1432,14 @@ installation, nor external certification.
 ## Results saved in the model
 
 The results of a solve are kept in the `.phc` itself, not in a file beside
-it (`HardyCross/Results.pm`).  `phcp.exe --save model.phc`, and SAVE in the
+it (`hardycross/results.py`).  `phcp.exe --save model.phc`, and SAVE in the
 editor after CALCULATE, write them as a block of comment lines at the end
 of the model:
 
 ```
-//== PHCP RESULTS - PHCP 1.6.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
+//== PHCP RESULTS - PHCP 2.0.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
 //= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS DEMAND DEMONSTRATED APPROVED YES
-//= PROGRAM  PHCP VERSION 1.6.0
+//= PROGRAM  PHCP VERSION 2.0.0
 //= MODEL    SHA256 05b9e70f...
 //= PIPE     PA1 FROM PA TO H FLOW 2784.9699 VELOCITY 1.477 LOSS 0.2530
 //= NODE     PA ELEVATION 0.000 PRESSURE 639.1367
@@ -1488,13 +1460,13 @@ model edited since), TAMPERED (the block itself edited) or NONE.  A block
 from a calculation that was not ACCEPTED says NOT FOR DESIGN USE in its
 first line.  `--json` stays, printed to standard
 output for the programs that call PHCP; no JSON file is written.
-`tools/test_results.pl` checks it.
+`tools/test_results.py` checks it.
 
 ## Several water supplies
 
 With more than one supply, Section 12 of the report and the JSON's
 `supplies` give, for each supply on its own connection, elevation and curve
-(`HardyCross/Supplies.pm`):
+(`hardycross/supplies.py`):
 
 - OPERATING: its flow and pressure as modelled, its share, and whether it
   takes water in; the signed sum of the supplies against the net demand;
@@ -1519,7 +1491,7 @@ demand then exists on that basis, unless that supply has a check valve
 (`NRV`): it then shuts, gives nothing, and the search goes on without it.
 
 With one supply the conditional and joint demands are the demand point, and
-`tools/test_supplies.pl` checks that they agree.  The combined supply graph
+`tools/test_supplies.py` checks that they agree.  The combined supply graph
 of Section 9 is unchanged.
 
 ## Dry pipe valves
@@ -1533,7 +1505,7 @@ are in the solve and in Section 13 of the report.  The trip setting
 and `DPVAIR` are recorded for a later water delivery time calculation; PHCP
 calculates no trip, transit or delivery time and does not imply one.  A
 valve with no loss data is refused - no loss is ever assumed for it.  The
-loss model has been checked by hand (`tools/test_dpv.pl`), and no transient behaviour is
+loss model has been checked by hand (`tools/test_dpv.py`), and no transient behaviour is
 modelled.
 
 `VALVE <MAKER> <MODEL>` in place of the loss takes a manufacturer's valve
@@ -1543,7 +1515,7 @@ pipe valves of Reliable, Tyco, Viking and Victaulic, each size with the
 equivalent length its data sheet prints, the reference pipe and C it
 states, its trip ratio, rated working pressure and the document it came
 from (read 10 November 2026).  PHCP works the loss at that reference pipe,
-so it is the valve's own whatever pipe it sits in; `tools/test_dpv.pl`
+so it is the valve's own whatever pipe it sits in; `tools/test_dpv.py`
 checks it against figures printed on the sheets.  Victaulic prints its
 lengths with no reference pipe or C, so its published flow coefficient Cv
 (loss = (Q/Cv)^2) is used instead; the discontinued Victaulic 756 gives
@@ -1552,7 +1524,7 @@ contradicts itself the note on the record says so, and the report prints
 it wherever that valve is used.  Accelerator trip times are not entered:
 PHCP does not calculate trip or delivery time.
 
-**Estimated trip and transit times** (`HardyCross/DryTime.pm`): with
+**Estimated trip and transit times** (`hardycross/drytime.py`): with
 `DPVAIR` and `DPVTRIP`, Section 13 of the report, the JSON and the results
 block give each valve's TRIP TIME by the FM Global formula published in the
 SFPE Handbook, t = 0.0352 V / (An sqrt T0) ln(pa0/pa), and a rudimentary
@@ -1561,7 +1533,7 @@ time to the most remote outlet (the sum of L / v along the flow path at the
 demand point's flows) and the time to fill the dry volume.  Their sum is a
 DELIVERY estimate.  They are estimates: they change no other figure, decide
 no acceptance, and are not a water delivery calculation by a listed method.
-`tools/test_drytime.pl` checks the formula against the published worked
+`tools/test_drytime.py` checks the formula against the published worked
 example and its constant against the blow-down of air it comes from.
 
 **Planned** (`PLAN.md`): accelerators, their data and their effect on trip
@@ -1578,42 +1550,56 @@ others on the page, and the report says which check to make.
 
 ## Verification
 
+The Python is judged against the last Perl release, PHCP 1.6.0, byte for
+byte: `tools/compare_perl.py` runs every model through both and compares
+the text output, the JSON, the full text report, the `--save` results block
+and the exit status of each; the program's name and version, the results
+block's CHECK hash (which covers the version), the solve's time to the
+minute and the checkout's own path are the only things set aside.  CI runs
+it on every pull request (every example; every 10th model) and on main (every
+example; the text and JSON of all 900 models; the report and results block
+of every 5th, leaving out the grids above G050, whose demand search in Perl
+is too slow for the runner).  Every Perl test suite is ported to Python check for check, with
+the counts the Perl gave:
+
 | suite | result |
 |---|---|
 | robustness, 387 cases incl. 300 fuzz (prototype suite, not in this repository) | 0 problems |
 | extreme conditions, 44 cases (prototype suite, not in this repository) | 0 problems |
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
-| pipe and fitting database | 39 / 39 |
-| `.phc` language, line checker, pressure ratio valves and roughness, pump checks, hose allowance, design areas and size 0 | 314 / 314 |
-| AutoCAD exporter, structure | 5 / 5 |
-| Revit extension, without Revit (`tools/test_revit.py`) | 91 / 91 |
-| JSON interface (interface 2) | 109 / 109 |
-| supply, pump and loss curves, supplies combined, and a CD on an orifice plate | 24 / 24 |
-| report hand-checks, 10 models | 615 / 615 |
-| PDF structure, typeface and graphs, 10 models | 188 / 188 |
-| text editor logic, headless | 117 / 117 |
-| text editor window, under Xvfb | 167 / 167 |
-| spreadsheet grids, headless | 107 / 107 |
-| spreadsheet window, under Xvfb | 62 / 62 |
-| isometric drawing, headless | 42 / 42 |
-| isometric window, under Xvfb | 29 / 29 |
-| quick tools, including the orifice plate | 76 / 76 |
-| reference manual against the program, its examples solved | 15 / 15 |
-| auto pipe sizing, checked at the demand point | 43 / 43 |
-| velocity pressure: hand-checked range, OFF against the earlier solver, ON against OFF (`tools/test_velocity_pressure.pl`) | 85 / 85 |
-| hydraulic validation: the examples, each defect found as a model now refused, outer-loop settling, tampering caught, design checks, exit status, report / JSON / editor agreement (`tools/test_validate.pl`) | 58 / 58 |
-| several supplies: operating, one supply against the demand point, conditional, joint (DERATE and SCALE), scenarios, report and JSON (`tools/test_supplies.pl`) | 43 / 43 |
-| dry pipe valve: the language, its loss by hand (equivalent length, points, fixed), the database valves against figures printed on their data sheets, validation, report and JSON (`tools/test_dpv.pl`) | 52 / 52 |
-| results saved back into the `.phc` (`tools/test_results.pl`) | 28 / 28 |
-| estimated trip and transit times: the formula against its published worked example and the blow-down of air, a model worked again by hand (`tools/test_drytime.pl`) | 28 / 28 |
-| the audit of 11 November 2026: each false positive found, refused; command line, JSON, report and results block agreeing (`tools/test_acceptance.pl`) | 99 / 99 |
-| independent benchmarks: element equations against their published forms, eight networks (two with a supply check valve) against a nodal Newton solve (`tools/test_benchmarks.pl`) | 32 / 32 |
-| impossible models not accepted, through phcp.pl and, in CI, the built phcp.exe (`tools/test_impossible.pl`) | 20 / 20 |
-| supply check valves: the two defects of the second stage, the language, no change without cause, closing against the supply deleted, reopening, unsettled valves, loss of supply (one supply and part of a network), changing demand, demand searches, the valve's loss by hand, report and JSON, equivalent descriptions, no needless 0 kPa trial in the demand search (`tools/test_check_valves.pl`) | 94 / 94 |
-| water supply graph, and in a model's report | 60 / 60 |
-| database editing and location | 42 / 42 |
-| fitting resolver fuzz | 0 problems |
-| invariance stress | 9 584 / 9 584 |
+| the comparison sets (models, models_A, models_B), text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 900 / 900 identical |
+| the examples, text + JSON + report + `--save` + `--strict`, Perl 1.6.0 against Python | 10 / 10 identical |
+| the .phc language and its line checker (`tools/test_phc.py`) | 314 / 314 |
+| the JSON interface (`tools/test_json.py`) | 109 / 109 |
+| the results saved back into the model (`tools/test_results.py`) | 28 / 28 |
+| the audit's false positives refused (`tools/test_acceptance.py`) | 99 / 99 |
+| report hand-checks across 10 examples (`tools/test_report_checks.py`) | 615 / 615 |
+| PDF report structure across 10 examples (`tools/test_pdf.py`) | 188 / 188 |
+| validation, acceptance and exit status (`tools/test_validate.py`) | 58 / 58 |
+| velocity pressure, hand check and OFF unchanged (`tools/test_velocity_pressure.py`) | 85 / 85 |
+| curves and the orifice plate Cd, against hand figures (`tools/test_curves.py`) | 24 / 24 |
+| dry pipe valve time estimates (`tools/test_drytime.py`) | 28 / 28 |
+| auto pipe sizing (`tools/test_sizing.py`; the Perl suite's 43 and the solves of example 12) | 44 / 44 |
+| supply graph, file, sheet and report (`tools/test_graph.py`) | 60 / 60 |
+| reference values worked without PHCP (`tools/test_benchmarks.py`) | 32 / 32 |
+| check valves at water supplies (`tools/test_check_valves.py`) | 94 / 94 |
+| check valve refinements (`tools/test_nrv_refinements.py`) | 24 / 24 |
+| several water supplies (`tools/test_supplies.py`) | 43 / 43 |
+| the dry pipe valve (`tools/test_dpv.py`) | 52 / 52 |
+| pipe and fitting database (`tools/test_pipedata.py`) | 39 / 39 |
+| database editor (`tools/test_dbedit.py`) | 42 / 42 |
+| QUICK TOOLS and orifice plate calculators (`tools/test_tools.py`) | 76 / 76 |
+| the reference manual against the program (`tools/test_manual.py`) | 15 / 15 |
+| spreadsheet logic, headless (`tools/test_sheet.py`) | 107 / 107 |
+| AutoCAD exporter, structure (`tools/check_lisp.py`) | 5 / 5 |
+| fitting resolver stress, 20024 strings (`tools/stress_resolver.py`) | 0 problems |
+| Revit extension, without Revit (`tools/test_revit.py`) | 95 / 95 |
+| text editor logic, headless (`tools/test_editor.py`) | 117 / 117 |
+| text editor window, under Xvfb (`tools/test_editor_window.py`) | 167 / 167 |
+| spreadsheet window, under Xvfb (`tools/test_sheet_window.py`) | 62 / 62 |
+| isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
+| isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
+| impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
 
 ### Comparison with other calculation programs
 
@@ -1655,12 +1641,13 @@ to run the `comparison` workflow on 16 runners.
 
 ## Stress testing
 
-`tools/stress_invariance.pl` needs no reference program.  It takes a random
+The invariance stress (`tools/stress_invariance.py`, ported with the
+Perl's random numbers, so a seed gives the same networks) takes a random
 looped network and describes it differently -- elements shuffled, pipes
 reversed, the whole site raised, a pipe split in two, nodes renamed, every
 quantity in different units, the same text solved twice -- and demands the
-same answer every time.  It also fuzzes the pipe database resolver with 4000
-fitting strings.
+same answer every time.  It also fuzzed the pipe database resolver with
+4000 fitting strings.
 
 | run | result |
 |---|---|
@@ -1696,7 +1683,7 @@ which change the iterations of models with curves - example 02 now takes 7):
 Before that was matched, PHCP grew a different tree on gridded networks and
 needed twice the iterations for the same answer (1231 vs 600 on a 16x16 grid).
 On a tree network the pipework forces the spanning tree, which is why the two
-always agreed there.  The remaining speed gap is Perl's cost per iteration,
+always agreed there.  The remaining speed gap was Perl's cost per iteration,
 not the method.
 
 ## Caveats

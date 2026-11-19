@@ -8,6 +8,12 @@ dry pipe valve (DPV) and JSON interface 2.  The solver's outer loop and pump
 check valve revert changed with it; no solved number of a valid model
 changed (checked against the frozen results and baselines).
 
+The Python port is complete on branch `job/python-port`: the engine, the
+command line, the three windows, the packaging and the CI, the whole
+program (`phcp`, `hardycross/`), a byte-for-byte port verified against
+the Perl on the frozen comparison set before the Perl was retired - see
+`PYTHON_PORT.md`, the execution plan for that work.
+
 The source has three windows on the same `.phc` file and the same engine:
 the text editor (`phcp_editor.pl`), the spreadsheet (`phcp_sheet.pl`) and
 the isometric drawing (`phcp_isometric.pl`).  They share one palette and one
@@ -520,6 +526,7 @@ proposed).  Default OFF: every example solves exactly as before.
 - [x] v1.4.0 - release notes `release_notes/v1.4.0.md`
 - [x] v1.5.0 - release notes `release_notes/v1.5.0.md`
 - [x] v1.6.0 - release notes `release_notes/v1.6.0.md`
+- [x] v2.0.0 - PHCP in Python, the Perl retired; release notes `release_notes/v2.0.0.md`
 - [x] Audit of 11 November 2026, acceptance hardening (`tools/test_acceptance.pl`, `tools/test_impossible.pl`): HW_CONST and C ranges; solver tolerances apart from fixed verification limits; CLOSED_FLOW; every demand-search trial validated, UNRESOLVED apart from INADEQUATE, SUPPLY_DEMAND_UNRESOLVED; joint demand signed balance; ORIF_DP_TOL; CURVE_EXTRAPOLATION_LIMIT; DPV loss source, DATA_REQUIRED, constant loss and loss at no flow; JSON `approved`, `demand_assessment`, `assumptions`, `verification`; `--strict` (exit 4); results block CHECK, TAMPERED, NOT FOR DESIGN USE; Revit `approved`
 - [x] Independent benchmarks: element equations against their published forms, six networks against a nodal Newton solve (`tools/test_benchmarks.pl`)
 - [x] A non-return valve at a water supply (`NRV`, `NRVMODEL`): a supply that would take water in shuts and is taken out of the network, reopens when its pressure would lift the valve, and a part of the network left with no supply is LOSS OF SUPPLY (SUPPLY_ISOLATED, NONCOMPLIANT); in every demand search; report Section 10 and JSON `supply_check_valves` (`tools/test_check_valves.pl`, two cases in `tools/test_benchmarks.pl`)

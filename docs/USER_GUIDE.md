@@ -7,7 +7,7 @@ PHCP Reference Manual.  How the program works, how it is tested and what it
 does not do are in the README on GitHub.
 
 The pictures are taken from the programs themselves by
-`tools/doc_screenshots.pl`, which CI runs on every pull request.  Each one
+`tools/doc_screenshots.py`, which CI runs on every pull request.  Each one
 shows `examples/02_full_network.phc` after VALIDATE and CALCULATE.  That
 example has two supplies (a tank with a booster pump, and a town main),
 pressure devices, sprinklers, a hydrant and a hose reel.
@@ -44,17 +44,19 @@ Contents
 | `phcp.exe` | the command-line program: a model in, a report or JSON out |
 
 Each is a single file with the pipe and fitting database inside.  Nothing
-needs installing.  All four read and write the same `.phc` file, so a model
+needs installing.  From 2.0 PHCP is written in Python (it was Perl up to
+1.6.0); the programs replace the 1.6.0 files in place, read the same `.phc`
+files and give the same results, report and JSON as 1.6.0 did.  All four read and write the same `.phc` file, so a model
 can be started in one window and finished in another.
 
-**From source** (any system with Perl 5.38 or later, and Perl/Tk for the
+**From source** (any system with Python 3.10 or later, and tkinter for the
 windows):
 
 ```
-perl phcp_editor.pl model.phc
-perl phcp_sheet.pl model.phc
-perl phcp_isometric.pl model.phc
-perl phcp.pl model.phc report.pdf
+python phcp_editor.py model.phc
+python phcp_sheet.py model.phc
+python phcp_isometric.py model.phc
+phcp model.phc report.pdf
 ```
 
 The `examples/` folder holds worked models.  `02_full_network.phc` is the one
@@ -369,6 +371,8 @@ The exit code says the result:
 | 2 | the model could not be read, or its network is broken; nothing was solved |
 | 3 | REJECTED: the results must not be used |
 | 4 | NONCOMPLIANT, with `--strict` |
+| 255 | the command line was not understood; the usage line is printed |
+| other | a file could not be written (the report, the PDF, `--annotate` or `--save`): the message names the file and the reason, and the code is the system's error number |
 
 A script that treats 0 as approved must use `--strict`, or read `approved`
 in the JSON.  The README section "Calling PHCP from another program" has the

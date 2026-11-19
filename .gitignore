@@ -1,1 +1,7 @@
-comparison/rerun/
+__pycache__/
+*.pyc
+/*.exe
+/dist/
+/build/
+/smoke_test*
+/.claude/

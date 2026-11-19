@@ -2,7 +2,7 @@
 
 `revit/PHCP.extension` is a pyRevit extension.  It walks the pipework in a
 Revit model, writes a `.phc` model, and runs the PHCP engine on it.  The
-engine is called as a program (`phcp.exe --json`, or `phcp.pl --json`), the
+engine is called as a program (`phcp.exe --json`, or `phcp --json`), the
 same way AutoCAD calls it.  The extension does not solve anything itself.
 
 The file is `.phc`, the engine's model language.  There is no `.phcp` file.
@@ -29,9 +29,9 @@ extension.
 1. **PARAMETERS** - creates the shared parameters and binds them.  Run this
    once on each model, and again after an update that adds parameters.
    The other buttons refuse to run until it has.
-2. **ENGINE** - choose `phcp.exe` (or `phcp.pl`).  The path is remembered in
+2. **ENGINE** - choose `phcp.exe` (or `phcp`).  The path is remembered in
    `%APPDATA%\PHCP\revit.ini` on this machine, or `~/.config/PHCP/revit.ini`.
-   `PHCP_EXE` overrides it.  That file is not the Perl program's
+   `PHCP_EXE` overrides it.  That file is not the PHCP program's
    `settings.ini`.
 3. **PROJECT** - the cover sheet, the method (HW or DW), velocity pressure,
    hose allowance, the velocity limit (blank is 6 m/s), the join tolerance
@@ -43,7 +43,7 @@ extension.
 
 | button | what it does |
 |---|---|
-| ENGINE | Remember where `phcp.exe` or `phcp.pl` is. |
+| ENGINE | Remember where `phcp.exe` or `phcp` is. |
 | PARAMETERS | Bind the shared parameters. |
 | PROJECT | Cover sheet and the options written at the top of the `.phc`. |
 | FITTING MAP | Project rules that turn a family name into a fitting code. |
@@ -383,7 +383,7 @@ database's diameters into its source.
 The walk, the `.phc` it writes, the fitting codes, the devices, the colours
 and the size suggestions are checked by `python3 tools/test_revit.py`, with
 no Revit present.  That test builds the same network as
-`examples/08_autocad_export_format.phc`, solves it with `phcp.pl`, and
+`examples/08_autocad_export_format.phc`, solves it with `phcp`, and
 compares the flows and pressures with
 `tools/baseline/08_autocad_export_format.expected`.  It also checks that
 every ribbon button calls a command that exists.

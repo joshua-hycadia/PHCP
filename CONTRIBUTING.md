@@ -1,9 +1,10 @@
 # PHCP - rules for contributors
 
 PHCP is Hycadia's Hardy Cross hydraulic calculation program for fire sprinkler
-and hydrant networks, written entirely in Perl.  Its results go into
-calculations submitted to authorities, so correctness and honesty about status
-come before speed.
+and hydrant networks, written entirely in Python (the Perl original was
+retired after the port was verified byte for byte against it; see
+PYTHON_PORT.md).  Its results go into calculations submitted to authorities,
+so correctness and honesty about status come before speed.
 
 Read `PLAN.md` first.  It is the execution plan for the current work and says
 which pull request is next.
@@ -22,8 +23,8 @@ which pull request is next.
 
 ### The engine
 
-- Do not change `HardyCross.pm`, `HardyCross/Demand.pm`,
-  `HardyCross/PipeData.pm`, `HardyCross/Report.pm` or `HardyCross/PDF.pm`
+- Do not change `hardycross/__init__.py`, `hardycross/demand.py`,
+  `hardycross/pipedata.py`, `hardycross/report.py` or `hardycross/pdfout.py`
   except where `PLAN.md` says to.  Any change that alters a solved number
   needs the maintainer's approval first; ask, do not decide.
 - New input formats translate into the existing parser; they do not
@@ -64,7 +65,7 @@ A stale README is a defect.
   not been checked against it.
 - `docs/USER_GUIDE.md` is held to the same rule for what a designer sees: a
   window, a tab, a key, a result or an exit code.  Its pictures come from
-  `tools/doc_screenshots.pl`.  When a window changes, take them again: CI's
+  `tools/doc_screenshots.py`.  When a window changes, take them again: CI's
   Linux job keeps a fresh set as the `user-guide-screenshots` artefact on
   every run, so copy those into `docs/images/` rather than taking them by hand.
 - The guide and the reference manual are published as Word and PDF
@@ -87,53 +88,43 @@ A stale README is a defect.
 ## Tests - run all before every commit
 
 ```
-perl tools/test_phc.pl              # .phc language (--full also solves 04)
-perl tools/test_curves.pl           # supply, pump and loss curves
-perl tools/test_pipedata.pl         # pipe and fitting database
-perl tools/test_report_checks.pl    # report hand-checks across the examples
-perl tools/test_pdf.pl              # PDF structure checks
-perl tools/check_lisp.pl            # the AutoCAD exporter's structure (no AutoCAD here)
-python3 tools/test_revit.py         # the Revit extension, without Revit
-perl tools/test_json.pl             # phcp.pl --json, the interface other programs call
-perl tools/stress_resolver.pl       # fitting resolver
-perl tools/stress_invariance.pl 20  # invariance stress (use 60 before a PR)
-perl tools/test_editor.pl           # the editor's logic, headless
-perl tools/test_editor_window.pl    # the editor window (re-runs under xvfb-run)
-perl tools/test_sheet.pl            # the spreadsheet's grids, headless
-perl tools/test_sheet_window.pl     # the spreadsheet window (re-runs under xvfb-run)
-perl tools/test_dbedit.pl           # database editing and the team folder, headless
-perl tools/test_isometric.pl        # the isometric drawing, and the .phc it writes
-perl tools/test_isometric_window.pl # the isometric window (re-runs under xvfb-run)
-perl tools/test_graph.pl            # the Q^1.85 water supply graph, and SUPPLYGRAPH in a report
-perl tools/test_tools.pl            # the QUICK TOOLS calculators and the orifice plate
-perl tools/test_sizing.pl           # auto pipe sizing, each answer checked at the demand point
-perl tools/test_manual.pl           # docs/PHC_REFERENCE.md against the program
-perl tools/test_velocity_pressure.pl  # OPTION VELOCITY_PRESSURE: hand check, OFF unchanged, ON vs OFF
-perl tools/test_validate.pl         # hydraulic validation: acceptance, the false positives it catches
-perl tools/test_supplies.pl         # several supplies: operating, conditional, joint, scenarios
-perl tools/test_dpv.pl              # the dry pipe valve, its loss by hand and the database valves
-perl tools/test_results.pl          # the results saved back into the .phc
-perl tools/test_drytime.pl          # the estimated trip and transit times, the formula by hand
-perl tools/test_acceptance.pl       # the audit of 11 November 2026: each false positive refused
-perl tools/test_benchmarks.pl       # reference values PHCP did not compute: published forms, nodal Newton
-perl tools/test_impossible.pl       # tools/impossible/: models that must not be accepted
-perl tools/test_check_valves.pl     # supply check valves (NRV), and the defects of the audit's second stage
-perl tools/test_nrv_refinements.pl  # NRVLOSS curves, the reopening trial, stored valve states, pump switch limits
+python3 tools/test_pipedata.py          # pipe and fitting database
+python3 tools/check_lisp.py             # the AutoCAD exporter's structure (no AutoCAD here)
+python3 tools/stress_resolver.py        # fitting resolver
+python3 tools/stress_invariance.py 20   # invariance stress (use 60 before a PR)
+python3 tools/test_editor.py            # the editor's logic, headless
+python3 tools/test_sheet.py             # the spreadsheet's grids, headless
+python3 tools/test_dbedit.py            # database editing and the team folder, headless
+python3 tools/test_tools.py             # the QUICK TOOLS calculators and the orifice plate
+python3 tools/test_manual.py            # docs/PHC_REFERENCE.md against the program
+python3 tools/test_isometric.py         # the isometric drawing, and the .phc it writes
+python3 tools/test_revit.py             # the Revit extension, without Revit
+python3 tools/test_editor_window.py     # the editor window (re-runs under xvfb-run)
+python3 tools/test_sheet_window.py     # the spreadsheet window (re-runs under xvfb-run)
+python3 tools/test_isometric_window.py  # the isometric window (re-runs under xvfb-run)
+python3 tools/test_impossible.py       # tools/impossible/: models that must not be accepted
+python3 tools/test_phc.py              # .phc language (--full also solves 04)
+python3 tools/test_json.py             # phcp --json, the interface other programs call
+python3 tools/test_results.py          # the results saved back into the .phc
+python3 tools/test_acceptance.py       # the audit of 11 November 2026: each false positive refused
+python3 tools/test_report_checks.py    # report hand-checks across the examples
+python3 tools/test_pdf.py              # PDF structure checks
+python3 tools/test_benchmarks.py       # against reference values worked without PHCP
+python3 tools/test_check_valves.py     # check valves (NRV) at water supplies
+python3 tools/test_nrv_refinements.py  # NRV loss curves, reopening, pump switching, saved results
+python3 tools/test_supplies.py         # several water supplies
+python3 tools/test_dpv.py              # the dry pipe valve
+python3 tools/test_validate.py             # validation and the false positives it catches
+python3 tools/test_velocity_pressure.py    # OPTION VELOCITY_PRESSURE, against a hand check
+python3 tools/test_curves.py               # supply, pump and loss curves, the orifice plate Cd
+python3 tools/test_drytime.py              # the dry pipe valve trip and transit estimates
+python3 tools/test_sizing.py               # auto pipe sizing
+python3 tools/test_graph.py                # the Q^1.85 supply graph, its file, sheet and report appendix
 ```
 
-CI (`.github/workflows/ci.yml`) runs these on Linux, and those that need no
-display on Windows, on every pull request.
-
-After a Windows build, and on every CI build, the icon is read back out of
-each program:
-
-```
-perl tools/check_exe_icon.pl phcp.exe          # its icon against data/phcp.ico
-perl tools/check_exe_icon.pl phcp_editor.exe
-perl tools/check_exe_icon.pl phcp_sheet.exe
-perl tools/check_exe_icon.pl phcp_isometric.exe
-```
+CI (`.github/workflows/ci.yml`) runs these on Linux and the build on
+Windows, on every pull request.
 
 Add the new suites from `PLAN.md` to this list as they are written.
-No CPAN modules beyond Tk and PAR::Packer (for the
-Windows build); everything else is core Perl.
+No packages beyond PyInstaller (for the Windows build) and python-docx
+(for the docs); everything else is the standard library.
