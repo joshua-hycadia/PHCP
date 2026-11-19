@@ -60,7 +60,10 @@ def build(name, script, console):
             '--distpath', 'dist', '--workpath', 'build',
             '--specpath', 'build']
     if os.path.isfile(icon):
-        args += ['--icon', icon]
+        # Absolute: PyInstaller reads the icon path from the spec it
+        # writes in build/, and a relative path would be looked for
+        # there, not here.
+        args += ['--icon', os.path.abspath(icon)]
         args += ['--add-data',
                  os.pathsep.join([os.path.abspath(icon), 'data'])]
     for extra in ('data/pipes.dat', 'data/fonts'):
