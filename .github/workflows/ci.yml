@@ -11,8 +11,8 @@
 #                  cfafeef), byte for byte, by tools/compare_perl.py: the
 #                  text output, the JSON, the full text report, the --save
 #                  results block and the exit status of each model.  A pull
-#                  request runs every example and every 10th model of the
-#                  comparison sets; a push to main, a tag or a run by hand
+#                  request or a release tag runs every example and every 10th
+#                  model of the comparison sets; a push to main or a run by hand
 #                  every example, all 900 models' text and JSON, and every
 #                  5th model's report and --save (the demand search makes
 #                  those slow: all 900 would pass the runner's 6 hours)
@@ -100,9 +100,13 @@ jobs:
       - name: The Python against PHCP 1.6.0 (Perl), byte for byte
         env:
           EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -e
-          if [ "$EVENT" = pull_request ]; then
+          # A pull request, and a release (a tag or a published release: the
+          # commit main has already checked in full), run the sample; a push
+          # to main or a run by hand, everything the runner's time allows.
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = release ] || [ "$REF_TYPE" = tag ]; then
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --set examples
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --every 10 \
               --set models --set models_A --set models_B
