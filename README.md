@@ -40,7 +40,16 @@ python phcp_isometric.py model.phc      # the same calculation, drawn on an isom
 ./phcp model.phc report.txt             # ...or as plain ASCII text
 ./phcp --json model.phc                 # the results as JSON, for another program
 ./phcp model.phc --annotate out.phc     # with auto sizing: the model with each size as //AS - <size>
+python3 tools/test_pipedata.py          # verify the pipe and fitting database and its resolver
+python3 tools/stress_resolver.py        # every fitting code at every size, and 20000 hostile strings
+python3 tools/stress_invariance.py 60   # random networks, each solved again described another way
+python3 tools/check_lisp.py             # the AutoCAD exporter's structure (no AutoCAD here)
 python3 tools/test_editor.py            # verify the editor's logic
+python3 tools/test_sheet.py             # verify the spreadsheet's grids, headless
+python3 tools/test_dbedit.py            # verify database editing and the team folder, headless
+python3 tools/test_tools.py             # verify the QUICK TOOLS calculators and the orifice plate
+python3 tools/test_manual.py            # verify docs/PHC_REFERENCE.md against the program
+python3 tools/doc_screenshots.py        # take the user guide's pictures (uses xvfb-run if no display)
 python3 tools/test_editor_window.py     # drive the editor window (uses xvfb-run if no display)
 python3 tools/test_sheet_window.py      # drive the spreadsheet window (uses xvfb-run if no display)
 python3 tools/test_isometric.py         # verify the isometric drawing, and the .phc it writes
@@ -364,7 +373,7 @@ AS 2118.1 values unmodified, no diameter modifier, and the report states it.
 
 ### Database checks
 
-`tools/test_pipedata.py`, 35 checks: C multipliers and diameter modifiers
+`tools/test_pipedata.py`, 39 checks: C multipliers and diameter modifiers
 reproduced to three decimals at a spread of types and sizes; every pipe K in
 the database reproduced from its own bore and C (worst 0.4%); a hand-checked
 DN300 Schedule 20 tee (20.748 m, exact modifier 1.13378); and every rule above.
