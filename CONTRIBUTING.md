@@ -109,6 +109,11 @@ python3 tools/test_results.py          # the results saved back into the .phc
 python3 tools/test_acceptance.py       # the audit of 11 November 2026: each false positive refused
 python3 tools/test_report_checks.py    # report hand-checks across the examples
 python3 tools/test_pdf.py              # PDF structure checks
+python3 tools/test_benchmarks.py       # against reference values worked without PHCP
+python3 tools/test_check_valves.py     # check valves (NRV) at water supplies
+python3 tools/test_nrv_refinements.py  # NRV loss curves, reopening, pump switching, saved results
+python3 tools/test_supplies.py         # several water supplies
+python3 tools/test_dpv.py              # the dry pipe valve
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux and the build on

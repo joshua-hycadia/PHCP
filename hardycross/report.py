@@ -1851,6 +1851,8 @@ def dry_pipe_valves(net, va, dry):
                           'its roughness' if (net['opts'].get('method') or 'HW') == 'DW'
                           else 'C %g' % (host.get('c') if host and host.get('c') is not None else 0)))
         elif basis == 'DB' and e.get('cv'):
+            # The database DN is the text of pipes.dat; the Perl's %d
+            # numifies it, so it is made a number for %d here.
             db = e['db']
             out += row('Loss basis', 'the pipe and fitting database: %s %s DN%d, flow '
                       'coefficient Cv %g (gpm at 1 psi, loss = (Q/Cv)^2) - %s'
