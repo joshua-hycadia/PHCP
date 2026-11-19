@@ -11,9 +11,11 @@
 #                  cfafeef), byte for byte, by tools/compare_perl.py: the
 #                  text output, the JSON, the full text report, the --save
 #                  results block and the exit status of each model.  A pull
-#                  request runs every 10th model of the comparison sets and
-#                  every example; a push to main, a tag or a run by hand
-#                  runs all 900 models
+#                  request runs every example and every 10th model of the
+#                  comparison sets; a push to main, a tag or a run by hand
+#                  every example, all 900 models' text and JSON, and every
+#                  5th model's report and --save (the demand search makes
+#                  those slow: all 900 would pass the runner's 6 hours)
 #   build-windows  build_windows.py on a Windows runner, exactly as on a PC:
 #                  phcp.exe, phcp_editor.exe, phcp_sheet.exe and
 #                  phcp_isometric.exe by PyInstaller, the smoke test in the
@@ -87,6 +89,7 @@ jobs:
 
   parity:
     runs-on: ubuntu-latest
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
       # The specification: the last Perl release, beside this tree.
@@ -104,7 +107,11 @@ jobs:
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --every 10 \
               --set models --set models_A --set models_B
           else
-            python3 tools/compare_perl.py --perl perl-1.6.0 -v
+            python3 tools/compare_perl.py --perl perl-1.6.0 -v --set examples
+            python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes text,json \
+              --set models --set models_A --set models_B
+            python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes report,save --every 5 \
+              --set models --set models_A --set models_B
           fi
 
   build-windows:

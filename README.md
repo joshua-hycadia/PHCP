@@ -1553,10 +1553,12 @@ others on the page, and the report says which check to make.
 The Python is judged against the last Perl release, PHCP 1.6.0, byte for
 byte: `tools/compare_perl.py` runs every model through both and compares
 the text output, the JSON, the full text report, the `--save` results block
-and the exit status of each; the program's name, the solve's time to the
+and the exit status of each; the program's name and version, the results
+block's CHECK hash (which covers the version), the solve's time to the
 minute and the checkout's own path are the only things set aside.  CI runs
-it on every pull request (every 10th model, every example) and on main (all
-of them).  Every Perl test suite is ported to Python check for check, with
+it on every pull request (every example, every 10th model) and on main (every
+example, the text and JSON of all 900 models, the report and results block
+of every 5th).  Every Perl test suite is ported to Python check for check, with
 the counts the Perl gave:
 
 | suite | result |
