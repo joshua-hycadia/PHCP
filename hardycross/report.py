@@ -1846,21 +1846,23 @@ def dry_pipe_valves(net, va, dry):
                           'its roughness' if (net['opts'].get('method') or 'HW') == 'DW'
                           else 'C %g' % (host.get('c') if host and host.get('c') is not None else 0)))
         elif basis == 'DB' and e.get('cv'):
+            # The database DN is the text of pipes.dat; the Perl's %d
+            # numifies it, so it is made a number for %d here.
             db = e['db']
             out += row('Loss basis', 'the pipe and fitting database: %s %s DN%d, flow '
                       'coefficient Cv %g (gpm at 1 psi, loss = (Q/Cv)^2) - %s'
-                      % (db['maker'], db['model'], db['dn'], e['cv'], db['source']))
+                      % (db['maker'], db['model'], int(float(db['dn'])), e['cv'], db['source']))
         elif basis == 'DB':
             db = e['db']
             out += row('Loss basis', 'the pipe and fitting database: %s %s DN%d, %s %s of %s pipe '
                       '(bore %.2f mm) at C %g, by Hazen-Williams - %s'
-                      % (db['maker'], db['model'], db['dn'], db['eql'], db['eql_unit'].lower(),
+                      % (db['maker'], db['model'], int(float(db['dn'])), db['eql'], db['eql_unit'].lower(),
                          'Schedule 40' if db['ref'].upper() == 'S40' else '%s bore' % db['ref'],
                          e.get('ref_bore') or 0, e.get('ref_c') or 0, db['source']))
         elif e.get('db'):
             db = e['db']
             out += row('Loss basis', '*** DATA_REQUIRED - the database record for the %s %s DN%d gives no usable '
-                      'loss; the calculation is rejected' % (db['maker'], db['model'], db['dn']))
+                      'loss; the calculation is rejected' % (db['maker'], db['model'], int(float(db['dn']))))
         else:
             out += row('Loss basis', '*** NONE GIVEN - DATA_REQUIRED; the calculation is rejected')
         # Where the loss came from: manufacturer data, or a figure entered in
@@ -1892,14 +1894,20 @@ def dry_time_rows(net, d, row):
     up = net['f_pres']
     pu = sym(net['u_pres'])
     out = ''
+
+    # Each row appended to this function's text (the Perl's $add): the row
+    # function passed in returns its text, and is not used here.
+    def add(k, v):
+        nonlocal out
+        out += '   %-30s %s\n' % (k, v)
     if d.get('error'):
-        row('Trip and transit times', 'NOT ESTIMATED: %s' % d['error'])
+        add('Trip and transit times', 'NOT ESTIMATED: %s' % d['error'])
         return out
-    row('Dry system volume', '%.4f m3 in %d pipes downstream of the valve' % (d['volume'], d['pipes']))
+    add('Dry system volume', '%.4f m3 in %d pipes downstream of the valve' % (d['volume'], d['pipes']))
     t = d.get('trip') or {}
     if (t.get('status') or '') == 'ESTIMATE':
-        row('TRIP TIME, ESTIMATE', '%.1f s' % t['seconds'])
-        row('   worked from',
+        add('TRIP TIME, ESTIMATE', '%.1f s' % t['seconds'])
+        add('   worked from',
             't = 0.0352 V / (An sqrt T0) ln(pa0/pa) (FM Global, SFPE Handbook): '
             'V %.3f ft3, An %d x %.2f mm orifice = %.6f ft2, T0 %.1f C = %.1f R, pa0 %.2f psia (set air %.1f %s), '
             'pa %.2f psia (trip %.1f %s%s)'
@@ -1911,32 +1919,32 @@ def dry_time_rows(net, d, row):
                  ' as given' if t.get('static_given') else ' from the supplies, pumps not included'))
                if t.get('static') is not None else ''))
         if t.get('accelerator_ignored'):
-            row('   accelerator', 'ON, but not modelled: the time is without it')
+            add('   accelerator', 'ON, but not modelled: the time is without it')
         if not t.get('choked'):
-            row('   choked flow', 'NO - the trip pressure is below 1.893 atm, so the estimate is less reliable')
+            add('   choked flow', 'NO - the trip pressure is below 1.893 atm, so the estimate is less reliable')
     else:
-        row('TRIP TIME', ('*** %s' % t['reason']) if (t.get('status') or 'NOT_CALCULATED') == 'ERROR'
+        add('TRIP TIME', ('*** %s' % t['reason']) if (t.get('status') or 'NOT_CALCULATED') == 'ERROR'
             else 'not estimated: %s' % t.get('reason'))
     x = d.get('transit') or {}
     if (x.get('status') or '') == 'ESTIMATE':
-        row('TRANSIT TIME, ESTIMATE', '%.1f s, the larger of:' % x['seconds'])
+        add('TRANSIT TIME, ESTIMATE', '%.1f s, the larger of:' % x['seconds'])
         if x.get('path_seconds') is not None:
-            row('   water front to the remote head',
+            add('   water front to the remote head',
                 '%.1f s along %.1f m (%s) to %s, sum of L / v at the %s flows'
                 % (x['path_seconds'], x['path_length'], ' '.join(x['path_pipes']), x['remote'], x['basis']))
         else:
-            row('   water front to the remote head', 'not traced')
+            add('   water front to the remote head', 'not traced')
         if x.get('fill_seconds') is not None:
-            row('   filling the dry volume',
+            add('   filling the dry volume',
                 '%.1f s: dry volume / %.1f %s through the valve at the %s'
                 % (x['fill_seconds'], x['flow'] / net['f_flow'], sym(net['u_flow']), x['basis']))
         else:
-            row('   filling the dry volume', 'no flow')
-        row('   ignoring', 'the air the water has to compress and expel: a lower bound')
+            add('   filling the dry volume', 'no flow')
+        add('   ignoring', 'the air the water has to compress and expel: a lower bound')
     else:
-        row('TRANSIT TIME', 'not estimated: %s' % x.get('reason'))
+        add('TRANSIT TIME', 'not estimated: %s' % x.get('reason'))
     if d.get('delivery') is not None:
-        row('DELIVERY TIME, ESTIMATE',
+        add('DELIVERY TIME, ESTIMATE',
             '%.1f s = trip + transit (not a listed method: check with one, or a test)' % d['delivery'])
     return out
 

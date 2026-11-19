@@ -424,6 +424,12 @@ def joint(net):
         r['factor'] = good
     return r
 
+# _pct -- a SCENARIO percentage as a number.  The reader keeps each one as
+# the text written (the description quotes it so), and the Perl numifies it
+# where it is compared or multiplied; so does this.
+def _pct(v):
+    return float(v) if isinstance(v, str) else v
+
 #------------------------------------------------------------------------------
 # scenarios -- the supply scenarios to solve.
 #------------------------------------------------------------------------------
@@ -453,8 +459,8 @@ def scenario_list(net):
         for a, b in sc['shares']:
             sh[a] = b
         lst.append({'name': sc['name'], 'line': sc.get('line'), 'required': 1, 'shares': sh,
-                    'description': ', '.join('%s out of service' % a if b == 0
-                                            else '%s at %d %% of its pressure' % (a, b)
+                    'description': ', '.join('%s out of service' % a if _pct(b) == 0
+                                            else '%s at %s %% of its pressure' % (a, b)
                                             for a, b in sc['shares'])})
     return lst
 
@@ -467,7 +473,7 @@ def scenario(net, sc):
     sh = sc['shares']
     for s in supplies(n):
         pc = sh.get(s['id'])
-        pc = 100 if pc is None else pc
+        pc = 100 if pc is None else _pct(pc)
         if pc <= 0:
             s['closed'] = 1
             s['out_of_service'] = 1

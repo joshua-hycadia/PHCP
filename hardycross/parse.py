@@ -526,7 +526,10 @@ def parse_row(net, section, tk):
                     if v.get('cv'):
                         data = {'cv': v['cv']}
                     else:
-                        data = {'eql': v['eql_m'], 'ref_bore': v['bore_mm'], 'ref_c': float(v['c'])}
+                        # The bore and C are numbers to the Perl wherever
+                        # used; a Schedule 40 bore comes from the database
+                        # as its text, so it is made one here, as C is.
+                        data = {'eql': v['eql_m'], 'ref_bore': float(v['bore_mm']), 'ref_c': float(v['c'])}
                     data.update(db=v, db_model='%s %s' % (v['maker'], v['model']),
                                 loss_source='MANUFACTURER_DB')
                 else:

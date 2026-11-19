@@ -95,6 +95,11 @@ python3 tools/test_editor_window.py     # the editor window (re-runs under xvfb-
 python3 tools/test_sheet_window.py     # the spreadsheet window (re-runs under xvfb-run)
 python3 tools/test_isometric_window.py  # the isometric window (re-runs under xvfb-run)
 python3 tools/test_impossible.py       # tools/impossible/: models that must not be accepted
+python3 tools/test_benchmarks.py       # against reference values worked without PHCP
+python3 tools/test_check_valves.py     # check valves (NRV) at water supplies
+python3 tools/test_nrv_refinements.py  # NRV loss curves, reopening, pump switching, saved results
+python3 tools/test_supplies.py         # several water supplies
+python3 tools/test_dpv.py              # the dry pipe valve
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on Linux and the build on

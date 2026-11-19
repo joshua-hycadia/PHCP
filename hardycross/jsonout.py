@@ -462,7 +462,7 @@ def traceability(net, va):
                        'maxiter': va['solver']['maxiter']},
         'assumptions': assume,
         'scenarios': [{'name': sc['name'], 'line': sc.get('line'),
-                        'shares': {a: 0 + b for a, b in sc['shares']}}
+                        'shares': {a: _numify(b) for a, b in sc['shares']}}
                        for sc in (net.get('scenarios') or [])],
     }
 
