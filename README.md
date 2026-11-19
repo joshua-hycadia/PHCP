@@ -4,13 +4,12 @@ Copyright (c) 2026 Hycadia Pty Ltd.  MIT licence - see LICENSE, which also sets
 out what the licence does NOT cover: the third-party values reproduced in
 `data/`, and Tk.
 
-The latest release is 1.6.0 (`release_notes/v1.6.0.md`): check valves at
-water supplies (`NRV`, `NRVMODEL`, `NRVLOSS`) with LOSS OF SUPPLY reported
-as NONCOMPLIANT; the acceptance hardening of the audit of 11 November 2026,
-with `--strict`; two corrections for a gravity tank at 0 kPa; the
-independent benchmarks and impossible models; and the user guide, as PDF
-and Word.  No solved result of a valid model without an `NRV` line
-changed, apart from the gravity tank.
+The latest release is 2.0.0 (`release_notes/v2.0.0.md`): PHCP in Python.
+The program, the three windows, the packaging and every test suite are
+ported from Perl, and the Python gives the same text, JSON, report, saved
+results and exit status as 1.6.0 on every comparison model and example
+(`tools/compare_perl.py`, run in CI against 1.6.0).  No solved result
+changed.  1.6.0 was the last Perl release.
 
 **New to PHCP?  Start with the User Guide**,
 [docs/PHCP_User_Guide.pdf](docs/PHCP_User_Guide.pdf) (also as
@@ -27,8 +26,8 @@ for the model (`.phc`), three windows on that same engine - a text editor, a
 spreadsheet and an isometric drawing - and a monospace ASCII calculation
 report.  The program is Python (`phcp` and the `hardycross/` package,
 Tkinter for the windows): the Perl original, ported stage by stage and
-verified byte for byte against it on the frozen comparison set before the
-Perl was retired (see [PYTHON_PORT.md](PYTHON_PORT.md)).  A pyRevit
+verified byte for byte against it, and checked against the last Perl
+release in CI (see [PYTHON_PORT.md](PYTHON_PORT.md) and Verification).  A pyRevit
 extension for Revit 2022 to 2027 walks a model and calls that engine; see
 Revit.
 
@@ -1438,9 +1437,9 @@ editor after CALCULATE, write them as a block of comment lines at the end
 of the model:
 
 ```
-//== PHCP RESULTS - PHCP 1.6.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
+//== PHCP RESULTS - PHCP 2.0.0, 2026-11-11 05:19 UTC, ACCEPTED.  Replaced on every solve: ...
 //= RESULT   ACCEPTANCE ACCEPTED NUMERICAL PASS PHYSICAL PASS DESIGN PASS DEMAND DEMONSTRATED APPROVED YES
-//= PROGRAM  PHCP VERSION 1.6.0
+//= PROGRAM  PHCP VERSION 2.0.0
 //= MODEL    SHA256 05b9e70f...
 //= PIPE     PA1 FROM PA TO H FLOW 2784.9699 VELOCITY 1.477 LOSS 0.2530
 //= NODE     PA ELEVATION 0.000 PRESSURE 639.1367

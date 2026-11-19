@@ -15,7 +15,7 @@
 
 import math
 
-VERSION = '1.6.0'
+VERSION = '2.0.0'
 
 GAMMA_W = 9.80665      # kPa per metre of water
 Q_TINY  = 1.0e-6

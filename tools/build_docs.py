@@ -6,7 +6,7 @@
                                                alone, as the tag will name it
 
 The text is written once, in Markdown: docs/USER_GUIDE.md and
-docs/PHC_REFERENCE.md.  Those stay the source because tools/test_manual.pl
+docs/PHC_REFERENCE.md.  Those stay the source because tools/test_manual.py
 checks the reference manual against the program line by line, and a binary
 document cannot be checked or reviewed in a diff.  This script turns each into
 a formatted A4 document:
@@ -20,7 +20,9 @@ from docs/images/, and page numbers.
 
 The .docx is written with python-docx.  The PDF, and the table of contents's
 page numbers, come from Microsoft Word through COM on Windows (pywin32), or
-from LibreOffice (soffice) elsewhere.  With neither, the .docx is written and
+from LibreOffice elsewhere: through its Python bridge (uno) when a Python
+has it, so the contents are filled in as Word fills them, else soffice
+--convert-to.  With neither, the .docx is written and
 the PDF is skipped with a message; the contents fill in when the .docx is
 first opened in Word.
 
@@ -479,6 +481,71 @@ def pdf_word(docx: Path, pdf: Path) -> bool:
     return True
 
 
+# LibreOffice through its Python bridge (UNO): the document is opened, its
+# table of contents and fields updated, and the PDF exported - the same as
+# the Word path, so the contents page is filled in.  The .docx itself is left
+# as python-docx wrote it.  Run by whichever Python has the bridge (often the
+# system one, not this one).
+UNO_SCRIPT = r"""
+import sys, time, subprocess, uno
+from com.sun.star.beans import PropertyValue
+exe, docx, pdf, port = sys.argv[1:5]
+proc = subprocess.Popen([exe, '--headless', '--invisible', '--norestore',
+                         '--accept=socket,host=127.0.0.1,port=%s;urp;' % port],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    local = uno.getComponentContext()
+    resolver = local.ServiceManager.createInstanceWithContext(
+        'com.sun.star.bridge.UnoUrlResolver', local)
+    for _ in range(120):
+        try:
+            ctx = resolver.resolve('uno:socket,host=127.0.0.1,port=%s;urp;'
+                                   'StarOffice.ComponentContext' % port)
+            break
+        except Exception:
+            time.sleep(0.5)
+    else:
+        sys.exit(1)
+    desktop = ctx.ServiceManager.createInstanceWithContext('com.sun.star.frame.Desktop', ctx)
+    def prop(k, v):
+        p = PropertyValue(); p.Name = k; p.Value = v; return p
+    doc = desktop.loadComponentFromURL(uno.systemPathToFileUrl(docx), '_blank', 0,
+                                       (prop('Hidden', True),))
+    for _ in range(2):              # twice: the page numbers after the contents grew
+        idx = doc.getDocumentIndexes()
+        for i in range(idx.getCount()):
+            idx.getByIndex(i).update()
+        doc.getTextFields().refresh()
+        doc.refresh()
+    doc.storeToURL(uno.systemPathToFileUrl(pdf), (prop('FilterName', 'writer_pdf_Export'),))
+    doc.close(True)
+    try:
+        desktop.terminate()
+    except Exception:
+        pass
+finally:
+    try:
+        proc.wait(timeout=30)
+    except Exception:
+        proc.kill()
+"""
+
+
+def pdf_uno(docx: Path, pdf: Path) -> bool:
+    exe = shutil.which("soffice") or shutil.which("libreoffice")
+    if not exe:
+        return False
+    for py in [sys.executable, shutil.which("python3"), "/usr/bin/python3"]:
+        if not py or subprocess.run([py, "-c", "import uno"], capture_output=True).returncode:
+            continue
+        if pdf.exists():
+            pdf.unlink()
+        r = subprocess.run([py, "-c", UNO_SCRIPT, exe, str(docx.resolve()), str(pdf.resolve()), "2002"],
+                           capture_output=True, timeout=600)
+        return r.returncode == 0 and pdf.is_file()
+    return False
+
+
 def pdf_soffice(docx: Path, pdf: Path) -> bool:
     exe = shutil.which("soffice") or shutil.which("libreoffice")
     if not exe:
@@ -502,7 +569,7 @@ def main() -> int:
         print(f"wrote {docx.relative_to(ROOT)}")
         if a.no_pdf:
             continue
-        if sys.platform == "win32" and pdf_word(docx, pdf) or pdf_soffice(docx, pdf):
+        if sys.platform == "win32" and pdf_word(docx, pdf) or pdf_uno(docx, pdf) or pdf_soffice(docx, pdf):
             print(f"wrote {pdf.relative_to(ROOT)}")
         else:
             print(f"no PDF for {stem}: needs Microsoft Word (pywin32) or LibreOffice")

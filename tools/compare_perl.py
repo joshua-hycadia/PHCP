@@ -8,9 +8,10 @@
 # by model.  The Perl is the specification of the port: every output of every
 # model must match it byte for byte.  The one intended difference is the
 # program's name ("Perl Hydraulic Calculation Program" became "Python
-# Hydraulic Calculation Program").  That, the time of the solve (to the
-# minute, in the results block and the report) and the checkout's own path
-# are the only things normalised away.
+# Hydraulic Calculation Program") and its version (2.0.0 against 1.6.0).
+# Those, the results block's CHECK hash (which covers the version), the
+# time of the solve (to the minute) and the checkout's own path are the
+# only things normalised away.
 #
 # The Perl is not in this tree any more.  Check out the last Perl release
 # beside it and point this at that checkout:
@@ -52,17 +53,35 @@ MODES = ('text', 'json', 'report', 'save', 'annotate', 'strict')
 NAME_PERL = 'Perl Hydraulic Calculation Program'
 NAME_PYTHON = 'Python Hydraulic Calculation Program'
 TIMEOUT = 6 * 3600
+CHECK = re.compile(r'^(//= CHECK\s+SHA256 )[0-9a-f]{64}', re.M)
 STAMP = re.compile(r'\d{4}-\d\d-\d\d \d\d:\d\d(?::\d\d)? UTC')
 
 
+def versions(perl_dir):
+    # The Perl's version and this program's: 2.0.0 is the first Python
+    # release, so the version each prints is the one other difference.
+    with open(os.path.join(perl_dir, 'HardyCross.pm'), encoding='utf-8') as fh:
+        perl = re.search(r"\$VERSION\s*=\s*'([^']+)'", fh.read()).group(1)
+    with open(os.path.join(ROOT, 'hardycross', '__init__.py'), encoding='utf-8') as fh:
+        python = re.search(r"^VERSION = '([^']+)'", fh.read(), re.M).group(1)
+    return perl, python
+
+
 def norm(s, perl_dir=None):
-    # The program's new name, and the Perl checkout's own path (the JSON
-    # names the pipe database it read by its full path).
+    # The program's new name and version, and the Perl checkout's own path
+    # (the JSON names the pipe database it read by its full path).  The
+    # results block's CHECK is a SHA-256 of the block, version line and all,
+    # so it is set aside too; tools/test_results.py checks it is right.
     if s is None:
         return None
     s = s.replace(NAME_PERL, NAME_PYTHON)
     if perl_dir:
         s = s.replace(perl_dir, ROOT)
+        old, new = versions(perl_dir)
+        if old != new:
+            v = re.escape(old)
+            s = re.sub(r'(PHCP |VERSION |Calculation Program |"version" : ")' + v + r'(?![\d.])', r'\g<1>' + new, s)
+    s = CHECK.sub(r'\1<check>', s)
     # The time of the solve, which the results block and the report carry
     # to the minute: two runs either side of a minute are the same answer.
     return STAMP.sub('<time>', s)
