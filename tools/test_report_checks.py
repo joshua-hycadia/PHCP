@@ -96,8 +96,12 @@ for m in models:
         fails += 1
         bad.append('%s: no report written' % m)
         continue
-    with open(rep, 'r', encoding='utf-8', errors='surrogateescape', newline='') as fh:
-        L = fh.readlines()
+    # As the Perl's open '<': text mode, so CRLF is read as LF on Windows.
+    with open(rep, 'rb') as fh:
+        b = fh.read()
+    if os.name == 'nt':
+        b = b.replace(b'\r\n', b'\n')
+    L = b.decode('utf-8', 'surrogateescape').splitlines(True)
     name = re.sub(r'.*/', '', m)
 
     sec = ''

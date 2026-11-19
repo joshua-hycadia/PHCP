@@ -30,8 +30,12 @@ def main():
     file = sys.argv[1] if len(sys.argv) > 1 else os.path.join(TOOLS, '..', 'autocad', 'phcp_export.lsp')
     try:
         # One character per byte, as the Perl reads it (no decoding layer).
+        # Text mode in the Perl, so on Windows its CRLF is read as LF.
         with open(file, 'rb') as fh:
-            src = fh.read().decode('latin-1')
+            src = fh.read()
+        if os.name == 'nt':
+            src = src.replace(b'\r\n', b'\n')
+        src = src.decode('latin-1')
     except OSError as e:
         sys.exit('%s: %s' % (file, e.strerror))
 

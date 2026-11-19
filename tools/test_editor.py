@@ -41,8 +41,12 @@ def is_(name, ok, why=None):
 
 
 def slurp(p):
-    with open(p, 'r', encoding='utf-8', newline='') as f:
-        return f.read()
+    # As the Perl's open '<': text mode, so CRLF is read as LF on Windows.
+    with open(p, 'rb') as f:
+        b = f.read()
+    if os.name == 'nt':
+        b = b.replace(b'\r\n', b'\n')
+    return b.decode('utf-8', 'replace')
 
 
 # A small model, its lines numbered in the comments for the checks below.

@@ -48,8 +48,12 @@ def is_(name, ok, why=None):
 path = os.path.join(ROOT, 'docs', 'PHC_REFERENCE.md')
 # Read as bytes, one character per byte, as the Perl reads it (no decoding
 # layer), so the 7-bit check below sees every byte.
+# Text mode in the Perl, so on Windows its CRLF is read as LF.
 with open(path, 'rb') as f:
-    doc = f.read().decode('latin-1')
+    doc = f.read()
+if os.name == 'nt':
+    doc = doc.replace(b'\r\n', b'\n')
+doc = doc.decode('latin-1')
 # Words the manual marks as code: `WORD`.
 code = {w: 1 for w in re.findall(r'`([^`\s]+)`', doc)}
 
@@ -84,7 +88,7 @@ pipedata.load()
 is_('every pipe type in the database', *missing(*pipedata.pipe_types()))
 c = {}
 with open(pipedata.path(), 'rb') as f:
-    for l in f.read().decode('latin-1').split('\n'):
+    for l in f.read().replace(b'\r\n', b'\n').decode('latin-1').split('\n'):
         m = re.match(r'^(?:FIT\|[^|]*|KPRIME)\|([^|]+)\|', l)
         if m:
             c[m.group(1)] = 1
