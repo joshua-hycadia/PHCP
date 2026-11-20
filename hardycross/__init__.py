@@ -35,10 +35,51 @@ class ModelError(Exception):
         self.msg = msg
 
 def fail(fmt, *args):
-    raise ModelError(fmt % args)
+    # sprintf prints an undefined value as nothing.
+    raise ModelError(fmt % tuple('' if a is None else a for a in args))
 
 def is_model_error(e):
     return isinstance(e, ModelError)
+
+_INF = float('inf')
+_NAN = float('nan')
+
+def _pw(a, b):
+    # a ** b as Perl works it (C's pow): a result too large is infinity,
+    # zero to a negative power is infinity, and a negative number to a
+    # fractional power is NaN.  Python raises OverflowError and
+    # ZeroDivisionError for the first two and gives a complex number for the
+    # third, so a model with an absurd figure in it (a bore of 1E80 mm, a
+    # K-factor of 1E200) was refused with "(34, 'Numerical result out of
+    # range')" where the Perl solves it.
+    #
+    # The statements the iteration spends its time in keep Python's own **
+    # and come here only when it raises (a try costs nothing until it
+    # does); the rest call this directly.  Powers that cannot overflow --
+    # of a ratio no more than 1, of a logarithm, of a velocity -- are left
+    # as they were.
+    try:
+        r = a ** b
+    except OverflowError:
+        return -_INF if (a < 0 and b == int(b) and int(b) % 2) else _INF
+    except ZeroDivisionError:
+        return _INF
+    if isinstance(r, complex):
+        return _NAN
+    return r
+
+def perl_add(a, b):
+    # a + b as Perl adds them.  Perl adds two whole numbers as INTEGERS, so
+    # 400 - 400 is the integer 0 and its negative is 0; two numbers with a
+    # fraction are added as floating point, 282.8 - 282.8 is 0.0 and its
+    # negative is -0.0, which prints as -0.0000.  Python's floats give -0.0
+    # in both cases.  The sum is only ever zero when b is minus a, so the
+    # test on b is the test on both.  Only a zero is touched: every other
+    # sum is the same number either way.
+    r = a + b
+    if r == 0 and b == int(b) and abs(b) < 2 ** 63:
+        return 0
+    return r
 
 
 # ---------------------------------------------------------------------- units
@@ -85,7 +126,7 @@ def fit_curve(c, rising):
         fail('curve flows cannot be negative')
     c['q'] = [z[0] for z in pt]
     c['p'] = [z[1] for z in pt]
-    c['x'] = [z[0] ** CURVE_N for z in pt]
+    c['x'] = [_pw(z[0], CURVE_N) for z in pt]
     c['qlo'] = c['q'][0]
     c['qhi'] = c['q'][-1]
     c['plo'] = c['p'][0]
@@ -125,7 +166,10 @@ def curve_eval(c, q):
         return c['phi'] + c['shi'] * (q - c['qhi'])
     i = curve_segment(c, q)
     x0, x1 = c['x'][i], c['x'][i + 1]
-    return c['p'][i] + (c['p'][i + 1] - c['p'][i]) * (q ** CURVE_N - x0) / (x1 - x0)
+    try:
+        return c['p'][i] + (c['p'][i + 1] - c['p'][i]) * (q ** CURVE_N - x0) / (x1 - x0)
+    except OverflowError:
+        return c['p'][i] + (c['p'][i + 1] - c['p'][i]) * (_pw(q, CURVE_N) - x0) / (x1 - x0)
 
 def curve_slope(c, q):
     if q < c['qlo']:
@@ -142,7 +186,10 @@ def curve_slope(c, q):
 def pipe_velocity(q, dia):
     if dia <= D_TINY:
         return 0
-    return (q / 60000) / (3.14159265358979 * (dia / 1000) ** 2 / 4)
+    try:
+        return (q / 60000) / (3.14159265358979 * (dia / 1000) ** 2 / 4)
+    except OverflowError:
+        return (q / 60000) / (3.14159265358979 * _pw(dia / 1000, 2) / 4)
 
 def dw_friction(re, eps, d):
     if re < 1:
@@ -187,7 +234,7 @@ def orifice_dp(aq, d, bigd, cd=None):
     r = (s - cb2) / (s + cb2)
     if r < 0:
         r = 0
-    return 633.28 * (0.596 / cd) ** 2 * aq ** 2 / d ** 4 * (1 - b4) * r
+    return 633.28 * _pw(0.596 / cd, 2) * _pw(aq, 2) / _pw(d, 4) * (1 - b4) * r
 
 def orifice_size(aq, target, bigd, cd=None):
     if aq <= Q_TINY or target <= D_TINY or bigd <= D_TINY:
@@ -208,6 +255,8 @@ def orifice_size(aq, target, bigd, cd=None):
     return 0.5 * (lo + hi)
 
 def b3_reference_flow(dn):
+    # ==, a numeric comparison in Perl: a DN held as text ("50") is 50.
+    dn = float(dn)
     return 500 if (dn == 50 or dn == 65) else 5000
 
 def elem_hf(e, q, o):
@@ -236,13 +285,16 @@ def elem_hf(e, q, o):
             return (sg * hf, (hp - hm) / (2 * dq))
         ltot = e['len'] + e['eqv']
         hwk, nq, nd = o['hwk'], o['hwq'], o['hwd']
-        friction = (hwk * ltot * aq ** nq / (e['c'] ** nq * e['dia'] ** nd)
-                    if aq > 0 else 0)
+        try:
+            friction = (hwk * ltot * aq ** nq / (e['c'] ** nq * e['dia'] ** nd)
+                        if aq > 0 else 0)
+        except OverflowError:
+            friction = hwk * ltot * _pw(aq, nq) / (_pw(e['c'], nq) * _pw(e['dia'], nd))
         hf = friction + minor(aq)
         if kfit is not None and kfit > 0:
             dq = 1e-4 if 1e-4 > 1e-5 * aq else 1e-5 * aq
             def f(v):
-                fr = (hwk * ltot * v ** nq / (e['c'] ** nq * e['dia'] ** nd)
+                fr = (hwk * ltot * _pw(v, nq) / (_pw(e['c'], nq) * _pw(e['dia'], nd))
                       if v > 0 else 0)
                 return fr + minor(v)
             lo = aq - dq if aq - dq > 0 else 0
@@ -251,7 +303,7 @@ def elem_hf(e, q, o):
             dh = nq * friction / aq
         else:
             dia = e['dia'] if e['dia'] > D_TINY else D_TINY
-            dh = nq * hwk * ltot * Q_TINY ** (nq - 1) / (e['c'] ** nq * dia ** nd)
+            dh = nq * hwk * ltot * Q_TINY ** (nq - 1) / (_pw(e['c'], nq) * _pw(dia, nd))
         return (sg * hf, dh)
 
     if k == 'PUMP':
@@ -273,12 +325,18 @@ def elem_hf(e, q, o):
 
     if k == 'DISCHARGE':
         kf = e['k'] if e['k'] > D_TINY else D_TINY
-        dh = 2 * aq / kf ** 2
-        if dh < D_TINY:
-            dh = 2 * Q_TINY / kf ** 2
         z = e.get('z')
         z = 0 if z is None else z
-        hf = sg * (aq / kf) ** 2 + GAMMA_W * z
+        try:
+            dh = 2 * aq / kf ** 2
+            if dh < D_TINY:
+                dh = 2 * Q_TINY / kf ** 2
+            hf = sg * (aq / kf) ** 2 + GAMMA_W * z
+        except OverflowError:
+            dh = 2 * aq / _pw(kf, 2)
+            if dh < D_TINY:
+                dh = 2 * Q_TINY / _pw(kf, 2)
+            hf = sg * _pw(aq / kf, 2) + GAMMA_W * z
         if e.get('pv'):
             hf += e['pv']
         return (hf, dh)
@@ -302,16 +360,16 @@ def elem_hf(e, q, o):
             return (sg * curve_eval(e['curve'], aq),
                     abs(curve_slope(e['curve'], aq)))
         if basis == 'DB' and e.get('cv'):
-            kq = 6.894757 / (e['cv'] * 3.785411784) ** 2
+            kq = 6.894757 / _pw(e['cv'] * 3.785411784, 2)
             dh = 2 * kq * (aq if aq > Q_TINY else Q_TINY)
-            return (sg * kq * aq ** 2, dh)
+            return (sg * kq * _pw(aq, 2), dh)
         if basis == 'DB':
             l = e['eql']
-            hf = (HWK_DEF * l * aq ** 1.85 / (e['ref_c'] ** 1.85 * e['ref_bore'] ** 4.87)
+            hf = (HWK_DEF * l * _pw(aq, 1.85) / (_pw(e['ref_c'], 1.85) * _pw(e['ref_bore'], 4.87))
                   if aq > 0 else 0)
             dh = (1.85 * hf / aq if aq > Q_TINY
                   else 1.85 * HWK_DEF * l * Q_TINY ** 0.85
-                  / (e['ref_c'] ** 1.85 * e['ref_bore'] ** 4.87))
+                  / (_pw(e['ref_c'], 1.85) * _pw(e['ref_bore'], 4.87)))
             return (sg * hf, dh)
         if basis == 'EQL' and e.get('host'):
             if e.get('pseudo') is None:
@@ -321,7 +379,8 @@ def elem_hf(e, q, o):
             return elem_hf(e['pseudo'], q, o)
         return (0, 0)
 
-    raise RuntimeError("internal error: no hydraulics for element kind '%s'" % k)
+    # The newline is the Perl message's own (die "...\n").
+    raise RuntimeError("internal error: no hydraulics for element kind '%s'\n" % k)
 
 # check_valve_loss -- (loss kPa, d loss / dq) of an OPEN check valve at a
 # supply; (0, 0) without one.  The opening term is NOT signed with the flow
@@ -344,8 +403,8 @@ def check_valve_loss(e, q):
         cv = v.get('cv')
         cv = 0 if cv is None else cv
         if cv > 0:
-            kq = KPA_PER_LPM2 / cv ** 2
-            loss += sg * kq * aq ** 2
+            kq = KPA_PER_LPM2 / _pw(cv, 2)
+            loss += sg * kq * _pw(aq, 2)
             dh = 2 * kq * (aq if aq > Q_TINY else Q_TINY)
     return (loss, dh)
 
@@ -539,8 +598,8 @@ def init_flows(net):
         e = net['elems'][ei]
         if e['in_tree'] or e.get('closed'):
             continue
-        acc[e['n1']] += e['q']
-        acc[e['n2']] -= e['q']
+        acc[e['n1']] = perl_add(acc[e['n1']], e['q'])
+        acc[e['n2']] = perl_add(acc[e['n2']], -e['q'])
     maxd = 0
     for i in range(1, nn + 1):
         if net['nodes'][i]['depth'] > maxd:
@@ -551,9 +610,13 @@ def init_flows(net):
             if n['depth'] != d or not n['pelem']:
                 continue
             e = net['elems'][n['pelem']]
+            # A tree element that carries nothing: 0 where the flows that
+            # cancelled were whole numbers, -0.0 where they were not, as in
+            # Perl (perl_add).  A pipe in no loop keeps this flow to the
+            # end, and "Q BR -0.0000" was printed for the Perl's 0.0000.
             s = acc[v]
             e['q'] = s if e['n2'] == v else -s
-            acc[n['pnode']] += s
+            acc[n['pnode']] = perl_add(acc[n['pnode']], s)
             acc[v] = 0
     return net
 

@@ -189,6 +189,41 @@ def main():
     is_('OPP: a higher Cd needs a smaller bore for the same drop', b783 < b596,
         '%.3f mm at 0.7826, %.3f mm at 0.596' % (b783, b596))
 
+    print('7. FIGURES TOO LARGE FOR A POWER - infinity, as in Perl, not an error')
+    # The audit of 20 November 2026.  Perl's ** is C's pow: a result too
+    # large is infinity.  Python raises OverflowError, and a model with such
+    # a figure in it was refused where the Perl 1.6.0 solves it.  The
+    # figures expected are the Perl's.
+    inf = float('inf')
+    c = curve(0, 0, 700, 1e300, 100)
+    is_('a curve point at 1E300: its Q^1.85 is infinity, the curve is still read',
+        c['x'] == [0, inf] and E(c, 0) == 700 and E(c, 5) == 700 and E(c, 1e300) != E(c, 1e300))
+    is_('velocity in a bore of 1E200 mm is 0', hardycross.pipe_velocity(1000, 1e200) == 0)
+    o = {'method': 'HW', 'hwk': 6.05e7, 'hwq': 1.85, 'hwd': 4.87}
+    pipe = {'kind': 'PIPE', 'id': 'P', 'len': 10, 'eqv': 0, 'dia': 1e80, 'c': 120, 'eps': 0.045}
+    is_('a pipe of 1E80 mm bore, or of C 1E300, has no friction loss',
+        hardycross.elem_hf(pipe, 500, o) == (0, 0) and hardycross.elem_hf(pipe, 0, o) == (0, 0)
+        and hardycross.elem_hf(dict(pipe, dia=50, c=1e300), 500, o) == (0, 0)
+        and 0 < hardycross.elem_hf(dict(pipe, kfit=2), 500, o)[0] < 1e-300)
+    hf, dh = hardycross.elem_hf({'kind': 'DISCHARGE', 'id': 'S', 'k': 1e200, 'z': 0}, 100, o)
+    is_('an outlet of K 1E200 needs no pressure', hf == 0 and dh == 0)
+    is_('an orifice of Cd 1E-200, a check valve of Cv 1E200: infinity and nothing',
+        hardycross.orifice_dp(100, 30, 50, 1e-200) == inf
+        and hardycross.check_valve_loss({'nrv': {'cv': 1e200, 'crack': 7}}, 100) == (7, 0))
+    is_('the power itself: overflow, zero to a negative power, a negative number to a fraction',
+        hardycross._pw(1e200, 2) == inf and hardycross._pw(-1e200, 3) == -inf
+        and hardycross._pw(0.0, -1) == inf and hardycross._pw(-8.0, 1.85) != hardycross._pw(-8.0, 1.85)
+        and hardycross._pw(2.0, 10) == 1024)
+    is_('b3_reference_flow reads a DN held as text', hardycross.b3_reference_flow('50') == 500
+        and hardycross.b3_reference_flow('65.0') == 500 and hardycross.b3_reference_flow(80) == 5000)
+    try:
+        hardycross.elem_hf({'kind': 'BOGUS', 'id': 'X'}, 1, o)
+        msg = None
+    except Exception as e:
+        msg = str(e)
+    is_('an element of no known kind: the message ends in the newline the Perl\'s does',
+        msg == "internal error: no hydraulics for element kind 'BOGUS'\n", repr(msg))
+
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
 
