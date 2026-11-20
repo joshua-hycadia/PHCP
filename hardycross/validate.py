@@ -44,11 +44,6 @@ VERIFY_P_REL = 1e-6
 EXTRAP_MAX = 1.5
 
 
-# PerlDie -- a failure the Perl dies of in this module, kept so that the same
-# input stops the program the same way (caught where the Perl's eval is).
-class PerlDie(Exception):
-    pass
-
 # _P -- a format whose % prints as Perl's sprintf does: a number that is not
 # finite is Inf, -Inf or NaN there, where Python writes inf, -inf and nan.
 _CONV = re.compile(r'%(?:%|[-+ #0]*\d*(?:\.\d+)?[a-zA-Z])')
@@ -176,16 +171,10 @@ def numerical(net, ok, v, add):
     # Every value finite, checked first (see Validate.pm).
     bad = [e for e in el if not finite(e.get('q'))]
     badn = [i for i in range(1, nn + 1) if not finite(net['nodes'][i].get('h'))]
-    if badn:
-        # A node head that is not finite stops the Perl here: its
-        # join(' ', map { $_->{id} } @bad, map { ...{id} } @badn) hands the
-        # node names to the first map as well, which dies of the first one
-        # under strict refs (Validate.pm line 233).  Only flows that are not
-        # finite, with every head finite, reach the finding below.
-        name = net['nodes'][badn[0]]['id']
-        raise PerlDie('Can\'t use string ("%s"%s) as a HASH ref while "strict refs" in use '
-                      'at HardyCross/Validate.pm line 233.\n'
-                      % (name[:32], '...' if len(name) > 32 else ''))
+    # A node head that is not finite: the Perl crashes here (its map over the
+    # elements is handed the node names too: "Can't use string as a HASH
+    # ref", Validate.pm line 233, exit 255).  The finding it meant to make is
+    # made here instead; a deliberate difference (PYTHON_PORT.md).
     if bad or badn:
         add(code='NONFINITE', category='numerical',
             item=' '.join([e['id'] for e in bad] + [net['nodes'][i]['id'] for i in badn]),

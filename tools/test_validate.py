@@ -387,19 +387,13 @@ PIPE P5 S1 S2 6 50
         t['acceptance'])
 
     elem(n, 'P5')['q'] = 0.0
-    # A head that is not finite.  The Perl dies of it: its list of the items
-    # hands the node names to the map over the elements, and the first name
-    # is not a hash (strict refs).  The port stops the same way, with the
-    # Perl's words, so that whatever catches the one catches the other.
+    # A head that is not finite.  The Perl crashes on it (a slip in its
+    # list of the items); the port makes the finding the Perl meant to.
     n['nodes'][bi]['h'] = float('-inf')
-    try:
-        validate.validate(n, ok)
-        died = ''
-    except validate.PerlDie as e:
-        died = str(e)
-    is_('   a head that is not finite: the Perl dies, and so does the port',
-        died == 'Can\'t use string ("B") as a HASH ref while "strict refs" in use at '
-                'HardyCross/Validate.pm line 233.\n', died)
+    t = validate.validate(n, ok)
+    is_('   a head that is not finite: INDETERMINATE, NONFINITE, the node named',
+        t['acceptance'] == 'INDETERMINATE' and codes(t).get('NONFINITE')
+        and 'B' in [f for f in t['findings'] if f['code'] == 'NONFINITE'][0]['item'].split(), t['acceptance'])
     n['nodes'][bi]['h'] = 0.0
     # A number that is not finite in a message is Inf, -Inf or NaN, as
     # Perl's sprintf prints it; Python's own % writes inf, -inf and nan.
