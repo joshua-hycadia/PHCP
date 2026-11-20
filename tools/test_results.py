@@ -133,5 +133,21 @@ is_('--save with the model on standard input is refused', code != 0)
 for f in glob.glob(os.path.join(TMP, '*')):
     os.unlink(f)
 os.rmdir(TMP)
+# Port audit: a window reads a model one byte to a character and saves it
+# so; the fingerprint it writes is of those bytes, the one the command line
+# works out for the saved file -- for a Latin-1 model and a UTF-8 one.
+for enc in ('latin-1', 'utf-8'):
+    raw = ('TITLE caf\u00e9\n' + 'NODE A 0\n').encode(enc)
+    os.makedirs(TMP, exist_ok=True)
+    p = os.path.join(TMP, 'accent_%s.phc' % enc)
+    with open(p, 'wb') as f:
+        f.write(raw)
+    t = editor.load_file(p)['text']
+    is_('the window\'s fingerprint of a %s model is the command line\'s' % enc,
+        t.encode(editor.file_encoding(t)) == raw
+        and results.fingerprint(t, editor.file_encoding(t)) == results.fingerprint(phc.model_text(raw)))
+    os.remove(p)
+os.rmdir(TMP)
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)

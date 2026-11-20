@@ -2983,7 +2983,7 @@ def write_file(f):
         text = text + '\n'
     try:
         # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
-        with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
+        with open(f, 'w', encoding=editor.file_encoding(text), errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
         # Perl's $!: the reason alone, without errno or the path again

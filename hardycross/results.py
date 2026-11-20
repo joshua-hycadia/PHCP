@@ -40,8 +40,12 @@ def strip(text):
     return _STRIP_ALL.sub('', text, count=1)
 
 # fingerprint -- the SHA-256 of the model without its results block.
-def fingerprint(text):
-    return hashlib.sha256(strip(text).encode('utf-8', 'surrogateescape')).hexdigest()
+# The Perl hashes the model's bytes.  Text read by the command line carries
+# them as UTF-8 with surrogateescape (the default here); text from a window
+# carries one byte per character and is written as editor.file_encoding
+# says, so a window passes that encoding and the hash is of the bytes saved.
+def fingerprint(text, encoding=None):
+    return hashlib.sha256(strip(text).encode(encoding or 'utf-8', 'surrogateescape')).hexdigest()
 
 def _word(s):
     s = '-' if s is None else s
@@ -55,7 +59,7 @@ def _num(v, d):
 #------------------------------------------------------------------------------
 # block -- the results block for a solved network, as text ending in "\n".
 #------------------------------------------------------------------------------
-def block(net, ok, text):
+def block(net, ok, text, encoding=None):
     from . import supplies as _supplies
     a = assess(net, ok)
     va = a['validation']
@@ -75,7 +79,7 @@ def block(net, ok, text):
         'PHYSICAL', va['physical']['status'], 'DESIGN', va['design']['status'],
         'DEMAND', da, 'APPROVED', 'YES' if va['acceptance'] == 'ACCEPTED' else 'NO')
     rec('PROGRAM', 'PHCP', 'VERSION', VERSION)
-    rec('MODEL', 'SHA256', fingerprint(text if text is not None else (net.get('source_text') or '')))
+    rec('MODEL', 'SHA256', fingerprint(text if text is not None else (net.get('source_text') or ''), encoding))
     if pipedata.path():
         rec('DATABASE', 'NAME', _word(pipedata.dataset()), 'ISSUED', _word(pipedata.issued()),
             'SHA256', pipedata.sha256())
@@ -243,11 +247,11 @@ def status(text):
 #------------------------------------------------------------------------------
 # with_results -- the model text with its results block, fresh, at the end.
 #------------------------------------------------------------------------------
-def with_results(text, net, ok):
+def with_results(text, net, ok, encoding=None):
     model = strip(text)
     if model and not model.endswith('\n'):
         model += '\n'
-    return model + '\n' + block(net, ok, model)
+    return model + '\n' + block(net, ok, model, encoding)
 
 #------------------------------------------------------------------------------
 # read_block -- the records of a results block.

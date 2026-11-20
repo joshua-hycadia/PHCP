@@ -1792,11 +1792,11 @@ def write_buffer(f):
     # calculation was of exactly this text.  Results of an earlier
     # version are not saved.
     if solved and solved['text'] == full_text():
-        text = _results_mod.with_results(text, solved['net'],
-                                         solved['converged'])
+        text = _results_mod.with_results(text, solved['net'], solved['converged'],
+                                         editor.file_encoding(text))
     try:
         # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
-        with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
+        with open(f, 'w', encoding=editor.file_encoding(text), errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
         # Perl's $!: the reason alone, without errno or the path again
