@@ -1017,7 +1017,9 @@ def translate(text):
         p = pipe[name]
         if not (is_num(p.get('size')) and float(p['size']) == 0):
             continue
-        type_ = (p.get('use') or {}).get('type') or 'BORE'
+        type_ = (p.get('use') or {}).get('type')
+        if type_ is None:               # // in the Perl: a type named 0 is a type
+            type_ = 'BORE'
         if type_ == 'BORE':
             at(p['line'], 'PIPE %s: SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE - PUT A USE '
                  '<PIPETYPE> LINE BEFORE IT', name)
@@ -1594,7 +1596,7 @@ def check_line(line, ctx=None):
             # SIZE 0: the pipe is to be sized - checked as the reader checks it.
             auto = None
             if is_num(p[4]) and float(p[4]) == 0:
-                if (use.get('type') or 'BORE') == 'BORE':
+                if use.get('type') in (None, 'BORE'):
                     fail('SIZE 0 ASKS FOR THE PIPE TO BE SIZED, WHICH NEEDS A PIPE TYPE - '
                                     'PUT A USE <PIPETYPE> LINE BEFORE IT')
                 ch = sizing.choices(use['type'], a['rest'], units['SIZE'])

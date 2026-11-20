@@ -470,9 +470,18 @@ def audit():
         with open(was, 'rb') as fh:
             data = fh.read()
         with open(os.path.join(d, 'pipes.dat'), 'wb') as fh:
-            fh.write(data + b'FIT|AS|ZQ\nKPRIME|ZK\nPIPE|ZP\nFIT|AS|ZR|R\xe9d|25|1\n')
+            fh.write(data + b'FIT|AS|ZQ\nKPRIME|ZK\nPIPE|ZP\nFIT|AS|ZR|R\xe9d|25|1\n'
+                     b'PIPETYPE|0|Zero|std|range|120|0.045\nPIPE|0|20|26|0|1\nPIPE|0|25|33|27|1\n')
         pipedata.load(os.path.join(d, 'pipes.dat'))
         phc.reset_db_cache()
+        # 0 is false in Perl: a bore of 0 is no size to choose, but a pipe
+        # type named 0 is a type (the Perl asks whether it is defined).
+        n, e = reads(base + 'USE 0\nPIPE P1 N1 N2 100.0 0\n')
+        is_('a pipe type named 0 is sized; its size with a bore of 0 is left out',
+            [c[0] for c in sizing.choices('0', [], 'MM')] == [25]
+            and n is not None and n['auto_sizing'][0]['type'] == '0', e)
+        is_('   and is one as it is typed',
+            phc.check_line('PIPE P1 A B 10 0', {'use': {'type': '0'}})['status'] == 'ok')
         try:
             ch = dict(phc.fitting_choices('ASAM', 25))
             e = ''

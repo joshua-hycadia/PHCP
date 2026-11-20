@@ -42,7 +42,7 @@ def choices(type_, fits, unit):
         if not pipedata.pipe_row(type_, dn):
             continue
         bore = pipedata.bore(type_, dn)
-        if not bore:
+        if not pipedata._true(bore):    # Perl's truth: a bore of 0 is none
             continue
         if len(spec):
             r = pipedata.resolve(type=type_, dn=dn, spec=spec)
