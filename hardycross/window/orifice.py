@@ -26,7 +26,7 @@ from hardycross import pipedata
 from hardycross import tools
 from hardycross import win
 from hardycross.window.project import Setting
-from hardycross.window.tools import tool_units, unit_name
+from hardycross.window.tools import _size_var, tool_units, unit_name, vel_limit
 
 OP = {'SIZE': {'type': 'ASAM', 'size': '', 'flow': '', 'drop': '',
                'cd': '', 'step': ''},
@@ -161,6 +161,13 @@ def build_orifice(page):
         mb.configure(menu=m)
         var = tk.StringVar(value=OP[mode].get('size') or '')
 
+        def _size_written(*_a, mode=mode, var=var):
+            # the var is the field: every write (typed, or by the
+            # program) is the size, in the card's fields.
+            OP[mode]['size'] = var.get()
+
+        var.trace_add('write', _size_written)
+
         def on_key(e, mode=mode, var=var):
             OP[mode]['size'] = var.get()
             orifice_update(mode)
@@ -252,7 +259,8 @@ def orifice_refresh():
         fn()
     for mode in ('SIZE', 'DROP'):
         if OP[mode]['type'] != tools.BORE and \
-                OP[mode]['size'] not in tools.sizes(OP[mode]['type']):
+                OP[mode]['size'] not in [
+                    str(dn) for dn in tools.sizes(OP[mode]['type'])]:
             OP[mode]['size'] = ''
         orifice_sizes(mode)
         orifice_update(mode)
@@ -264,6 +272,7 @@ def orifice_sizes(mode):
     if not w:
         return
     type_ = OP[mode]['type']
+    _size_var(w, OP[mode]['size'])
     try:
         if w['size_menu'].index('end') is not None:
             w['size_menu'].delete(0, 'end')
@@ -311,6 +320,7 @@ def orifice_update(mode):
     if not w:
         return
     orifice_show_size(mode)
+    _size_var(w, OP[mode]['size'])
     f = OP[mode]
     u = tool_units()
     for field, var in (w.get('vars') or {}).items():
@@ -396,10 +406,7 @@ def orifice_update(mode):
     line('VELOCITY IN THE PIPE', '%.2f M/S' % res['pipe_velocity'])
     import re as _re
     lim = win.settings['options'].get('VEL_LIMIT')
-    if not (lim and _re.match(r'^\s*[\d.]+\s*$', str(lim))
-            and float(lim) > 0):
-        lim = 6
-    lim = float(lim)
+    lim = vel_limit(lim)
     line('PIPE AGAINST THE LIMIT', '%.1f M/S: %s' % (
         lim, 'ABOVE IT' if res['pipe_velocity'] > lim else 'WITHIN IT'),
         'warn' if res['pipe_velocity'] > lim else None)

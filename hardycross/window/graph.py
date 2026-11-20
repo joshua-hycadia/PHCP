@@ -370,7 +370,10 @@ def graph_go_to_problem():
     sel = GV['problems'].curselection()
     if not sel:
         return
-    e = GV['check']['errors'][sel[0]]
+    errors = GV['check']['errors']
+    if sel[0] >= len(errors):     # the blank line shown when nothing is wrong
+        return
+    e = errors[sel[0]]
     rows = GV.get('rows', {}).get(e[0]) or []
     if not rows:
         return
@@ -667,6 +670,9 @@ def graph_pdf(file=None):
                               if GV.get('path') else ''))
         ok = True
         err = None
+    except OSError as e:
+        ok = False
+        err = win.cannot_write(e, file)
     except Exception as e:
         ok = False
         err = e
