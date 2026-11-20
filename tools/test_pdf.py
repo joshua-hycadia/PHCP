@@ -275,6 +275,74 @@ for m in models:
            (int(nsup) if nsup is not None else 0) > 100)
         ok('%s: the graph clears the page footer' % gname, pb - 3 * 10.8 > 38)
 
+# ------------------------------------------------------------------------
+# As the Perl.  Each of these was a difference between the port and the Perl
+# 1.6.0, found by reading the two side by side and by comparing the PDFs the
+# two write byte for byte; what is asserted is what the Perl gives.  With
+# them, a report PDF differs from the Perl's only in the creation date and
+# the program's name and version (and the lengths and offsets that follow).
+# ------------------------------------------------------------------------
+sys.path.insert(0, ROOT)
+import zlib                                  # noqa: E402
+from hardycross import pdfout as P           # noqa: E402
+
+tmpdir = tempfile.mkdtemp()
+out = os.path.join(tmpdir, 'a.pdf')
+P.write_pdf('A\n', out, title='T', job='0', revision='0', date='0', model='m.phc', program='X')
+with open(out, 'rb') as fh:
+    pdf = fh.read()
+for face in ('DejaVuSansMono.ttf', 'DejaVuSansMono-Bold.ttf'):
+    with open(os.path.join(P.font_dir(), face), 'rb') as fh:
+        ttf = fh.read()
+    # Compress::Zlib::compress: the default level, memLevel 9 (MAX_MEM_LEVEL)
+    zc = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, zlib.MAX_WBITS, 9)
+    z = zc.compress(ttf) + zc.flush()
+    ok('as the Perl: %s is deflated as Compress::Zlib deflates it (memLevel 9), its /Length right' % face,
+       (b'<< /Length %d /Length1 %d /Filter /FlateDecode >>\nstream\n' % (len(z), len(ttf))) + z + b'\nendstream' in pdf)
+st = pdf.decode('latin-1')
+ok("as the Perl: a job or revision of '0' is not printed in the header; a date of '0' is",
+   'Job 0' not in st and 'Rev 0' not in st and re.search(r'^BT /F2 9 Tf [\d.]+ 566\.00 Td \(PHCP  HYDRAULIC CALCULATION +T +0\) Tj ET$', st, re.M))
+fr = P.frame(1, 1, header='', title='', program='', job='J1', revision='B', model='0')
+ok("as the Perl: a header, title or program given as '' is '', not the default; a model of '0' is none",
+   re.search(r'Td \( {%d}Job J1   Rev B\) Tj ET' % (132 - len('Job J1   Rev B')), fr)
+   and re.search(r'^BT /F1 8 Tf [\d.]+ 26\.00 Td \(\) Tj ET$', fr, re.M))
+P.write_pdf('A\n', out, title='', designer='D', program='')
+with open(out, 'rb') as fh:
+    ok("as the Perl: a title of '' is '' in the document information",
+       b'/Title () /Author (D) /Subject (Hydraulic calculation) /Creator () /Producer ()' in fh.read())
+# the report is bytes to the Perl: only ASCII white space is white space
+pg = P.paginate('\n'.join(['A', '\x1f', '\xa0', '=' * 20 + '\x1f', '-' * 25 + '\xa0', '\x1c' + '-' * 25, 'B']))
+ok('as the Perl: a no-break space or a control character is not white space - no blank line, no rule',
+   len(pg) == 1 and len(pg[0]) == 7
+   and not [l for l in pg[0] if P.blank(l[0]) or P.is_thick(l[0]) or P.is_thin(l[0]) or P.is_sub(l[0])])
+# a font file cut short: Courier, and the report still written
+real_dir = P.font_dir
+for cut in (0, 5, 12, 100):
+    with open(os.path.join(tmpdir, 'DejaVuSansMono.ttf'), 'wb') as fh:
+        with open(os.path.join(real_dir(), 'DejaVuSansMono.ttf'), 'rb') as src:
+            fh.write(src.read()[:cut])
+    P.font_dir = lambda: tmpdir
+    try:
+        n = P.write_pdf('A\n', out, title='T')
+        with open(out, 'rb') as fh:
+            b = fh.read()
+        ok('as the Perl: a font file of %d bytes is no font - the report is written in Courier' % cut,
+           n == 1 and b'/BaseFont /Courier ' in b and b'/BaseFont /Courier-Bold ' in b and b'FontFile2' not in b)
+    except Exception as e:      # noqa: BLE001
+        ok('as the Perl: a font file of %d bytes is no font - the report is written in Courier (%s)' % (cut, e), False)
+    finally:
+        P.font_dir = real_dir
+P.fonts()
+# a file that cannot be written reads as the Perl's die does
+try:
+    P.write_pdf('A\n', os.path.join(tmpdir, 'nonesuch', 'x.pdf'))
+    ok('as the Perl: a PDF that cannot be written is refused', False)
+except OSError as e:
+    ok('as the Perl: a PDF that cannot be written says "cannot write PATH: reason"',
+       str(e) == 'cannot write %s: %s\n' % (os.path.join(tmpdir, 'nonesuch', 'x.pdf'), e.strerror) and e.errno == 2)
+import shutil                                # noqa: E402
+shutil.rmtree(tmpdir, ignore_errors=True)
+
 for t in tmpfiles:
     try:
         os.unlink(t)
