@@ -252,5 +252,95 @@ if True:
         c4 == 0 and re.search(r'^# converged yes', plain, re.M) is not None
         and os.path.exists(rtxt) and os.path.getsize(rtxt) > 0)
 
+#==============================================================================
+print('4. THE WRITER AGAINST THE PERL\'S (JSON::PP 4.16), CASE BY CASE')
+#==============================================================================
+# What the port got wrong where the comparison models do not go, each with
+# the text the Perl 1.6.0 writes for the same input.
+if True:
+    sys.path.insert(0, ROOT)
+    from hardycross import jsonout as J
+
+    def enc(v):
+        return J.encode([v])[len('[\n   '):-len('\n]\n')]
+
+    # A number is written by how the Perl made it: a float as %.15g -- in
+    # quotes when it is whole, 2**53 or more and inside +/- 2**62, because
+    # JSON::PP's 0 + $value eq $value fails there; an integer as its digits.
+    # value: as it stands, through r4, through %.6e, through 0 + $v, and
+    # r3 after abs() has looked at it (a pipe's velocity).
+    inf = float('inf')
+    table = [
+        (5.0, '5', '5', '5', '5', '5'),
+        (0.1 + 0.2, '0.3', '0.3', '0.3', '0.3', '0.3'),
+        (1e15, '1e+15', '1e+15', '1000000000000000', '1000000000000000', '1000000000000000'),
+        (1e16, '"1e+16"', '"1e+16"', '10000000000000000', '10000000000000000', '"1e+16"'),
+        (2.0 ** 53, '"9.00719925474099e+15"', '"9.00719925474099e+15"', '9007199000000000',
+         '9007199254740992', '"9.00719925474099e+15"'),
+        (2.0 ** 53 - 1, '9.00719925474099e+15', '9.00719925474099e+15', '9007199000000000',
+         '9007199254740991', '9007199254740991'),
+        (-2.0 ** 62, '"-4.61168601842739e+18"', '"-4.61168601842739e+18"', '-4611686000000000000',
+         '-4611686018427387904', '"-4.61168601842739e+18"'),
+        (2.0 ** 62, '4.61168601842739e+18', '4.61168601842739e+18', '4611686000000000000',
+         '4.61168601842739e+18', '4.61168601842739e+18'),
+        (1e19, '1e+19', '1e+19', '10000000000000000000', '1e+19', '1e+19'),
+        (1e21, '1e+21', '1e+21', '1e+21', '1e+21', '1e+21'),
+        (inf, 'Inf', 'Inf', 'Inf', 'Inf', 'Inf'),
+        (-inf, '-Inf', '-Inf', '-Inf', '-Inf', '-Inf'),
+        (float('nan'), 'NaN', 'NaN', 'NaN', 'NaN', 'NaN'),
+        (1.23e-7, '1.23e-07', '0', '1.23e-07', '1.23e-07', '0'),
+        (-0.00001, '-1e-05', '0', '-1e-05', '-1e-05', '0'),
+        (-0.0, '0', '0', '0', '0', '0'),
+        (123456789012345678.0, '"1.23456789012346e+17"', '"1.23456789012346e+17"', '123456800000000000',
+         '123456789012345680', '"1.23456789012346e+17"'),
+        (2e19, '2e+19', '2e+19', '2e+19', '2e+19', '2e+19'),
+        (-1e16, '"-1e+16"', '"-1e+16"', '-10000000000000000', '-10000000000000000', '"-1e+16"'),
+        (0.5, '0.5', '0.5', '0.5', '0.5', '0.5'),
+    ]
+    bad = []
+    for x, raw, r4, e6, plus0, vel in table:
+        got = (enc(x), enc(J.r4(x)), enc(J._e6(x)), enc(J._numify(x)), enc(J._pleased(J.r3(x))))
+        if got != (raw, r4, e6, plus0, vel):
+            bad.append('%r: %s' % (x, ' '.join(got)))
+    is_('a number is written as JSON::PP writes it, by how it was made (%d values)' % len(table),
+        not bad, '; '.join(bad))
+    # 0 + $v of text, as Perl numifies it: the database's fields.
+    texts = [('100', '100'), ('17.20', '17.2'), ('1e3', '1000'), ('1_000', '1'), ('abc', '0'),
+             (' 12abc', '12'), ('-0', '0'), ('18446744073709551615', '18446744073709551615'),
+             ('18446744073709551616', '1.84467440737096e+19'),
+             ('-9223372036854775809', '-9.22337203685478e+18'), ('1.0e16', '10000000000000000'),
+             ('.5', '0.5'), ('5.', '5'), ('0x10', '0'), ('Inf', 'Inf'), ('nan', 'NaN'), ('+7', '7'),
+             (None, '0')]
+    bad = ['%r: %s' % (t, enc(J._numify(t))) for t, want in texts if enc(J._numify(t)) != want]
+    is_('text is made a number as Perl makes it, 0 + $v (%d texts)' % len(texts), not bad, '; '.join(bad))
+    is_('an integer keeps its digits, and DEL is written as it is',
+        enc(12345678901234567890) == '12345678901234567890' and enc('a\x7f\x1f/b') == '"a\x7f\\u001f/b"')
+
+    # A fixed flow below its minimum pressure: it has no discharge_pressure,
+    # and the summary's FAIL line is written from its pressure.
+    m2 = slurp(os.path.join(EX, '02_full_network.phc'))
+    code, out = run(re.sub(r'(?m)^FIXEDFLOW FF1 B 300 200$', 'FIXEDFLOW FF1 B 300 2000', m2), '--json', '-')
+    j = json.loads(out) if out else {}
+    is_('a fixed flow under its minimum pressure is reported, not a crash',
+        any(re.match(r'FAIL: FIXEDFLOW AT FF1 [\d.]+ KPA AGAINST 2000\.0 REQUIRED$', l)
+            for l in j.get('summary', [])), 'exit %d' % code)
+    # No scenarios at all: the list is there, and empty.
+    two = ('UNITS LENGTH M\nUNITS ELEVATION M\nUNITS SIZE MM\nUNITS PRESSURE KPA\nUNITS FLOW LPM\n'
+           'UNITS KFACTOR LPM/KPA\nMETHOD HW\nOPTION SUPPLY_SCENARIOS OFF\nWATER WA 0 900\nWATER WB 0 850\n'
+           'NODE N3 0\nSPRINKLER S0 0 -50 80\nUSE BORE 120\nPIPE P1 WA N3 100 100\nPIPE P2 N3 S0 10 100\n'
+           'PIPE P3 WB N3 50 100\n')
+    code, out = run(two, '--json', '-')
+    is_('with OPTION SUPPLY_SCENARIOS OFF and no SCENARIO, "scenarios" is an empty list',
+        re.search(r'^      "scenarios" : \[\],$', out, re.M) is not None)
+    # The file's name is the bytes of the command line, and uc() of bytes
+    # changes the ASCII letters alone.
+    e = J.encode(J.error_result(Exception('cannot open input file nopé.phc'), 'café.phc'))
+    is_('a file name in UTF-8 is written byte by byte, and its error message too',
+        '"model" : "caf\\u00c3\\u00a9.phc"' in e
+        and '"message" : "CANNOT OPEN INPUT FILE NOP\\u00c3\\u00a9.PHC"' in e, e)
+    e = J.error_result(Exception('line 007: bad\n'), 'm.phc')
+    is_('an error on a line: the line a number, the message without it',
+        e['errors'] == [{'line': 7, 'message': 'BAD'}] and e['summary'] == ['NOT SOLVED: BAD (LINE 7)'])
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)

@@ -74,6 +74,14 @@ def ascii_(t):
     t = re.sub(r'[^\x20-\x7E\n]', '?', t)
     return t
 
+# _bytes -- a file name as the Perl holds it: the bytes of the command line,
+# one character each.  A name with an accented letter in UTF-8 is two bytes
+# to the Perl, so it counts two columns and prints two '?'.
+def _bytes(t):
+    if t is None or t.isascii():
+        return t
+    return t.encode('utf-8', 'surrogateescape').decode('latin-1')
+
 # A number as Perl stringifies it for a hash key or a %s field: 120.0 is "120".
 # _dn -- a database DN for %d.  It is the text of pipes.dat; Perl's %d
 # numifies it ("100" prints 100), Python's needs the number.
@@ -83,9 +91,48 @@ def _dn(v):
 def _s(v):
     if v is None:
         return ''
-    if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
-        return str(int(v))
+    if isinstance(v, float):
+        # Perl's stringification of a number: 15 significant digits.
+        return '%.15g' % v
     return str(v)
+
+# _nv -- a database field as the number Perl takes it for in a comparison:
+# the text of pipes.dat ("120") numified.
+def _nv(v):
+    if isinstance(v, (int, float)):
+        return v
+    m = re.match(r'[ \t\n\r\f\v]*[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?', v or '')
+    return float(m.group(0)) if m else 0.0
+
+_NONFINITE = re.compile(r'(?<![A-Za-z0-9_./\\])-?(?:inf|nan)(?![A-Za-z0-9_/\\]|\.[A-Za-z0-9])')
+
+# _or, _dor -- Perl's || and // on a text: || passes over '' and '0' (an
+# area or outlet may be named 0), // over nothing but an absent value.
+def _or(v, other):
+    return other if v in (None, '', '0') else v
+
+def _dor(v, other):
+    return other if v is None else v
+
+# _f0 -- Perl's sprintf('%.0f'), with no width or flag.  Perl does not hand
+# that one to the C library: it adds a half, truncates, and steps an odd
+# result back when the sum landed exactly on it (ties to even).  The two
+# agree except where adding the half rounds: 0.5000000000000001 is "0".
+def _f0(v):
+    n = abs(v)
+    if n != n:
+        return 'NaN'
+    if n == math.inf:
+        return 'Inf' if v > 0 else '-Inf'
+    if not (n != 0 and n < 2.0 ** 64):
+        return '%.0f' % v
+    u = int(n)
+    if u != n:
+        n += 0.5
+        u = int(n)
+        if u & 1 and u == n:
+            u -= 1
+    return ('-' if v < 0 else '') + str(u)
 
 # A number to a fixed number of places, or '-' when there is none.  A dash is
 # an absence; a zero is a measurement.  They must never look alike in a
@@ -355,7 +402,7 @@ def write_report(net, ok, path):
     for e in [x for x in net['elems'][1:]
               if x['kind'] == 'PIPE' and x.get('ptype') and x.get('c_given')]:
         tc = pipedata.pipe_type(e['ptype'])['c']
-        if e['c'] != tc:
+        if e['c'] != _nv(tc):
             notes.append("Pipe %s: C = %s used in place of %s's C = %s."
                          % (e['id'], _s(e['c']), e['ptype'], _s(tc)))
     untyped = [x for x in net['elems'][1:] if x['kind'] == 'PIPE' and not x.get('ptype')]
@@ -405,7 +452,8 @@ def write_report(net, ok, path):
         for f in [f for f in (net.get('fixed') or []) if f['n1'] == i]:
             if f.get('preq') is not None and f['preq'] > preq:
                 preq = f['preq']
-            tag = (tag + ' ' + f['id']) if tag else f['id']
+            # Perl's truth: an outlet named 0 is false, and is not kept.
+            tag = (tag + ' ' + f['id']) if tag not in ('', '0') else f['id']
         pd, qd = pdp(net['u_pres']) + 1, qdp(net['u_flow'])
         out += (' %-10s %10.3f %12.*f %12.*f %12.*f %12.*f %11s  %s\n'
                 % (n['id'], n['z'] / ul, pd, GAMMA_W * n['z'] / up,
@@ -486,7 +534,9 @@ def write_report(net, ok, path):
         ib, ie = (e['n1'], e['n2']) if fwd else (e['n2'], e['n1'])
         nb, ne = net['nodes'][ib], net['nodes'][ie]
         q = abs(e['q'])
-        pf = hf_raw if fwd else -hf_raw                # loss in the flow direction
+        # + 0.0, here and below: a zero loss against the flow is -1 * 0 or
+        # -(0), which Perl works as integers, 0; a float gives -0.0, "-0.00".
+        pf = (hf_raw if fwd else -hf_raw) + 0.0        # loss in the flow direction
         pe = GAMMA_W * (ne['z'] - nb['z'])              # rise costs pressure
         ptb = nb['h'] - GAMMA_W * nb['z']
         pte = ne['h'] - GAMMA_W * ne['z']
@@ -504,7 +554,7 @@ def write_report(net, ok, path):
                    pd, ptb / up, pd, ptb / up))
         out += (' %-8s %-8s %8s   Q=%9.*f  F= %-14s  F= %8.2f  %-12s  Pe %8.*f  Pv %8.*f\n'
                 % (e['id'], '', '', qd, q / uf, fit[:14], e['eqv'] / ul,
-                   'C= %.0f' % e['c'], pd + 1, pe / up, pd + 1, pv / up))
+                   'C= ' + _f0(e['c']), pd + 1, pe / up, pd + 1, pv / up))
         out += (' %-8s %-8s %8s Vel=%9.2f  D= %-14s TL= %8.2f  %-12s  Pf %8.*f  Pn %8.*f\n'
                 % (e.get('ptype') or '', '', '', v, '%.2f' % e['dia'], lt / ul,
                    ('%.*f' % (pd + 3, abs(pf) / lt / up * ul)) if lt > 0 else '-',
@@ -636,7 +686,7 @@ def write_report(net, ok, path):
                 hf = elem_hf(e, e['q'], o)[0]
                 # Loss in the direction walked.  The path follows the flow, so for
                 # a pipe it is positive; a pump shows as a negative loss -- a gain.
-                loss = hf if e['n1'] == st['from'] else -hf
+                loss = (hf if e['n1'] == st['from'] else -hf) + 0.0
                 a, b = net['nodes'][st['from']], net['nodes'][st['to']]
                 pe = GAMMA_W * (b['z'] - a['z'])
                 pfrom = p
@@ -804,7 +854,7 @@ def write_report(net, ok, path):
               'FIXED_DROP': 'PRV', 'ORIFICE': 'ORIFICE', 'ORIFICE_REQUIRED': 'ORIFICE_P',
               'BFP': 'BFP', 'RATIO': 'PRA', 'DPV': 'DPV'}
         for e in sup:
-            hf = 0 if e.get('closed') else elem_hf(e, e['q'], o)[0]
+            hf = 0 if e.get('closed') else elem_hf(e, e['q'], o)[0] + 0.0
             if e.get('isolated'):
                 note = 'LOSS OF SUPPLY - cut off with its supply'
             elif e.get('closed'):
@@ -887,6 +937,12 @@ def write_report(net, ok, path):
 
     out += '\n' + rule() + ' END OF CALCULATION\n' + rule()
 
+    # A number that is not finite (a solve that ran away) is "Inf", "-Inf"
+    # or "NaN" in every Perl format; Python's % writes inf and nan.  Only a
+    # figure is respelled: not a word inside a file's name or path.
+    if 'inf' in out or 'nan' in out:
+        out = _NONFINITE.sub(lambda m: m.group(0).replace('inf', 'Inf').replace('nan', 'NaN'), out)
+
     # The guarantee: nothing but printable ASCII leaves this module.
     return ascii_(out)
 
@@ -951,11 +1007,17 @@ def _d(v):
     return v if isinstance(v, (int, float)) else int(float(v))
 
 def num_or_undef(v):
-    m = re.match(r'^\s*([\d.]+)', v or '')
-    return float(m.group(1)) if m else None
+    # The Perl takes the run of digits and points and numifies it, $1 + 0:
+    # '5.0.' is 5, '1.2.3' is 1.2, and '.' alone is 0.
+    m = re.match(r'[ \t\n\r\f\v]*([0-9.]+)', v or '')
+    if not m:
+        return None
+    n = re.match(r'[0-9]+\.?[0-9]*|\.[0-9]+', m.group(1))
+    return float(n.group(0)) if n else 0.0
 
 def cover_sheet(net, ok, path):
     from . import demand, validate
+    path = _bytes(path)
     pj = net.get('project') or {}
     uf, up = net['f_flow'], net['f_pres']
     qu, pu = sym(net['u_flow']), sym(net['u_pres'])
@@ -1009,7 +1071,10 @@ def cover_sheet(net, ok, path):
         # Whether velocity pressure was included is a designer's election
         # (AS 2118.1 Cl 14.15), so the cover states it either way.
         ['Velocity pressure', 'INCLUDED, Cl 14.15' if net['opts'].get('vel_press') else 'NOT INCLUDED'],
-        ['Pipe data', pipedata.dataset() if uses_db else (pj.get('DATA_SOURCE') or 'not stated')],
+        # An empty DATA_SOURCE is printed empty: the Perl's // asks only
+        # whether it is defined.
+        ['Pipe data', pipedata.dataset() if uses_db
+         else (pj['DATA_SOURCE'] if pj.get('DATA_SOURCE') is not None else 'not stated')],
         ['Program', 'PHCP %s' % VERSION],
     ]
     # A long value WRAPS within its column rather than being cut off: an
@@ -1084,8 +1149,8 @@ def cover_sheet(net, ok, path):
                      '%.1f (%s)' % (so['low'], so['low_id']))
         out += tf % ('  Computed density (lowest flow / area)', 'mm/min', col(dd, 2), col(do, 2))
         out += tf % ('  Result against the design density', '',
-                     'MEETS' if dd >= dens - 1e-9 else '*** FAILS' if dd is not None else '-',
-                     'MEETS' if do >= dens - 1e-9 else '*** FAILS' if do is not None else '-')
+                     ('MEETS' if dd >= dens - 1e-9 else '*** FAILS') if dd is not None else '-',
+                     ('MEETS' if do >= dens - 1e-9 else '*** FAILS') if do is not None else '-')
     else:
         out += '  Not checked: the design density and area per sprinkler must both be entered.\n'
 
@@ -1141,7 +1206,7 @@ def write_pdf_report(net, ok, model_path, pdf_path):
     net.pop('supply_graphs', None)
     text = write_report(net, ok, model_path)
     pj = net.get('project') or {}
-    model = re.sub(r'.*[/\\]', '', model_path or '')
+    model = re.sub(r'.*[/\\]', '', _bytes(model_path or ''))
     program = 'PHCP %s - Python Hydraulic Calculation Program' % VERSION
 
     def sheet_fn(g, model=model, program=program):
@@ -1150,7 +1215,7 @@ def write_pdf_report(net, ok, model_path, pdf_path):
         return draw
 
     return pdfout.write_pdf(text, pdf_path,
-                            title=pj.get('TITLE') or 'Hydraulic calculation',
+                            title=pj['TITLE'] if pj.get('TITLE') is not None else 'Hydraulic calculation',
                             job=pj.get('JOB') or '',
                             revision=pj.get('REVISION') or '',
                             date=pj.get('DATE') or '',
@@ -1337,7 +1402,13 @@ def supply_graph(net, dm):
     g = [[' '] * GW for _ in range(GH)]
 
     def col(x):
-        return int((x / qmax) ** 1.85 * (GW - 1) + 0.5)
+        # A negative flow (a supply taking water in) has no place on the
+        # axis: Perl's ** gives NaN there, which is in no column.
+        t = x / qmax
+        if not t >= 0:
+            return -1
+        c = t ** 1.85 * (GW - 1) + 0.5
+        return int(c) if math.isfinite(c) else -1
 
     def row(pp):
         r = int((1 - pp / pmax) * (GH - 1) + 0.5)
@@ -1382,7 +1453,7 @@ def supply_graph(net, dm):
     line = [' '] * (GW + 12)
     for c in at:
         q = qmax * (c / (GW - 1)) ** (1 / 1.85)
-        t = '%.0f' % (q / uf)
+        t = _f0(q / uf)
         start = 11 + c - len(t) // 2
         line[start:start + len(t)] = list(t)
     out += ''.join(line) + '\n'
@@ -1456,7 +1527,7 @@ def design_areas(net):
         return out + wrap(' ', ('This report is for design area %s (%d outlets), chosen by OPTION '
                        'DESIGN_AREA.  The other areas (%s) were not solved.  Outlets in no area flow in every area.'
                        % (a['name'], len(a['outlets']),
-                          ', '.join(x['name'] for x in net['areas'] if x is not a) or 'none')))
+                          _or(', '.join(x['name'] for x in net['areas'] if x is not a), 'none'))))
     out += (' %-12s %7s  %-14s %14s %14s %14s %14s\n'
             % ('AREA', 'OUTLETS', 'GOVERNING', 'MARGIN %s' % pu, 'DEMAND %s' % fu,
                'DEMAND %s' % pu, 'SUPPLY MARGIN'))
@@ -1664,11 +1735,11 @@ def check_valve_table(net):
                 % (s['id'], 'ISOLATED' if st == 'ISOLATED' else st,
                    qd, q / uf, pd, demand.gauge(net, s['n2']) / up,
                    ('%.*f' % (pd + 1, v['loss'] / up)) if (v and not s.get('closed')) else '-',
-                   ('CV %.0f' % v['cv']) if (v and v.get('basis') == 'CV') else (v.get('basis') if v else '-'),
+                   ('CV ' + _f0(v['cv'])) if (v and v.get('basis') == 'CV') else (v.get('basis') if v else '-'),
                    ('%.*f%s' % (pd, v['crack'] / up, '' if v.get('crack_given') else '*'))
                    if v else '-'))
         if v:
-            models.append('%s: %s' % (s['id'], v.get('model') or 'make and model not stated'))
+            models.append('%s: %s' % (s['id'], _dor(v.get('model'), 'make and model not stated')))
     out += wrap('   ', 'PRESSURE is gauge at the supply\'s connection; LOSS is the valve\'s at the flow shown. '
                'BASIS: CV means opening pressure plus (Q gpm / Cv)^2 psi; CURVE uses manufacturer flow/loss points '
                'and is rejected outside their tested range; PIPEWORK means flow loss is separately allowed in '
@@ -1694,7 +1765,9 @@ def supply_schedule(net, s):
     qd, pd = qdp(net['u_flow']), pdp(net['u_pres'])
 
     def f(v, d, k):
-        return '%.*f' % (d, v / k) if v is not None else '-'
+        if v is None:
+            return '-'
+        return _f0(v / k) if d == 0 else '%.*f' % (d, v / k)
 
     out = title('12. MULTIPLE WATER SUPPLIES')
     out += wrap(' ', ('Each supply below keeps its own connection, elevation and curve or static '
@@ -1718,7 +1791,7 @@ def supply_schedule(net, s):
                s['balance'] / uf, qu))
     out += '   %-25s %s\n' % ('GOVERNING OUTLET', s.get('governing') or '-')
 
-    if not s.get('conditional'):
+    if s.get('conditional') is None:
         out += '\n' + wrap('   ', 'The conditional and joint demands are not worked out: the solve did not '
                      'converge, or the model has no outlet with a requirement.')
         return out
@@ -1749,7 +1822,7 @@ def supply_schedule(net, s):
     j = s.get('joint')
     out += '\n C. JOINT DEMAND - every supply together, in ONE solve\n'
     if not j or (j.get('status') or '') != 'FOUND':
-        out += wrap('   ', '%s: %s.' % ((j['status'] or 'NOT FOUND') if j else 'NOT FOUND',
+        out += wrap('   ', '%s: %s.' % ((j.get('status') or 'NOT FOUND') if j else 'NOT WORKED OUT',
                                          (j.get('reason') or '') if j else 'not worked out'))
         if j and (j.get('status') or '') == 'UNRESOLVED':
             out += wrap('   ', 'UNRESOLVED is not a supply found too weak: on this basis the supplies reach a state '
@@ -1818,7 +1891,7 @@ def dry_pipe_valves(net, va, dry):
                'its acceptance, and they are not a water delivery time calculation by a listed method.  The '
                'accelerator is not modelled.') + '\n'
     for e in [x for x in net['elems'][1:] if x['kind'] == 'DPV']:
-        hf = elem_hf(e, e['q'], net['opts'])[0]
+        hf = elem_hf(e, e['q'], net['opts'])[0] + 0.0
         errs = [x for x in (va.get('findings') or [])
                 if x.get('item') == e['id'] and x['severity'] == 'error']
 
@@ -1828,14 +1901,14 @@ def dry_pipe_valves(net, va, dry):
         out += row('Location', 'pipe %s, from node %s' % (e.get('host_id') or '-',
                                                           net['nodes'][e['n1']]['id']))
         out += row('Nominal size', 'DN%d' % (e.get('size') or 0))
-        out += row('Make and model', e.get('model') or e.get('db_model') or 'not given')
+        out += row('Make and model', _dor(e.get('model'), _dor(e.get('db_model'), 'not given')))
         out += row('Trip method',
                    'differential ratio %.2f:1 (water to air pressure at the clapper)' % (e.get('trip_ratio') or 0)
                    if (e.get('trip_mode') or '') == 'RATIO' else
                    ('air-side trip pressure %.1f %s' % ((e.get('trip_pressure') or 0) / up, pu)
                     if (e.get('trip_mode') or '') == 'TRIP' else 'not given'))
         out += row('Accelerator', '%s (not modelled: no effect on trip time is assumed)'
-                   % (e.get('accelerator') or '-'))
+                   % _dor(e.get('accelerator'), '-'))
         tr = e.get('transient') or {}
         out += row('Set air pressure',
                    '%.1f %s (used for the trip time estimate only)' % (tr['air_initial'] / up, pu)
