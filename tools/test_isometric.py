@@ -391,5 +391,34 @@ is_('a zero length is stored and the end stays where it is',
     not err and pipe['len'] == '0' and d['nodes'][s]['ix'] == 12,
     '%s ix %s' % (err or '', d['nodes'][s]['ix']))
 
+
+#------------------------------------------------------------------------------
+# The audit of the port against the Perl, 20 November 2026: differences found
+# by running HardyCross::Isometric and this module on the same input.  Each
+# expectation is the Perl's answer.
+#------------------------------------------------------------------------------
+print('\nPort audit: the Perl\'s answers')
+# A cell holds its point's name and the Perl tests the name: a point named 0
+# does not take up its cell.
+d = isometric.read_network('WATER 0 0 500 1000 400\nNODE A 0\nNODE B 0\nNODE C 0\n'
+                           'SPRINKLER D 0 -50 80\nPIPE P1 0 A 1 25\nPIPE P2 A B 1 25\n'
+                           'PIPE P3 A C 1 25\nPIPE P4 A D 1 25\n', {'LENGTH': 'M'})
+is_('a point named 0 does not hold its cell in the layout',
+    (d['nodes']['D']['ix'], d['nodes']['D']['iy']) == (0, 0)
+    and '//ISO D 0 0 0' in isometric.write_network(d), isometric.write_network(d))
+d = isometric.read_network('NODE 0 0\nNODE A 0\nPIPE P1 0 A 2 25\nPUMP PU 0 A 800 100 700\n',
+                           {'LENGTH': 'M'})
+(err, name) = isometric.add_node(d, 'NODE', 0, 0, 0)
+is_('nor against a new point', err == '' and name == 'N1', err)
+d['pumps'][0]['pairs'] = []
+err = isometric.set_pump(d, 'PU', 'PRESSURE', '5')
+is_('a pump curve grows to the pair set, as a Perl array does',
+    err == '' and d['pumps'][0]['pairs'] == [None, '5']
+    and 'PUMP      PU 0 A 800  5\n' in isometric.write_network(d))
+d = isometric.read_network('NODE A 0\nNODE B 0\n', {})
+is_('FS to US are not white space in a name',
+    isometric.set_node(d, 'A', 'NAME', 'X\x1fY') == '' and 'X\x1fY' in d['nodes']
+    and isometric.steps_for_length(d, '\x1f') is None)
+
 print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
 sys.exit(1 if FAIL[0] else 0)
