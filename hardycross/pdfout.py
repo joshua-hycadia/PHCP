@@ -81,19 +81,22 @@ set_advance(0.6)
 # The supply graph's box on the page, in lines of text.
 GRAPH_LINES = 30
 
+# The report is bytes to the Perl, so its \s and \d are the ASCII ones
+# (re.ASCII): a no-break space, or a control character from 1C to 1F, is
+# not white space, and a line of them is not blank and ends no rule.
 def is_thick(l):
-    return re.match(r'^={20,}\s*$', l) is not None
+    return re.match(r'^={20,}\s*$', l, re.ASCII) is not None
 
 def is_thin(l):
-    return re.match(r'^-{20,}\s*$', l) is not None
+    return re.match(r'^-{20,}\s*$', l, re.ASCII) is not None
 
 def blank(l):
-    return re.search(r'\S', l) is None
+    return re.search(r'\S', l, re.ASCII) is None
 
 # An indented light rule separates the blocks of a multi-line table -- the
 # four lines that describe one pipe in the NFPA schedule.
 def is_sub(l):
-    return re.match(r'^\s+-{20,}\s*$', l) is not None
+    return re.match(r'^\s+-{20,}\s*$', l, re.ASCII) is not None
 
 #------------------------------------------------------------------------------
 # Paginate.
@@ -140,7 +143,7 @@ def paginate(text, graphs=None):
             # of the calculation can be found, filed and replaced by itself -
             # the pipe schedule of a revision can be swapped without reprinting
             # the rest.  The cover sheet, which has no number, keeps page 1.
-            if re.match(r'^\s*\d+\.\s', L[i + 1]):
+            if re.match(r'^\s*\d+\.\s', L[i + 1], re.ASCII):
                 if page:
                     new_page()
             else:
@@ -169,7 +172,7 @@ def paginate(text, graphs=None):
         # numbers in @$graphs; one supply gives one graph, several give one each.
         if re.match(r'^ SUPPLY GRAPH', l):
             j = i
-            while j < len(L) - 1 and not re.search(r'O\s+operating point|D\s+combined duty', L[j]):
+            while j < len(L) - 1 and not re.search(r'O\s+operating point|D\s+combined duty', L[j], re.ASCII):
                 j += 1
             graph = graphs[gi] if gi < len(graphs) else None
             gi += 1
@@ -327,21 +330,24 @@ def load_font(name):
             b = fh.read()
     except OSError:
         return None
-    n = struct.unpack('>H', b[4:6])[0]
-    t = {}
-    for i in range(n):
-        tag = b[12 + 16 * i:12 + 16 * i + 4]
-        off, ln = struct.unpack('>II', b[12 + 16 * i + 8:12 + 16 * i + 16])
-        t[tag] = (off, ln)
-    if not (b'head' in t and b'hhea' in t and b'hmtx' in t):
-        return None
+    # A file cut short is read as Perl's unpack reads it: what is not there
+    # is undef, which counts as 0.  So an empty or headless file has no
+    # tables and the report falls back to Courier, as the Perl's does.
+    def u16(off):
+        return struct.unpack('>H', b[off:off + 2])[0] if len(b) >= off + 2 else 0
 
     def i16(off):
-        v = struct.unpack('>H', b[off:off + 2])[0]
+        v = u16(off)
         return v - 65536 if v >= 32768 else v
 
-    def u16(off):
-        return struct.unpack('>H', b[off:off + 2])[0]
+    n = u16(4)
+    t = {}
+    for i in range(n):
+        e = b[12 + 16 * i:12 + 16 * i + 16]
+        off, ln = struct.unpack('>II', e[8:16]) if len(e) == 16 else (0, 0)
+        t[e[:4]] = (off, ln)
+    if not (b'head' in t and b'hhea' in t and b'hmtx' in t):
+        return None
 
     h = t[b'head'][0]
     upm = u16(h + 18)
@@ -392,8 +398,8 @@ def write_pdf(text, path, **meta):
             if (mark or '') == 'graph':
                 gy.append((y, g))
             if is_thick(t) or is_thin(t) or is_sub(t):
-                ind = len(re.match(r'^(\s*)', t).group(1))
-                ln_m = re.match(r'^\s*(\S+)', t)
+                ind = len(re.match(r'^(\s*)', t, re.ASCII).group(1))
+                ln_m = re.match(r'^\s*(\S+)', t, re.ASCII)
                 length = len(ln_m.group(1)) if ln_m else 0
                 rules.append((y + FONT_SIZE * 0.3, ind, length, 1.0 if is_thick(t) else 0.4))
                 s += 'T*\n'
@@ -434,11 +440,14 @@ def fonts():
 # ('PHCP  HYDRAULIC CALCULATION' unless given).
 #------------------------------------------------------------------------------
 def frame(p, n, **meta):
-    hdr_left  = meta.get('header') or 'PHCP  HYDRAULIC CALCULATION'
-    hdr_right = '   '.join(x for x in (('%s' % ('Job %s' % meta['job'])) if meta.get('job') else '',
-                                      ('%s' % ('Rev %s' % meta['revision'])) if meta.get('revision') else '',
-                                      meta.get('date') or '') if len(x))
-    hdr_mid   = fit(meta.get('title') or '', COLS - len(hdr_left) - len(hdr_right) - 6)
+    # As the Perl tests them: the header, date, title and program stand as
+    # given unless missing (//), and a job or revision of '0' is no job or
+    # revision ($meta{job} ? ... : '') -- a model's REVISION 0 is not printed.
+    hdr_left  = _dor(meta.get('header'), 'PHCP  HYDRAULIC CALCULATION')
+    hdr_right = '   '.join(x for x in ('Job %s' % meta['job'] if _true(meta.get('job')) else '',
+                                      'Rev %s' % meta['revision'] if _true(meta.get('revision')) else '',
+                                      _dor(meta.get('date'), '')) if len(x))
+    hdr_mid   = fit(_dor(meta.get('title'), ''), COLS - len(hdr_left) - len(hdr_right) - 6)
     s = ''
     # hairlines under the header and over the footer
     s += '0.5 w %.2f %.2f m %.2f %.2f l S\n' % (LEFT, 560, PAGE_W - LEFT, 560)
@@ -458,8 +467,8 @@ def frame(p, n, **meta):
     # placed by its width in points against the right margin, not by
     # counting columns of the body's size.
     pg = 'Page %d of %d' % (p, n)
-    fl = fit((meta.get('program') or 'PHCP')
-             + ('   %s' % meta['model'] if meta.get('model') else ''),
+    fl = fit(_dor(meta.get('program'), 'PHCP')
+             + ('   %s' % meta['model'] if _true(meta.get('model')) else ''),
              COLS - len(pg) - 2)
     s += 'BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n' % (_fmt(8), LEFT, 26, esc(fl))
     s += 'BT /F1 %s Tf %.2f %.2f Td (%s) Tj ET\n' % (_fmt(8),
@@ -494,7 +503,11 @@ def write_pages(streams, path, reg, bold, **meta):
         nonlocal next_id
         desc, file = next_id, next_id + 1
         next_id += 2
-        z = zlib.compress(f['bytes'])
+        # Compress::Zlib::compress deflates with memLevel 9 (MAX_MEM_LEVEL),
+        # zlib.compress with 8: the same zlib gives different bytes.  With 9
+        # the font streams, and so the whole file, are the Perl's.
+        zc = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, zlib.MAX_WBITS, 9)
+        z = zc.compress(f['bytes']) + zc.flush()
         obj[desc] = ('<< /Type /FontDescriptor /FontName /%s /Flags 33 /FontBBox [%s] '
                      '/ItalicAngle 0 /Ascent %d /Descent %d /CapHeight %d /StemV %d /FontFile2 %d 0 R >>'
                      % (name, ' '.join(str(x) for x in f['bbox']), f['ascent'], f['descent'],
@@ -516,8 +529,8 @@ def write_pages(streams, path, reg, bold, **meta):
     now = time.strftime('D:%Y%m%d%H%M%S')
     obj[5] = ('<< /Title (%s) /Author (%s) /Subject (Hydraulic calculation) '
               '/Creator (%s) /Producer (%s) /CreationDate (%s) >>'
-              % (esc(meta.get('title') or 'Hydraulic calculation'), esc(meta.get('designer') or ''),
-                 esc(meta.get('program') or 'PHCP'), esc(meta.get('program') or 'PHCP'), now))
+              % (esc(_dor(meta.get('title'), 'Hydraulic calculation')), esc(_dor(meta.get('designer'), '')),
+                 esc(_dor(meta.get('program'), 'PHCP')), esc(_dor(meta.get('program'), 'PHCP')), now))
     for p in range(n):
         po, co = kids[p], kids[p] + 1
         obj[po] = ('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] '
@@ -540,9 +553,19 @@ def write_pages(streams, path, reg, bold, **meta):
     out += (('trailer\n<< /Size %d /Root 1 0 R /Info 5 0 R >>\nstartxref\n%d\n%%%%EOF\n'
              % (len(obj) + 1, xref)).encode('latin-1'))
 
-    with open(path, 'wb') as fh:
+    try:
+        fh = open(path, 'wb')
+    except OSError as e:
+        raise CannotWrite(e.errno, e.strerror, path)
+    with fh:
         fh.write(out)
     return n
+
+# The file could not be opened: an OSError still (errno, strerror, filename),
+# which reads as the Perl's die does -- "cannot write PATH: reason".
+class CannotWrite(OSError):
+    def __str__(self):
+        return 'cannot write %s: %s\n' % (self.filename, self.strerror)
 
 #------------------------------------------------------------------------------
 # draw_graph -- the supply graph drawn on Q^1.85 graph paper, into a box the
@@ -751,7 +774,7 @@ def draw_graph(g, top, hgt):
         o += txt(kx, ky[0], lab, 7, 0, 'l')
         if len(q):
             o += txt(kx + 22 * ADVANCE * 7 + 50, ky[0], q, 7, 0, 'r')
-        o += txt(LEFT + COLS * cw, ky[0], ('AT ' if q else '') + p, 7, 0, 'r')
+        o += txt(LEFT + COLS * cw, ky[0], ('AT ' if _true(q) else '') + p, 7, 0, 'r')
     return o
 
 # circle -- a circle of radius r at (x, y), from four Bezier arcs; $op is the
@@ -769,3 +792,11 @@ def circle(x, y, r, op):
 # Perl stringifies a number in a PDF operator without trailing zeros.
 def _fmt(v):
     return '%g' % v
+
+# Perl's // : the value unless it is missing.
+def _dor(v, default):
+    return default if v is None else v
+
+# Perl's truth: undef, '', '0' and 0 are false; every other text is true.
+def _true(v):
+    return not (v is None or v == '' or v == '0' or v == 0)
