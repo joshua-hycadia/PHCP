@@ -18,17 +18,17 @@ without starting the event loop and calls the handlers directly.
 
 Perl/Tk's TextUndo records every insert and delete; the grey proposal
 was put in and taken out with plain Tk::Text insert and delete, which
-TextUndo does not record.  Tkinter's Text has no unrecorded insert --
-``configure(undo=False)`` clears the whole undo stack -- so the
-proposal insert is recorded behind an explicit separator, which makes
-it one undo item on its own: discarding is one ``edit_undo()`` (the
-redo it leaves is cleared by the next recorded edit, so a discarded
-proposal never comes back), and accepting is that undo followed by a
-recorded insert of the text, so Ctrl+Z removes an accepted line like
-any other.
+TextUndo does not record.  Tkinter's Text records every edit while its
+-undo option is on, so the proposal goes in and out with -undo turned
+off for that one edit (``_unrecorded``): the undo record is left as it
+is, and a proposal that was only offered is in neither the undo nor
+the redo record.  Accepting takes it out the same way and puts the
+text back with a recorded insert, so Ctrl+Z removes an accepted line
+like any other.
 """
 
 import os
+import re
 import sys
 import time
 import tkinter as tk
@@ -533,7 +533,7 @@ def build_window():
     # The screen's scale against the 96 dpi the sizes here were drawn
     # for; never below 1, so a low-resolution screen is not cramped
     # further.
-    dpi = mw.winfo_fpixels('1i')
+    dpi = mw.winfo_pixels('1i')
     SCALE = dpi / 96 if dpi > 96 else 1
     pick_fonts()
     mw.geometry('%dx%d' % (px(1500), px(950)))
@@ -958,8 +958,11 @@ def full_text():
 # rest.
 def replace_lines(new):
     discard_proposal()
-    old = buffer().split('\n')
-    nl = new.split('\n')
+    # Perl's split /\n/, $text, -1 of an empty text is an empty list, not
+    # one empty line: an empty buffer against one line is a different
+    # number of lines, and goes through set_buffer.
+    old = _perl_lines(buffer())
+    nl = _perl_lines(new)
     if len(old) != len(nl):
         set_buffer(new)
         return
@@ -969,6 +972,10 @@ def replace_lines(new):
         n = i + 1
         ed.delete('%d.0' % n, '%d.end' % n)
         ed.insert('%d.0' % n, nl[i])
+
+
+def _perl_lines(text):
+    return text.split('\n') if text != '' else []
 
 
 # set_buffer -- replace the network text, as when a file is opened.
@@ -1324,12 +1331,12 @@ def strip_commands():
 #
 # In Perl/Tk the grey text went in and out with plain Tk::Text insert
 # and delete, which TextUndo does not record: a proposal that was only
-# offered must not come back as real text on Ctrl+Z.  Tkinter has no
-# unrecorded insert, so it is recorded behind an explicit separator,
-# making it one undo item on its own; discard is one edit_undo() (the
-# redo it leaves is cleared by the next recorded edit), and accept is
-# that undo followed by a recorded insert, so undo removes an accepted
-# line like any other.
+# offered must not come back as real text on Ctrl+Z or Ctrl+Y.  Here
+# the same edits are made with the widget's -undo turned off for their
+# duration (_unrecorded), so they are not recorded either.  When a
+# proposal is accepted it is taken out the same way and typed back in
+# with a recorded insert, so undo removes an accepted line like any
+# other.
 #==============================================================================
 def on_return():
     if prop['active']:
@@ -1361,10 +1368,9 @@ def offer_proposal():
     # line.
     if ed.get('insert linestart', 'insert lineend').strip():
         return
-    ed.edit_separator()           # the proposal is its own undo item
     ed.mark_set('pstart', 'insert')
     ed.mark_gravity('pstart', 'left')
-    ed.insert('insert', p, 'proposal')
+    _unrecorded(lambda: ed.insert('insert', p, 'proposal'))
     ed.mark_set('pend', 'insert')
     ed.mark_gravity('pend', 'right')
     ed.mark_set('insert', 'pstart')
@@ -1384,11 +1390,23 @@ def accept_proposal():
 def discard_proposal():
     if not prop['active']:
         return
-    try:
-        ed.edit_undo()            # the proposal insert, alone
-    except tk.TclError:
-        pass
+    _unrecorded(lambda: ed.delete('pstart', 'pend'))
     prop['active'] = 0
+
+
+# _unrecorded -- an edit the undo record does not see, as Tk::Text's own
+# insert and delete were under Perl/Tk's TextUndo.  Turning -undo off
+# stops the recording and leaves the record as it is (Tk 8.5 and 8.6);
+# the grey text goes in and comes out again between recorded edits, so
+# the indices the record holds stay true.  A proposal that was only
+# offered is then in neither the undo nor the redo record: Ctrl+Y after
+# one was discarded does not bring it back as real text.
+def _unrecorded(edit):
+    ed.configure(undo=False)
+    try:
+        edit()
+    finally:
+        ed.configure(undo=True)
 
 
 #==============================================================================
@@ -1529,7 +1547,7 @@ def calculate():
     # the seconds gone, so the window is plainly working and not
     # stuck.
     from hardycross.window import results as _re
-    t0 = time.time()
+    t0 = int(time.time())         # whole seconds, as Perl's time
     state = {'turn': 0, 'shown': 0.0}
 
     def progress(what):
@@ -1539,7 +1557,7 @@ def calculate():
         state['shown'] = now
         mark = ('|', '/', '-', '\\')[state['turn'] % 4]
         message('%s COMPUTING - %s - %d S' %
-                (mark, what, int(time.time() - t0)))
+                (mark, what, int(time.time()) - t0))
         state['turn'] += 1
         mw.update()
 
@@ -1580,13 +1598,74 @@ def calculate():
     return r
 
 
+# _busy / _unbusy -- Perl/Tk's $mw->Busy(-recurse => 1) and Unbusy.
+#
+# While a calculation runs the status bar is redrawn with mw.update(),
+# which also delivers whatever the user does meanwhile.  Busy put a
+# 'Busy' tag first in the bindtags of the window and every widget in
+# it; the tag swallows keys, clicks and pointer motion (a press rings
+# the bell), so nothing typed or clicked during a calculation reaches
+# the editor, the buttons or the menus' accelerators.  The watch
+# pointer goes on the window and on each widget that has a pointer of
+# its own.  Unbusy puts every pointer and bindtags list back.
+_busy_restore = []
+
+
 def _busy():
-    mw.configure(cursor='watch')
-    mw.update_idletasks()
+    if _busy_restore or not mw.winfo_viewable():
+        return
+
+    def ring(e):
+        mw.bell()
+        return 'break'
+
+    def swallow(e):
+        return 'break'
+
+    if not mw.bind_class('Busy'):
+        mw.bind_class('Busy', '<Any-KeyPress>', ring)
+        mw.bind_class('Busy', '<Any-KeyRelease>', swallow)
+        mw.bind_class('Busy', '<Any-ButtonPress>', ring)
+        mw.bind_class('Busy', '<Any-ButtonRelease>', swallow)
+        mw.bind_class('Busy', '<Any-Motion>', swallow)
+
+    def recurse(w, top):
+        tags = w.bindtags()
+        try:
+            c = str(w.cget('cursor'))
+        except tk.TclError:
+            c = ''
+        if top or c or isinstance(w, tk.Toplevel):
+            _busy_restore.append((w, tags, c))
+            try:
+                w.configure(cursor='watch')
+            except tk.TclError:
+                pass
+        else:
+            _busy_restore.append((w, tags, None))
+        w.bindtags(('Busy',) + tuple(tags))
+        for child in w.winfo_children():
+            recurse(child, False)
+
+    recurse(mw, True)
+    mw.update()
 
 
 def _unbusy():
-    mw.configure(cursor='')
+    try:
+        mw.update()
+    except tk.TclError:
+        pass
+    while _busy_restore:
+        w, tags, c = _busy_restore.pop()
+        try:
+            if not w.winfo_exists():
+                continue
+            if c is not None:
+                w.configure(cursor=c)
+            w.bindtags(tags)
+        except tk.TclError:
+            pass
 
 
 def fill_report(text):
@@ -1652,8 +1731,8 @@ def file_open(f=None):
     if f is None:
         f = filedialog.askopenfilename(
             filetypes=[('PHCP MODEL', '.phc'), ('ALL FILES', '*')])
-        if not f:
-            return
+    if not f:
+        return
     open_path(f)
 
 
@@ -1694,8 +1773,8 @@ def file_save_as(f=None):
         f = filedialog.asksaveasfilename(
             defaultextension='.phc', initialfile=initial,
             filetypes=[('PHCP MODEL', '.phc')])
-        if not f:
-            return
+    if not f:
+        return
     if write_buffer(f):
         path = f
     set_title()
@@ -1720,7 +1799,8 @@ def write_buffer(f):
         with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
-        message('CANNOT WRITE %s: %s' % (f, e), True)
+        # Perl's $!: the reason alone, without errno or the path again
+        message('CANNOT WRITE %s: %s' % (f, e.strerror or e), True)
         return False
     saved_text = full_text()
     message('SAVED %s' % f)
@@ -1744,23 +1824,33 @@ def file_report(out=None):
             defaultextension='.pdf',
             initialfile=re_sub(r'\.phc\Z', '', base, flags=re.I) + '_REPORT.PDF',
             filetypes=[('PDF REPORT', '.pdf'), ('TEXT REPORT', '.txt')])
-        if not out:
-            return None
+    if not out:
+        return None
     from hardycross import ModelError
     try:
-        editor.write_report_file(solved['net'], solved['converged'],
-                                 path or 'UNTITLED.PHC', out)
-        ok = True
-        err = None
+        ok = bool(editor.write_report_file(solved['net'], solved['converged'],
+                                           path or 'UNTITLED.PHC', out))
+        err = ''
     except ModelError as e:
         ok = False
         err = e.msg if hasattr(e, 'msg') else str(e)
+    except OSError as e:
+        ok = False
+        err = cannot_write(e, out)
     except Exception as e:
         ok = False
         err = str(e)
     message('REPORT WRITTEN TO %s' % out if ok
             else 'REPORT NOT WRITTEN: %s' % err, not ok)
     return ok
+
+
+# cannot_write -- a file the system would not write, said as the Perl
+# said it: "cannot write <file>: <the reason>" (its $!), not Python's
+# "[Errno 2] ...: '<file>'".  The status bar puts it in capitals.
+def cannot_write(e, name):
+    return 'cannot write %s: %s' % (
+        e.filename if e.filename is not None else name, e.strerror or e)
 
 
 def file_quit():

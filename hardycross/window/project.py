@@ -15,6 +15,7 @@ drop-downs use a Setting, a one-element list whose [0] write goes
 through to the settings dict.
 """
 
+import re
 import tkinter as tk
 
 from hardycross import editor
@@ -50,11 +51,33 @@ _REFILL = [False]                # a programmatic refill is not typing
 
 
 def _mark(field):
-    # a write on a field's var: the user typed there (a refill says so)
+    # a write on a field's var: the user typed there (a refill says so).
+    # The Perl's entry was tied to the setting itself, so whatever put
+    # text in the field -- a key, a paste with the mouse -- was in the
+    # settings at once, and so in the file and the title's *; the write
+    # is copied through here for the same reason.
     def go(*_a):
         if not _REFILL[0]:
             ENTRY_DIRTY[field] = 1
+            _store(field, ENTRY_VARS[field][0])
     return go
+
+
+def _store(field, var):
+    s = win.settings
+    if field == 'TITLE':
+        s['title'] = var.get()
+    elif field in editor.PROJECT_FIELDS:
+        s['project'][field] = var.get()
+    else:
+        s['options'][field] = var.get()
+
+
+# _uc -- capitals as the Perl made them: uc, but only when the text has
+# a plain lower-case letter in it (/[a-z]/).  Text with none is left
+# exactly as typed, an accented lower-case letter included.
+def _uc(v):
+    return v.upper() if re.search(r'[a-z]', v) else v
 
 
 def build_project(page):
@@ -103,9 +126,9 @@ def build_project(page):
     def entry(g, field, var, width):
         def on_key(e):
             v = var.get()
-            if v != v.upper():
+            if v != _uc(v):
                 pos = e.widget.index('insert')
-                var.set(v.upper())
+                var.set(_uc(v))
                 e.widget.icursor(pos)
             _store(field, var)
             settings_changed()
@@ -118,15 +141,6 @@ def build_project(page):
         ENTRY_VARS[field] = (var, field)
         var.trace_add('write', _mark(field))
         row[0] += 1
-
-    def _store(field, var):
-        s = win.settings
-        if field == 'TITLE':
-            s['title'] = var.get()
-        elif field in editor.PROJECT_FIELDS:
-            s['project'][field] = var.get()
-        else:
-            s['options'][field] = var.get()
 
     f = editor.PROJECT_FIELDS
     split = 9            # PROJECT ... DATE in the first column
@@ -242,7 +256,7 @@ def load_settings(new):
     s['extra'] = list(new.get('extra') or [])
     for q in phc.UNIT_QUANTITIES:
         s['units'][q] = new['units'][q]
-    s['method'] = new.get('method') or 'HW'
+    s['method'] = new['method'] if new.get('method') is not None else 'HW'
     for q in phc.OPTIONS:
         s['options'][q] = (new.get('options') or {}).get(q, '')
     _REFILL[0] = True            # the refill is not the user's typing
@@ -263,23 +277,23 @@ def load_settings(new):
 # settings_changed -- after any change in the PROJECT tab.
 def settings_changed():
     s = win.settings
-    s['title'] = (s.get('title') or '').upper()
+    s['title'] = _uc(s.get('title') or '')
     for d in (s['project'], s['options']):
         for k in list(d.keys()):
             v = d[k]
             if isinstance(v, str):
-                d[k] = v.upper()
+                d[k] = _uc(v)
     for field, (var, key) in ENTRY_VARS.items():
         v = var.get()
         if ENTRY_DIRTY.pop(field, None):
             # the var was written since the last time (typed, or put
             # there directly): it is what the user changed
             if field == 'TITLE':
-                s['title'] = v.upper()
+                s['title'] = _uc(v)
             elif field in editor.PROJECT_FIELDS:
-                s['project'][key] = v.upper()
+                s['project'][key] = _uc(v)
             else:
-                s['options'][key] = v.upper()
+                s['options'][key] = _uc(v)
         else:
             # nothing touched the widget: the settings are what changed
             if field == 'TITLE':
@@ -292,7 +306,7 @@ def settings_changed():
                 _REFILL[0] = True
                 var.set(v)
                 _REFILL[0] = False
-        if v != v.upper():
+        if v != _uc(v):
             pos = None
             w = win.form[field]
             try:
@@ -300,7 +314,7 @@ def settings_changed():
             except Exception:
                 pass
             _REFILL[0] = True
-            var.set(v.upper())
+            var.set(_uc(v))
             _REFILL[0] = False
             if pos is not None:
                 try:

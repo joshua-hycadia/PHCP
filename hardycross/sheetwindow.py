@@ -155,6 +155,11 @@ def build_window():
     mw.option_add('*Menu.activeForeground', win.C['ink'])
     mw.option_add('*Menu.font', win.UI)
     mw.option_add('*Menu.borderWidth', 1)
+    # The PROJECT tab's fields and drop-downs are tied to the settings they
+    # are built on: they must be this sheet's from the start (Perl's
+    # $settings, which $sheet was made from), or a unit or a method chosen
+    # there would change a dictionary nobody reads.
+    win.settings = sheet['settings']
     build_menus()
     build_toolbar()
 
@@ -237,12 +242,45 @@ def _publish():
     win.settings = sheet['settings']
     win.solved = solved
     win.validation = validation
+    win.valid_text = valid_text
     win.go_to_line = go_to_line
-    win.recolour = recolour
+    win.recolour = _shared_recolour
+    win.update_actions = _shared_update_actions
+    # a click on a VALIDATION row is the sheet's: to the cell, not to a line
+    _results.go_to_fault = go_to_fault
     win.update_status = update_status
     win.set_title = set_title
     win.message = message
     win.full_text = full_text
+
+
+# The shared tabs change the state they share: the DATABASE tab, when the
+# database in use changes, clears what was validated and calculated
+# (db_after_change), then asks for the grids and the toolbar to be drawn
+# again.  In Perl those were this window's own variables.  Here they are
+# hardycross.win's, so what the shared tab left there is taken back before
+# anything is drawn from it.  _publish keeps win's copy level with this
+# module's at every change made here, so this never brings back an old one.
+def _pull():
+    global solved, validation, valid_text
+    solved, validation, valid_text = win.solved, win.validation, win.valid_text
+
+
+def _shared_recolour():
+    _pull()
+    return recolour()
+
+
+def _shared_update_actions():
+    _pull()
+    return update_actions()
+
+
+# select_tab -- this window's: a tab that is not there is left alone.
+def select_tab(t, n):
+    if not t or n not in t['page']:
+        return
+    win.select_tab(t, n)
 
 
 def build_menus():
@@ -632,11 +670,24 @@ def refresh_grid(id_):
             if not isinstance(w, tk.Entry):
                 w.configure(text=val)
                 continue
-            if mw.focus_get() is w:
-                continue
+            # The Perl reads `elsif ($mw->focus && $w eq $mw->focus) { next }`.
+            # $mw->focus is not a question: it GIVES the main window the
+            # keyboard focus, and returns nothing, so no cell is ever passed
+            # over, and a grid refreshed in place takes the focus off
+            # whatever cell had it.  That is what the window does (after an
+            # undo, a fill, a replace, and a FROM or TO node typed while
+            # another grid has rows), so it is done here too.
+            _perl_mw_focus()
             if w.get() != val:
                 w.delete(0, 'end')
                 w.insert(0, val)
+
+
+def _perl_mw_focus():
+    try:
+        mw.focus_set()
+    except tk.TclError:
+        pass
 
 
 def rebuild_grid(g):
@@ -1860,14 +1911,6 @@ def focused_cell():
 # types, painted again after a change that can add or drop a row.
 def after_structural():
     sheetmod.reconcile(sheet)
-    try:
-        # Perl's $mw->focus is the display's own focus, which Tk's rebuild
-        # leaves on the toplevel.  tkinter's focus_get() keeps the cell, and
-        # refresh_grid would then skip repainting it.  Do what Perl's rebuild
-        # does before the grids are painted.
-        mw.focus_set()
-    except tk.TclError:
-        pass
     refresh_all()
     sheet_changed()
 
@@ -2033,19 +2076,12 @@ def reveal_cell(id_, r, key):
         win.select_tab(toptabs, tab)
     m = re.match(r'^DEV:(.+)', id_)
     if m and devtabs:
-        win.select_tab(devtabs, m.group(1))
+        select_tab(devtabs, m.group(1))
     g = grids.get(id_)
     w = g and g['cell'].get(r, {}).get(key)
     if w is None:
         return
     w.focus_force()
-    try:
-        # Perl's $mw->focus is the display's own focus, which Tk's rebuild
-        # leaves on the toplevel.  tkinter's focus_get() keeps the cell, and
-        # refresh_grid would skip repainting it.  Do what Perl's rebuild does.
-        mw.focus_set()
-    except tk.TclError:
-        pass
     if isinstance(w, tk.Entry):
         t = w.get()
         at = (t.find(find_what) if find_case
@@ -2275,7 +2311,7 @@ def apply_theme(name):
         except Exception:
             pass
     try:
-        if gv.get('canvas'):
+        if _graph.GV.get('canvas'):
             _graph.graph_draw()
     except Exception:
         pass
@@ -2286,17 +2322,17 @@ def apply_theme(name):
         pass
     restyle_validation()
     try:
-        if dbv.get('path'):
+        if _database.DBV.get('path'):
             _database.db_header()
     except Exception:
         pass
     try:
-        if dbv.get('tabs'):
+        if _database.DBV.get('tabs'):
             _database.db_fill()
     except Exception:
         pass
     try:
-        if dbv.get('formrow'):
+        if _database.DBV.get('formrow'):
             _database.db_form()
     except Exception:
         pass
@@ -2460,20 +2496,10 @@ def paint_theme(mp, w, seen=None):
 # it was built.  New styles, then the rows again, so a fault reads in the
 # palette now on screen.  The result tables are rebuilt by fill_results.
 def restyle_validation():
-    if vtable is None or not vtable.get('hlist') or \
-            not vtable['hlist'].winfo_exists():
+    # The VALIDATION table keeps the colours it was built with: its rows
+    # are built again in the palette now on screen.
+    if not _results.vtable:
         return
-    h = vtable['hlist']
-    h.configure(background=win.C['paper'], foreground=win.C['ink'],
-                selectbackground=win.C['select'],
-                selectforeground=win.C['ink'])
-    vtable['styles'] = _results.styles(h, wrap=620)
-    for i in range(4):
-        try:
-            h.header('configure', i, style=vtable['styles']['headw'],
-                     headerbackground=win.C['panel'])
-        except tk.TclError:
-            pass
     fill_validation()
 
 
@@ -2507,13 +2533,6 @@ def restore_snap(s):
     for k in ('pipes', 'nodes', 'devices', 'notes', 'extras', 'seq'):
         sheet[k] = copy.deepcopy(s[k])
     restoring = False
-    # Perl's $mw->focus is the display's own focus; Perl's rebuild leaves it
-    # on the toplevel, while tkinter's focus_get() keeps the cell a refresh
-    # would skip.  Leave it the way Perl's rebuild does before painting.
-    try:
-        mw.focus_set()
-    except tk.TclError:
-        pass
     refresh_all()
     sheet_changed()
 
@@ -2561,7 +2580,7 @@ def go_to_fault(row):
     if it is None:
         return
     if it.get('tab') and it['tab'] == 'PROJECT':
-        return _results.show_field(it.get('field'))
+        return _database.show_field(it.get('field'))
     loc = it.get('loc') or sheetmod.locate(sheet, it)
     if loc:
         go_to_cell(loc)
@@ -2579,14 +2598,14 @@ def go_to_cell(loc):
     if loc is None:
         return
     if (loc.get('tab') or '') == 'PROJECT' and loc.get('field'):
-        return _results.show_field(loc['field'])
+        return _database.show_field(loc['field'])
     tab = loc.get('tab')
     if not tab:
         return
     if toptabs and tab in toptabs['page']:
         win.select_tab(toptabs, tab)
     if tab == 'PRESSURE DEVICES' and loc.get('device'):
-        win.select_tab(devtabs, loc['device'])
+        select_tab(devtabs, loc['device'])
         tab = 'DEV:' + loc['device']
     g = grids.get(tab)
     if g is None:
@@ -2657,6 +2676,7 @@ def validate():
     valid_text = full if v['ok'] else None
     if not v['ok']:
         solved = None
+    _publish()                 # the VALIDATION table is drawn from this
     fill_validation()
     if restabs:
         win.select_tab(restabs, 'VALIDATION')
@@ -2678,7 +2698,7 @@ def calculate():
         message('VALIDATE THE INPUTS FIRST (F4): CALCULATE RUNS ONLY ON A '
                 'MODEL THAT HAS PASSED VALIDATION', True)
         return {'ok': 0, 'not_validated': 1}
-    t0 = time.time()
+    t0 = int(time.time())      # whole seconds, as Perl's time
     turn = [0]
     shown = [0.0]
 
@@ -2689,7 +2709,7 @@ def calculate():
         shown[0] = now
         bar = ('|', '/', '-', '\\')[turn[0] % 4]
         message('%s COMPUTING - %s - %d S' % (bar, what,
-                                              int(time.time() - t0)))
+                                              int(time.time()) - t0))
         mw.update()
         turn[0] = turn[0] + 1
 
@@ -2701,6 +2721,7 @@ def calculate():
         _unbusy()
     if not r or not r.get('ok'):
         solved = None
+        _publish()
         fill_results()
         fill_report('THE MODEL WAS NOT CALCULATED\n\n%s\n'
                     % (r.get('error') if r else ''))
@@ -2730,18 +2751,14 @@ def calculate():
     return r
 
 
+# Perl/Tk's $mw->Busy(-recurse => 1) and Unbusy: the watch pointer, and
+# keys and clicks swallowed while the calculation runs (hardycross.win).
 def _busy():
-    try:
-        mw.configure(cursor='watch')
-    except tk.TclError:
-        pass
+    win._busy()
 
 
 def _unbusy():
-    try:
-        mw.configure(cursor=win.POINTER)
-    except tk.TclError:
-        pass
+    win._unbusy()
 
 
 def fill_report(text):
@@ -2885,6 +2902,7 @@ def adopt(got):
     validation = None
     valid_text = None
     solved = None
+    _publish()                 # the results and VALIDATION are drawn from these
     refresh_all()
     if restabs:
         fill_results()
@@ -2909,7 +2927,7 @@ def file_open(f=None):
         return
     if f is None:
         f = filedialog.askopenfilename(
-            parent=mw, title='OPEN',
+            parent=mw,
             filetypes=[('PHCP MODEL', '.phc'), ('ALL FILES', '*')])
     if f is None or not len(f):
         return
@@ -2968,7 +2986,8 @@ def write_file(f):
         with open(f, 'w', encoding='utf-8', errors='surrogateescape') as fh:
             fh.write(text)
     except OSError as e:
-        message('CANNOT WRITE %s: %s' % (f, e), True)
+        # Perl's $!: the reason alone, without errno or the path again
+        message('CANNOT WRITE %s: %s' % (f, e.strerror or e), True)
         return False
     global saved_text
     saved_text = full_text()
@@ -2985,18 +3004,22 @@ def file_report(out=None):
         if not r or not r.get('ok'):
             return
     if out is None:
-        base = re.sub(r'\.phc$', '', re.sub(r'.*[/\\]', '',
-                                            path or 'UNTITLED.PHC'), re.I)
+        base = re.sub(r'\.phc\Z', '', re.sub(r'.*[/\\]', '',
+                                             path or 'UNTITLED.PHC'),
+                      flags=re.I)
         out = filedialog.asksaveasfilename(
             parent=mw, defaultextension='.pdf',
             initialfile=base + '_REPORT.PDF',
             filetypes=[('PDF REPORT', '.pdf'), ('TEXT REPORT', '.txt')])
     if out is None or not len(out):
         return
+    err = ''
     try:
-        editor.write_report_file(solved['net'], solved['converged'],
-                                 path or 'UNTITLED.PHC', out)
-        ok = True
+        ok = bool(editor.write_report_file(solved['net'], solved['converged'],
+                                           path or 'UNTITLED.PHC', out))
+    except OSError as e:
+        ok = False
+        err = win.cannot_write(e, out)
     except Exception as e:
         ok = False
         err = str(getattr(e, 'msg', e))

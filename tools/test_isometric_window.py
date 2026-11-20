@@ -316,6 +316,71 @@ def main():
         re.search(r'^PIPE\s+P9\s+A\s+B\s', win.buffer(), re.M) and
         'A' in ISO.iso['draw']['nodes'])
 
+    #======================================================================
+    print('4. AS THE PERL WINDOW DOES IT (the line-by-line audit)')
+    #======================================================================
+    errors = []
+    win.mw.report_callback_exception = lambda *a: errors.append(repr(a[1]))
+
+    def entries(w, out):
+        for c in w.winfo_children():
+            if isinstance(c, tk.Entry):
+                out.append(c)
+            entries(c, out)
+        return out
+
+    ents = entries(win.toptabs['page']['ISOMETRIC'], [])
+    (known_len, grid_e) = (ents[0], ents[5])
+    for k in ISO.iso['known']:           # no KNOWN figures: click and click
+        ISO.iso['known'][k] = ''
+    ISO.iso_set_tool('SELECT')
+    win.set_buffer('')
+    win.mw.update()
+    ISO.iso_set_tool('WATER')
+    ISO.iso_click_cell(0, 0)
+    ISO.iso_set_tool('PIPE')
+    ISO.iso_click_cell(0, 0)
+    ISO.iso_click_cell(3, 0)
+    ISO.iso_click_cell(3, 2)
+    ISO.iso_set_tool('SELECT')
+    cv = ISO.iso_cv
+    (x0, y0) = [int(v) for v in ISO.iso_widget_at(3, 2)]
+    (x1, y1) = [int(v) for v in ISO.iso_widget_at(3, 4)]
+    cv.event_generate('<ButtonPress-1>', x=x0, y=y0, when='now')
+    cv.event_generate('<B1-Motion>', x=x1, y=y1, when='now')
+    ghost = ISO.iso.get('ghost')
+    cv.event_generate('<ButtonRelease-1>', x=x1, y=y1, when='now')
+    win.mw.update()
+    b = win.buffer()
+    is_('a point dragged with the mouse moves, and its pipe takes the '
+        'new length',
+        not errors and ghost is not None and list(ghost)[:2] == [3, 4]
+        and re.search(r'^//ISO N2 3 4 0$', b, re.M)
+        and re.search(r'^PIPE\s+P2\s+N1\s+N2\s+4000\b', b, re.M)
+        and ISO.iso_status_text().startswith('N2 MOVED'),
+        '%s | %s | %s' % (errors, ISO.iso_status_text(), b))
+
+    grid_e.delete(0, 'end')
+    grid_e.insert(0, '0.5')
+    ISO.iso_grid_apply()
+    half = win.buffer()
+    win.set_buffer('')
+    grid_e.delete(0, 'end')
+    grid_e.insert(0, '7')
+    win.set_buffer(half)
+    win.mw.update()
+    is_('the GRID field shows the grid of the network that was read',
+        grid_e.get() == '0.5' and ISO.iso['gridvar'] == '0.5'
+        and '//ISO GRID 0.5' in half, grid_e.get())
+    known_len.delete(0, 'end')
+    known_len.insert(0, '  2500  ')
+    ISO.iso_known_apply('LENGTH')
+    is_('a KNOWN figure is shown without the spaces round it',
+        known_len.get() == '2500' and ISO.iso['known']['LENGTH'] == '2500',
+        repr(known_len.get()))
+    known_len.delete(0, 'end')
+    ISO.iso_known_apply('LENGTH')
+
     win.mw.destroy()
     print('\n%d passed, %d failed' % (passed[0], failed[0]))
     return 1 if failed[0] else 0

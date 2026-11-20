@@ -142,16 +142,27 @@ def make_table(name):
     def heading_click(e):
         if not t.get('data'):
             return
-        pos = h.index('@%d,%d' % (e.x, e.y))
-        line, col = pos.split('.')
-        if int(line) != 1:
-            return
-        c = header_column(name, int(col))
+        c = _heading_at(e)
         if c is not None:
             sort_table(name, cols[c][0])
 
+    def _heading_at(e):
+        # The column of a click in the heading, or None.  The heading is
+        # the name and, under it, the unit: both lines are the header
+        # row, as in the Perl's HList.  A click past the end of the last
+        # column is on no column.
+        pos = h.index('@%d,%d' % (e.x, e.y))
+        line, col = (int(x) for x in pos.split('.'))
+        if line > 2:
+            return None
+        bb = h.bbox(pos)
+        if not bb or e.y > bb[1] + bb[3] or e.x > bb[0] + bb[2]:
+            return None
+        return header_column(name, col)
+
     def right_click(e):
-        if name == 'PIPES' and t.get('data'):
+        # the column chooser opens from the headings only
+        if name == 'PIPES' and t.get('data') and _heading_at(e) is not None:
             column_menu()
 
     def row_click(e):
@@ -238,9 +249,10 @@ def header_column(name, col):
     # Which column a click on the headings is in, by its character
     # position.  Returns the column's index in the shown columns.
     t = win.TABLE[name]
+    cols = t.get('cols') or []
     acc = 0
-    for i, (full, c) in enumerate(t.get('cols') or []):
-        acc += t['width'][full] + GAP
+    for i, (full, c) in enumerate(cols):
+        acc += t['width'][full] + (GAP if i < len(cols) - 1 else 0)
         if col < acc:
             return i
     return None
@@ -398,7 +410,9 @@ def build_validation(page):
                  background=win.C['panel'], foreground=win.C['ink'],
                  padx=win.px(8), pady=win.px(6)).grid(
                      row=0, column=i, sticky='nsew')
-    inner.columnconfigure(2, weight=1)
+    # WHERE and FIELD are 14 and 16 characters wide and WHAT IS WRONG
+    # 400 pixels, as the Perl's columnWidth set them; WHY takes the rest.
+    inner.columnconfigure(2, minsize=win.px(400))
     inner.columnconfigure(3, weight=1)
     vtable = {'canvas': canvas, 'inner': inner, 'rows': [], 'labels': []}
     fill_validation()
@@ -425,17 +439,21 @@ def fill_validation():
         elif muted:
             fg_what = fg_why = win.C['muted']
             font_what = win.UI
+        # WHERE and FIELD are columns of a fixed width in characters,
+        # never wrapped ("LINE 12" stays on one line); WHAT IS WRONG and
+        # WHY wrap at 380 and 620 pixels.
         specs = [
-            (where, win.UI, win.C['ink'], 'w', 14),
-            (field, win.UI, win.C['ink'], 'w', 16),
-            (what, font_what, fg_what, 'w', 380),
-            (why, win.UI, fg_why, 'w', 620),
+            (where, win.UI, win.C['ink'], 'nw', 0, 14),
+            (field, win.UI, win.C['ink'], 'nw', 0, 16),
+            (what, font_what, fg_what, 'nw', 380, 0),
+            (why, win.UI, fg_why, 'nw', 620, 0),
         ]
-        for col, (text, font, fg, anchor, wrap) in enumerate(specs):
+        for col, (text, font, fg, anchor, wrap, chars) in enumerate(specs):
             lab = tk.Label(inner, text=text, font=font, anchor=anchor,
                            background=win.C['paper'], foreground=fg,
-                           padx=win.px(8), pady=win.px(4),
-                           wraplength=win.px(wrap), justify='left')
+                           padx=win.px(8), pady=win.px(4), width=chars,
+                           wraplength=win.px(wrap) if wrap else 0,
+                           justify='left')
             lab.grid(row=n + 1, column=col, sticky='nsew')
             lab.bind('<ButtonRelease-1>',
                      lambda e, n=n: go_to_fault(n))

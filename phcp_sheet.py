@@ -4,9 +4,10 @@
 # Program (the name is historical; the window is hardycross.sheetwindow,
 # this file the one that opens it).
 #
-# Usage:  phcp_sheet [file.phc ...]
-#         -v, --version      print the version and exit
-#         -h, --help         print the usage and exit
+# Usage:  phcp_sheet [model.phc]
+#
+# The first argument, if there is one, is the model to open; there are no
+# options, as in Perl (anything else is said not to be a .phc file).
 #
 # One instance per command line: the window is a singleton, as in Perl
 # (a second call of the program opens a second process and a second

@@ -1345,6 +1345,268 @@ win.mw.destroy()
         re.match(r'^DARK\s*$', boot.stdout + boot.stderr),
         (boot.stdout + boot.stderr).strip())
 
+    #==========================================================================
+    print('17. AS THE PERL WINDOW DOES IT (the line-by-line audit)')
+    #==========================================================================
+    from tkinter import filedialog
+    win.path = None
+    PJ.load_settings(editor.new_settings())
+
+    # A proposal that was only offered is in neither undo record.
+    win.set_buffer('NODE H1 0\nNODE H2 0\nNODE H3 0')
+    win.ed.mark_set('insert', 'end - 1 chars')
+    win.ed.insert('insert', '\nPIPE B1 H1 H2 3.2 32')      # a recorded edit
+    win.ed.mark_set('insert', 'end - 1 chars')
+    win.on_return()
+    offered = win.prop['active'] and win.ed.get('pstart', 'pend')
+    win.discard_proposal()
+    win.redo()
+    is_('redo after a discarded proposal does not bring it back as text',
+        offered == 'PIPE B2 H2 H3 3.2 32' and 'B2' not in win.buffer(),
+        '%r | %r' % (offered, win.buffer()))
+    for _ in range(4):
+        if 'B1' not in win.buffer():
+            break
+        win.undo()
+    is_('   and the edits made before it can still be undone',
+        'B1' not in win.buffer() and 'NODE H3 0' in win.buffer(),
+        win.buffer())
+
+    # Text that replaces an empty buffer is a new buffer, not an edit.
+    win.set_buffer('')
+    win.replace_lines('NODE A 1')
+    is_('lines put into an empty buffer are a fresh buffer, not a change',
+        win.buffer() == 'NODE A 1' and not win.modified())
+
+    # Messages give the reason as Perl's $! does.
+    win.write_buffer('/nonexistent/dir/x.phc')
+    is_('a file that cannot be written says why, and only why',
+        win.status_text() == 'CANNOT WRITE /NONEXISTENT/DIR/X.PHC: '
+                             'NO SUCH FILE OR DIRECTORY', win.status_text())
+    before = win.path
+    win.file_open('')
+    win.file_save_as('')
+    is_('an empty file name opens and saves nothing', win.path == before)
+
+    # WRITE REPORT with no name given asks for one, named after the model.
+    asked = {}
+    real_save = filedialog.asksaveasfilename
+
+    def fake_save(**kw):
+        asked.update(kw)
+        return os.path.join(TMP, 'asked.txt')
+
+    win.open_path(os.path.join(REPO, 'examples', '01_single_branch.phc'))
+    filedialog.asksaveasfilename = fake_save
+    try:
+        wrote = win.file_report()
+    finally:
+        filedialog.asksaveasfilename = real_save
+    is_('WRITE REPORT offers <MODEL>_REPORT.PDF and writes what is chosen',
+        wrote and asked.get('initialfile') == '01_single_branch_REPORT.PDF'
+        and asked.get('defaultextension') == '.pdf'
+        and os.path.getsize(os.path.join(TMP, 'asked.txt')) > 0,
+        '%r %r' % (wrote, asked))
+
+    # While a calculation runs, keys and clicks are swallowed (Busy).
+    seen = {}
+    real_solve = editor.doc_solve
+
+    def watched_solve(d, path_, progress=None, **kw):
+        seen['ed'] = win.ed.bindtags()[0]
+        seen['btn'] = win.btn['NEW'].bindtags()[0]
+        seen['cursor'] = str(win.mw.cget('cursor'))
+        return real_solve(d, path_, progress=progress, **kw)
+
+    win.validate()
+    editor.doc_solve = watched_solve
+    try:
+        win.calculate()
+    finally:
+        editor.doc_solve = real_solve
+    is_('during CALCULATE the window is busy: keys and clicks go nowhere',
+        seen.get('ed') == 'Busy' and seen.get('btn') == 'Busy'
+        and seen.get('cursor') == 'watch', str(seen))
+    is_('   and afterwards every widget is as it was',
+        'Busy' not in win.ed.bindtags()
+        and win.ed.bindtags()[0] == 'PhcEditor'
+        and 'Busy' not in win.btn['NEW'].bindtags()
+        and str(win.mw.cget('cursor')) == ''
+        and str(win.btn['NEW'].cget('cursor')) == 'hand2',
+        '%s %s' % (win.ed.bindtags(), win.mw.cget('cursor')))
+
+    # The results tables: the unit line is part of the heading.
+    t = win.TABLE['PIPES']
+    h = t['hlist']
+    win.select_tab(win.restabs, 'PIPES')
+    win.mw.update()
+    bb = h.bbox('2.1')
+    h.event_generate('<ButtonRelease-1>', x=bb[0], y=bb[1] + 2, when='now')
+    win.mw.update()
+    is_('a click on the unit under a heading sorts, as the heading does',
+        win.TABLE['PIPES'].get('sort') is not None)
+    h = win.TABLE['PIPES']['hlist']
+    is_('a click past the last heading is on no column',
+        R.header_column('PIPES', len(h.get('1.0', '1.end'))) is None)
+
+    # The VALIDATION table: WHERE and FIELD are never wrapped.
+    win.set_buffer('NODE N1 0\nPIPE P1 N1 N9 5 32\n')
+    win.validate()
+    win.mw.update()
+    labs = R.vtable['labels']
+    plain = tk.Label(win.mw, text='LINE 2', font=win.UI, pady=win.px(4))
+    is_('VALIDATION shows LINE n on one line',
+        re.match(r'^LINE \d+$', labs[0].cget('text'))
+        and labs[0].winfo_reqheight() == plain.winfo_reqheight()
+        and int(labs[0].cget('width')) == 14
+        and int(labs[1].cget('width')) == 16,
+        '%s %s' % (labs[0].winfo_reqheight(), plain.winfo_reqheight()))
+    plain.destroy()
+
+    # The PROJECT tab: the field is the setting.
+    PJ.load_settings(editor.new_settings())
+    win.set_buffer('')
+    win.form['TITLE'].insert('end', 'abc')        # as a paste: no key
+    is_('text put in a PROJECT field without a key is in the file at once',
+        win.settings['title'] == 'abc' and win.modified()
+        and re.match(r'^TITLE\s+ABC$', win.full_text().split('\n')[0]),
+        '%r %r' % (win.settings['title'], win.full_text().split('\n')[0]))
+    PJ.ENTRY_VARS['TITLE'][0].set('café')
+    PJ.settings_changed()
+    low = win.settings['title']
+    PJ.ENTRY_VARS['TITLE'][0].set('CAFé')
+    PJ.settings_changed()
+    is_('capitals are made only when a plain small letter is typed',
+        low == 'CAFÉ' and win.settings['title'] == 'CAFé',
+        '%r %r' % (low, win.settings['title']))
+    PJ.load_settings(editor.new_settings())
+
+    # The DATABASE tab: a click selects the row under the pointer.
+    win.select_tab(win.toptabs, 'DATABASE')
+    DB.DBV['sel'] = None
+    DB.db_fill()
+    DB.db_form()
+    win.mw.update()
+    dh = DB.DBV['hlist']
+    first = dh.get('2.0', '2.end').split()[0]
+    bb = dh.bbox('2.2')
+    dh.event_generate('<ButtonRelease-1>', x=bb[0], y=bb[1] + 2, when='now')
+    win.mw.update()
+    is_('a click on a database row puts THAT row in the fields',
+        DB.DBV['sel'] == DB.DBV['shown_rows'][0]
+        and DB.DBV['vals'][0].get() == first
+        and [str(x) for x in dh.tag_ranges('band')][0] == '2.0',
+        '%s %s %s' % (DB.DBV['sel'], DB.DBV['vals'][0].get(), first))
+    DB.DBV['vals'][1].set('TYPED')
+    bb = dh.bbox('1.2')
+    dh.event_generate('<ButtonRelease-1>', x=bb[0], y=bb[1] + 2, when='now')
+    win.mw.update()
+    is_('a click on the heading selects nothing and keeps what is typed',
+        DB.DBV['sel'] == DB.DBV['shown_rows'][0]
+        and DB.DBV['vals'][1].get() == 'TYPED')
+    DB.db_fill()
+    is_('the selected row keeps its band when the table is drawn again',
+        [str(x) for x in DB.DBV['hlist'].tag_ranges('band')][0] == '2.0')
+    DB.DBV['sel'] = None
+    DB.db_form()
+    empty = os.path.join(TMP, 'no_database_here')
+    os.makedirs(empty, exist_ok=True)
+    DB.db_choose_folder(empty, 'no')
+    is_('answering NO to the copy leaves the folder without a database',
+        not os.path.exists(os.path.join(empty, 'pipes.dat')))
+
+    # QUICK TOOLS and ORIFICE PLATE.
+    win.settings['options']['VEL_LIMIT'] = ''
+    TO.QT['VEL']['type'] = 'ASAM'
+    TO.tools_sizes('VEL')
+    TO.QTW['VEL']['size_menu'].invoke(3)
+    picked = TO.QT['VEL']['size']
+    TO.QTW['VEL']['vars']['FLOW'].set('100')
+    TO.tools_refresh()
+    is_('a size chosen in QUICK TOOLS is kept when the tab is opened again',
+        picked != '' and TO.QT['VEL']['size'] == picked,
+        '%r %r' % (picked, TO.QT['VEL']['size']))
+    win.settings['options']['VEL_LIMIT'] = '1.2.3'
+    TO.tools_update('VEL')
+    lim1 = text('VEL')
+    win.settings['options']['VEL_LIMIT'] = '.'
+    TO.tools_update('VEL')
+    lim2 = text('VEL')
+    is_('a velocity limit is read as Perl reads a number: 1.2.3 is 1.2',
+        'AGAINST THE LIMIT 1.2 M/S' in lim1
+        and 'AGAINST THE LIMIT 6.0 M/S' in lim2, lim1 + ' | ' + lim2)
+    OR.OP['SIZE']['type'] = 'ASAM'
+    OR.orifice_sizes('SIZE')
+    OR.OPW['SIZE']['size_menu'].invoke(6)
+    opicked = OR.OP['SIZE']['size']
+    OR.OPW['SIZE']['vars']['FLOW'].set('500')
+    OR.OPW['SIZE']['vars']['DROP'].set('100')
+    win.settings['options']['VEL_LIMIT'] = '1.2.3'
+    OR.orifice_refresh()
+    is_('ORIFICE PLATE keeps its size too, and takes the same limit',
+        opicked != '' and OR.OP['SIZE']['size'] == opicked
+        and 'PIPE AGAINST THE LIMIT  1.2 M/S' in otext('SIZE'),
+        '%r %s' % (OR.OP['SIZE']['size'], otext('SIZE')))
+    win.settings['options']['VEL_LIMIT'] = ''
+    types = list(tools_mod.pipe_types())
+    mb = TO.QTW['VEL']['field']['TYPE']
+    tm = mb.nametowidget(mb.cget('menu'))
+    tm.invoke(types.index(tools_mod.BORE))
+    TO.QTW['VEL']['size_entry'].insert('end', '50')
+    typed = TO.QT['VEL']['size']
+    tm.invoke(0)
+    TO.QTW['VEL']['size_menu'].invoke(2)
+    tm.invoke(types.index(tools_mod.BORE))
+    is_('the BORE field is the size: a change of type empties it',
+        typed == '50' and TO.QTW['VEL']['size_entry'].get() == ''
+        and TO.QT['VEL']['size'] == '',
+        '%r %r' % (typed, TO.QTW['VEL']['size_entry'].get()))
+    tm.invoke(0)
+
+    # The GRAPH tab: the blank line of a graph with nothing wrong.
+    GR.graph_open(os.path.join(REPO, 'examples', '10_supply_graph.phg'))
+    GR.graph_refresh()
+    blank = list(GR.GV['problems'].get(0, 'end'))
+    GR.GV['problems'].selection_set(0)
+    try:
+        GR.graph_go_to_problem()
+        went = True
+    except Exception as e:              # noqa: BLE001
+        went = repr(e)
+    is_('a click on the empty problems line of a good graph does nothing',
+        blank == [''] and went is True, '%r %r' % (blank, went))
+
+    # The program itself: phcp_editor.py [model.phc].
+    probe = os.path.join(TMP, 'boot_file.py')
+    with open(probe, 'w') as pf:
+        pf.write("""import sys, tkinter as tk
+sys.path.insert(0, %r)
+from hardycross import win
+def loop(self, n=0):
+    self.update()
+    print('%%s | %%s | %%s' %% (self.title(), win.path, win.status_text()))
+    self.destroy()
+tk.Tk.mainloop = loop
+tk.Misc.mainloop = loop
+import phcp_editor
+phcp_editor.main(sys.argv[1:])
+""" % REPO)
+    env = dict(os.environ)
+    env['PYTHONPATH'] = REPO
+    model = os.path.join('examples', '01_single_branch.phc')
+    boot = subprocess.run([sys.executable, probe, model],
+                          capture_output=True, text=True, env=env, cwd=REPO)
+    is_('phcp_editor.py model.phc opens the model',
+        (boot.stdout + boot.stderr).strip()
+        == 'PHCP EDITOR - 01_SINGLE_BRANCH.PHC | %s |' % model,
+        (boot.stdout + boot.stderr).strip())
+    boot = subprocess.run([sys.executable, probe],
+                          capture_output=True, text=True, env=env, cwd=REPO)
+    is_('   and with no model it opens empty, with nothing to say',
+        (boot.stdout + boot.stderr).strip()
+        == 'PHCP EDITOR - UNTITLED.PHC | None |',
+        (boot.stdout + boot.stderr).strip())
+
     win.mw.destroy()
     print('\n%d passed, %d failed' % (passed[0], failed[0]))
     return 1 if failed[0] else 0

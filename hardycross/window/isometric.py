@@ -212,7 +212,20 @@ def _tied_entry(parent, key, width):
         iso[key] = var.get()
 
     var.trace_add('write', write)
+    _TIED[key] = var
     return e
+
+
+# _tie_show -- the other way: a figure the program put in iso[key] (the
+# grid read from a file, a known figure trimmed) is what its field
+# shows, as it was at once with the Perl's tied scalar.
+_TIED = {}
+
+
+def _tie_show(key, value):
+    var = _TIED.get(key)
+    if var is not None and var.get() != str(value):
+        var.set(value)
 
 
 # iso_invalidate -- the text was replaced (a file opened).  The next
@@ -251,6 +264,7 @@ def iso_show():
         iso['sel'] = None
         iso['from'] = None
         iso['gridvar'] = isometric.clean_num(iso['draw']['grid'])
+        _tie_show('gridvar', iso['gridvar'])
         if not iso.get('had_fit'):
             iso_fit(1)
         iso['had_fit'] = 1
@@ -284,6 +298,7 @@ def iso_known_entry(bar, key, label, width):
         iso['known'][key] = var.get()
 
     var.trace_add('write', write)
+    _TIED['known:' + key] = var
     e.pack(side='left', padx=win.px([4, 10]))
     e.bind('<Return>', lambda _e, k=key: iso_known_apply(k))
 
@@ -296,6 +311,7 @@ def iso_known_apply(key):
     v = '' if v is None else v
     v = v.strip()
     iso['known'][key] = v
+    _tie_show('known:' + key, v)
     err = (isometric.known_ok(iso['draw'], iso_known_args())
            if iso.get('draw') else '')
     if err:
@@ -628,7 +644,8 @@ def iso_motion(sx, sy):
     n = iso['draw']['nodes'].get(iso['drag']['name'])
     if n is None:
         return
-    (ix, iy) = isometric.cell_at(sx, sy, iso['view'], n['iz'])
+    # cell_at gives the cell and its level; the Perl took the first two
+    (ix, iy) = isometric.cell_at(sx, sy, iso['view'], n['iz'])[:2]
     if iso.get('lock'):
         (ix, iy, iz) = isometric.snap_axis(iso['drag'], ix, iy, n['iz'])
         iso['ghost'] = [ix, iy, iz]
@@ -637,7 +654,9 @@ def iso_motion(sx, sy):
     iso_redraw()
 
 
-def iso_release():
+def iso_release(_sx=None, _sy=None):
+    # the binding passes where the button came up, as the Perl's did;
+    # the drop is where the last motion left the ghost
     if not iso.get('drag'):
         return
     g = iso.get('ghost')
@@ -1195,7 +1214,7 @@ def iso_editor_window():
     # The screen's scale against the 96 dpi the sizes here were
     # drawn for; never below 1, so a low-resolution screen is not
     # cramped further.
-    dpi = win.mw.winfo_fpixels('1i')
+    dpi = win.mw.winfo_pixels('1i')
     win.SCALE = dpi / 96 if dpi > 96 else 1
     win.pick_fonts()
     win.mw.geometry('%dx%d' % (win.px(1500), win.px(950)))
@@ -1272,7 +1291,8 @@ def iso_reveal_line(n):
     a = phc.analyse(line)
     if not (a and a['status'] == 'ok' and iso.get('draw')):
         return
-    name = a['pos'][0]
+    pos = a.get('pos') or []
+    name = pos[0] if pos else None
     if name is None or name == '':
         return
     if name in iso['draw']['nodes']:
