@@ -208,6 +208,15 @@ def main():
     is_('a dry part fed by a second supply: refused, DPV_NOT_DRY',
         (codes(a2['validation']).get('DPV_NOT_DRY') or '') == 'error' and a2['dry'][0].get('error'))
 
+    # The same, the second supply named 0.  The Perl asks whether the node
+    # has a supply by the truth of the supply's name, and the name 0 is
+    # false: that supply is not seen, and the estimate is made (a fault of
+    # the Perl's, kept: the two programs must answer alike).
+    _, _, a2 = solved(model(more=['WATER 0 3 300', 'PIPE PX 0 B 20 50']))
+    is_('   a second supply named 0 is not seen, as in the Perl: no DPV_NOT_DRY',
+        not codes(a2['validation']).get('DPV_NOT_DRY') and not a2['dry'][0].get('error')
+        and a2['dry'][0]['transit']['status'] == 'ESTIMATE', list(codes(a2['validation'])))
+
     #==========================================================================
     print('4. THE LANGUAGE AND THE OUTPUT')
     #==========================================================================
