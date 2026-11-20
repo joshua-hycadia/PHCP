@@ -270,7 +270,10 @@ def joint(net):
         return {'status': st, 'reason': why, 'basis': basis}
 
     # The margin falls as D rises, and rises with F.  Find a bracket
-    # [pass, fail], then bisect.
+    # [pass, fail], then bisect.  (my ($good, $bad, $tg, $tb, @seen): a SCALE
+    # search whose every trial passes leaves $tb undef, which is FOUND.)
+    good = bad = tg = tb = None
+    seen = []
     t1 = trial(0 if basis == 'DERATE' else 1)
     if basis == 'DERATE':
         pmax = 0

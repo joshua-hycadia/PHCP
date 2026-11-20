@@ -386,6 +386,41 @@ PIPE P5 S1 S2 6 50
     is_('   a NaN flow: INDETERMINATE, NONFINITE', t['acceptance'] == 'INDETERMINATE' and codes(t).get('NONFINITE'),
         t['acceptance'])
 
+    elem(n, 'P5')['q'] = 0.0
+    # A head that is not finite.  The Perl dies of it: its list of the items
+    # hands the node names to the map over the elements, and the first name
+    # is not a hash (strict refs).  The port stops the same way, with the
+    # Perl's words, so that whatever catches the one catches the other.
+    n['nodes'][bi]['h'] = float('-inf')
+    try:
+        validate.validate(n, ok)
+        died = ''
+    except validate.PerlDie as e:
+        died = str(e)
+    is_('   a head that is not finite: the Perl dies, and so does the port',
+        died == 'Can\'t use string ("B") as a HASH ref while "strict refs" in use at '
+                'HardyCross/Validate.pm line 233.\n', died)
+    n['nodes'][bi]['h'] = 0.0
+    # A number that is not finite in a message is Inf, -Inf or NaN, as
+    # Perl's sprintf prints it; Python's own % writes inf, -inf and nan.
+    n6, ok6, v6 = solve("""WATER W 0 700
+NODE A 0
+SPRINKLER S1 1e308 -100 80
+SPRINKLER S2 0 -100 80
+PIPE P1 W A 10 100
+PIPE P2 A S1 5 50
+PIPE P3 A S2 5 50
+""")
+    m6 = [f['message'] for f in v6['findings'] if f['code'] == 'OUTLET_REQUIREMENT' and f['item'] == 'S1']
+    is_('   a pressure of minus infinity in a message is -Inf, as Perl prints it',
+        m6 and re.search(r'pressure -Inf KPA against 100\.00 required', m6[0]), m6)
+    P = validate._P
+    inf = float('inf')
+    is_('   Inf, -Inf and NaN in every form of %f, %g and %s the messages use',
+        P('[%.1f][%8.2f][%-8.2f][%+.1f][%g][%.3g][%s][%+.1f][%.6g][%d%%]')
+        % (inf, -inf, inf, inf, -inf, inf - inf, inf, inf - inf, 1.5, 7)
+        == '[Inf][    -Inf][Inf     ][+Inf][-Inf][NaN][Inf][NaN][1.5][7%]')
+
     #==========================================================================
     print('5. DESIGN, EXIT STATUS AND CONSISTENCY')
     #==========================================================================

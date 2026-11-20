@@ -215,6 +215,23 @@ def main():
     e = refusal_msg(one + "SCENARIO LOW W 80\n")
     is_('refused: a SCENARIO in a model with one supply', re.search(r'MORE THAN ONE WATER SUPPLY', e), e)
 
+    # OPTION JOINT_BASIS SCALE on two gravity tanks (0 kPa at 30 m): a factor
+    # scales nothing, so every trial passes and no trial is ever "beyond" the
+    # answer.  The Perl leaves that trial undef and reports FOUND with no
+    # boundary; the port once stopped on the unset variable.
+    tanks = HEAD + ("OPTION JOINT_BASIS SCALE\nWATER WA 30 0\nWATER WB 30 0\nNODE J1 0\nNODE J2 0\n"
+                    "SPRINKLER S1 0 -100 80\nPIPE A1 WA J1 60 65\nPIPE B1 WB J2 5 100\n"
+                    "PIPE J12 J1 J2 5 100\nPIPE R1 J2 S1 5 50\n")
+    nt, kt = solved(tanks)
+    try:
+        jt = supplies.joint(nt)
+    except Exception as e:
+        jt = {'status': 'died: %r' % e}
+    is_('SCALE basis, every factor meeting the outlets: FOUND, no boundary',
+        jt.get('status') == 'FOUND' and jt.get('boundary') is None and 'factor' in jt
+        and near(jt['factor'], 0.0078125, 1e-9) and near(jt.get('margin'), 0, 1e-9),
+        '%s %s' % (jt.get('status'), jt.get('factor')))
+
     print("6. REPORT AND JSON")
     rep = report.write_report(net, ok, 'two.phc')
     is_('the report has Section 12, MULTIPLE WATER SUPPLIES', re.search(r'12\. MULTIPLE WATER SUPPLIES', rep))
