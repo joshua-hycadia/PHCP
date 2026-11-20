@@ -56,15 +56,32 @@ from . import outlet_pressure
 
 GW = GAMMA_W
 
-_NUMBER = re.compile(r'^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$')
+
+# _true -- Perl's truth of a name: undef, '' and '0' are false.  An element or
+# node named 0 is therefore left out wherever the Perl tests the name itself.
+def _true(v):
+    return v is not None and v != '' and v != '0' and v != 0
+
+_NUMBER = re.compile(r'^-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\Z')
 _ON_LINE = re.compile(r'\bON LINE (\d+)')
 _LINE_N = re.compile(r'^line (\d+): ')
 _IS_MODEL_ERROR = is_model_error
 
+# Perl's \s and Python's differ on four characters: the separators FS, GS, RS
+# and US (\x1c-\x1f) are white space to Python's \s, str.split and str.strip,
+# and are not to Perl's.  _WS and _NWS are Perl's two classes, so a word, a
+# blank line and a trimmed cell are what they are in the Perl.
+_WS = r'[^\S\x1c-\x1f]'
+_NWS = r'[\S\x1c-\x1f]'
+_WORD = re.compile('(' + _NWS + '+)')
+_BLANK = re.compile('^' + _WS + '*$')
+
 
 # lines -- the buffer as lines, numbered from 1 (l[0] is unused).
 def lines(text):
-    text = text or ''
+    # Perl's split gives no line at all for an empty buffer, not one empty line.
+    if text is None or text == '':
+        return [None]
     return [None] + text.split('\n')
 
 
@@ -129,7 +146,10 @@ def scan(text):
 def context_at(text, n, _scan=None):
     if _scan is None:
         _scan = scan(text)
-    return {'use': _scan['use_at'][n] or {'type': 'BORE'},
+    # A line outside the buffer has no USE (Perl: undef, so the default).
+    ua = _scan['use_at']
+    use = ua[n] if -len(ua) <= n < len(ua) else None
+    return {'use': use or {'type': 'BORE'},
             'units': _scan['units'], 'options': _scan['options'],
             'method': _scan['method'], 'nodes': _scan['nodes']}
 
@@ -369,7 +389,7 @@ def colour_spans(line):
     s = []
     cpos = line.find('//')
     code = line[:cpos] if cpos >= 0 else line
-    tok = [[m.start(), m.end(), m.group(1)] for m in re.finditer(r'(\S+)', code)]
+    tok = [[m.start(), m.end(), m.group(1)] for m in _WORD.finditer(code)]
     c = phc.command_spec(tok[0][2]) if tok else None
     if c:
         s.append([tok[0][0], tok[0][1], 'command'])
@@ -496,7 +516,7 @@ def results_at(net, line):
         return None
     u = display_units(net)
     k, id_ = a['key'], a['pos'][0]
-    el = {e['id']: e for e in net['elems'][1:] if e and e.get('id')}
+    el = {e['id']: e for e in net['elems'][1:] if e and _true(e.get('id'))}
     ni = {net['nodes'][i]['id']: i for i in range(1, len(net['nodes']))}
 
     def p(i):
@@ -524,6 +544,7 @@ def results_at(net, line):
         for x in net.get('fixed') or []:
             if x['id'] == id_:
                 f = x
+                break
         if f is None:
             return None
         req = (' (REQUIRED %.*f)' % (u['pdp'], f['preq'] / u['pf'])
@@ -626,7 +647,7 @@ def result_tables(net):
         return {'cells': [c[0] for c in cells],
                 'keys': [c[1] for c in cells], 'active': act}
 
-    el = {e['id']: e for e in net['elems'][1:] if e and e.get('id')}
+    el = {e['id']: e for e in net['elems'][1:] if e and _true(e.get('id'))}
     t = {}
 
     #------------------------------------------------------------ PIPES
@@ -782,11 +803,15 @@ def units_of(text):
 def load_file(path):
     if not re.search(r'\.phc\Z', path or '', re.I):
         raise ModelError('THE EDITOR WORKS IN .PHC FILES; %s IS NOT ONE' % path)
+    # The Perl reads the file as bytes, each byte one character, and writes
+    # each character back as one byte: so does this (latin-1), and a file in
+    # any encoding comes back from a save with the bytes it had.  The savers
+    # write with file_encoding(text).
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace', newline='') as fh:
+        with open(path, 'r', encoding='latin-1', newline='') as fh:
             text = fh.read()
     except OSError as e:
-        raise ModelError('CANNOT OPEN %s: %s' % (path, str(e).upper()))
+        raise ModelError('CANNOT OPEN %s: %s' % (path, (e.strerror or str(e)).upper()))
     text = text.replace('\r\n', '\n')
     # The results block a solve saved at the end of the file
     # (results.strip) is not part of the model: it is left out of the
@@ -795,14 +820,32 @@ def load_file(path):
     return {'text': text, 'path': path}
 
 
+# file_encoding -- the encoding a text is written to a file in, as Perl's
+# print writes a string: one byte a character while every character fits in
+# one (latin-1, which gives back the bytes load_file read), and UTF-8 for the
+# whole text as soon as one character does not.
+def file_encoding(text):
+    try:
+        (text or '').encode('latin-1')
+    except UnicodeEncodeError:
+        return 'utf-8'
+    return 'latin-1'
+
+
 # write_report_file -- the report of a solved network to a .pdf or .txt file.
 def write_report_file(net, ok, model_path, out):
     if re.search(r'\.pdf\Z', out, re.I):
         report.write_pdf_report(net, ok, model_path, out)
     else:
         # Text mode, as the Perl's open '>': CRLF on Windows, LF elsewhere.
-        with open(out, 'w', encoding='utf-8', errors='surrogateescape') as fh:
-            fh.write(report.write_report(net, ok, model_path))
+        try:
+            fh = open(out, 'w', encoding='utf-8', errors='surrogateescape')
+        except OSError as e:
+            raise ModelError('CANNOT WRITE %s: %s' % (out, (e.strerror or str(e)).upper()))
+        fh.close()
+        text = report.write_report(net, ok, model_path)
+        with open(out, 'w', encoding=file_encoding(text), errors='surrogateescape') as fh:
+            fh.write(text)
     return 1
 
 
@@ -963,9 +1006,9 @@ def split_file(text):
                 s['options'][p[0]] = str(p[1]).upper() if len(p) > 1 else ''
             continue
         net.append(line)
-    while net and re.match(r'^\s*$', net[0]):
+    while net and _BLANK.match(net[0]):
         net.pop(0)
-    while net and re.match(r'^\s*$', net[-1]):
+    while net and _BLANK.match(net[-1]):
         net.pop()
     return {'settings': s, 'network': '\n'.join(net) + ('\n' if net else '')}
 
@@ -988,8 +1031,9 @@ def header_lines(s):
         if len(v):
             row('PROJECT', '%s %s' % (f, v.upper()), f)
     for q in phc.UNIT_QUANTITIES:
-        row('UNITS', '%s %s' % (q, s['units'].get(q)), q)
-    row('METHOD', s.get('method') or 'HW', 'METHOD')
+        u = s['units'].get(q)
+        row('UNITS', '%s %s' % (q, u if u is not None else ''), q)
+    row('METHOD', s['method'] if s.get('method') is not None else 'HW', 'METHOD')
     for o in phc.OPTIONS:
         v = s['options'].get(o) or ''
         if len(v):
@@ -1030,6 +1074,9 @@ def doc_check(d, editing=None):
     r = check_buffer(full, editing + h if editing is not None else None)
     hdr = header_lines(d['settings'])
     nl = lines(d['network'])[1:]
+    # The network's closing newline does not make a line of its own.
+    if nl and nl[-1] == '' and (d['network'] or '').endswith('\n'):
+        nl.pop()
     o = {'lines': [None], 'problems': [], 'settings_problems': []}
     for i in range(1, len(nl) + 1):
         l = r['lines'][i + h] if i + h < len(r['lines']) else None
@@ -1188,7 +1235,7 @@ def words(line):
     line = line or ''
     cpos = line.find('//')
     code = line[:cpos] if cpos >= 0 else line
-    return [[m.start(), m.end(), m.group(1)] for m in re.finditer(r'(\S+)', code)]
+    return [[m.start(), m.end(), m.group(1)] for m in _WORD.finditer(code)]
 
 
 # word_span -- the columns of a word on a line (the whole line if not found).
