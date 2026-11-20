@@ -18,6 +18,7 @@ import re
 
 from . import fail, set_unit, fit_curve, is_model_error, ModelError
 from . import pipedata
+from .pipedata import _true
 from .parse import (tokenize, num, is_num, ensure_db, new_net, parse_row,
                     roughness_warning)
 
@@ -162,9 +163,13 @@ def template_text(w):
 # Values.
 #==============================================================================
 
-_LEN_U = re.compile(r'^([-+]?(?:\d+\.?\d*|\.\d+))(MM|CM|M|IN|FT)$', re.I)
-_FEET = re.compile(r"^([-+]?)(\d+(?:\.\d+)?)'(?:(\d+(?:\.\d+)?)\"?)?$")
-_INCH = re.compile(r'^([-+]?)(\d+(?:\.\d+)?)"$')
+# The patterns of this file are the Perl's: \Z where it wrote \z (a Python $
+# also matches before a last newline), and ASCII classes, because the Perl
+# matched the model's bytes - \s, \d and \w never meant a no-break space or
+# another script's digit.
+_LEN_U = re.compile(r'^([-+]?(?:\d+\.?\d*|\.\d+))(MM|CM|M|IN|FT)\Z', re.I | re.A)
+_FEET = re.compile(r"^([-+]?)(\d+(?:\.\d+)?)'(?:(\d+(?:\.\d+)?)\"?)?\Z", re.A)
+_INCH = re.compile(r'^([-+]?)(\d+(?:\.\d+)?)"\Z', re.A)
 
 def length_metres(t, unit):
     # A plain number is in the quantity's unit; a number may carry its own:
@@ -172,7 +177,8 @@ def length_metres(t, unit):
     if t is None:
         return None
     if is_num(t):
-        return num(t) * TO_METRE[unit]
+        # A unit that is none is undef in the Perl, and undef is 0 in a product.
+        return num(t) * TO_METRE.get(unit, 0)
     m = _LEN_U.match(t)
     if m:
         return float(m.group(1)) * TO_METRE[m.group(2).upper()]
@@ -192,7 +198,10 @@ def size_dn(t, unit):
     if not is_num(t):
         return None
     if unit == 'MM':
-        return int(float(t) + 0.5)
+        # Perl's int(): a whole number while an unsigned 64-bit one holds
+        # it, the float itself beyond that (printed 1e+30, not 31 digits).
+        v = float(t) + 0.5
+        return int(v) if abs(v) < 18446744073709551616.0 else v
     return INCH_DN.get('%.15g' % float(t))
 
 def size_mm(t, unit):
@@ -200,7 +209,7 @@ def size_mm(t, unit):
         return None
     return float(t) if unit == 'MM' else float(t) * 25.4
 
-_RATIO = re.compile(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$')
+_RATIO = re.compile(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)\Z', re.A)
 
 def ratio_value(t):
     t = '' if t is None else t
@@ -234,13 +243,30 @@ def pnum(x):
     # A number as Perl stringifies it, for row text built from arithmetic.
     return '%.15g' % x
 
+def _pstr(x):
+    # A row field as Perl prints it: text as it is, a whole number in
+    # full, a float to 15 significant figures.
+    return pnum(x) if isinstance(x, float) else str(x)
+
+def _pd(x):
+    # A number as Perl's %d prints it: one beyond a signed 64-bit integer
+    # wraps as an unsigned one does, and beyond that is -1.
+    if isinstance(x, float) and x != x:
+        return 0
+    if x >= 18446744073709551616:
+        return -1
+    if x < -9223372036854775808:
+        return -9223372036854775808
+    x = int(x)
+    return x - 18446744073709551616 if x >= 9223372036854775808 else x
+
 #==============================================================================
 # analyse -- the syntax of one .phc line.
 #==============================================================================
 
 def strip_comment(l):
     l = '' if l is None else l
-    l = re.sub(r'\r?\n$', '', l)
+    l = re.sub(r'\r?\n\Z', '', l)
     l = re.sub(r'//.*', '', l, flags=re.S)
     return l
 
@@ -267,7 +293,7 @@ def analyse(raw, partial=False):
     word = tk[0].upper()
     c = command_spec(word)
     if c is None:
-        if partial and len(tk) == 1 and not re.search(r'\s$', code) \
+        if partial and len(tk) == 1 and not re.search(r'\s\Z', code, re.A) \
                 and any(x.startswith(word) for x in COMMANDS):
             return more('A COMMAND: %s', ' '.join(COMMANDS))
         return bad('UNKNOWN COMMAND %s', tk[0].upper())
@@ -275,14 +301,14 @@ def analyse(raw, partial=False):
 
     #---------------------------------------------------------- TITLE, PROJECT
     if a['key'] in ('TITLE', 'PROJECT', 'SUPPLYGRAPH', 'DPVMODEL', 'NRVMODEL'):
-        t = re.sub(r'^\s*\S+\s*', '', code)
+        t = re.sub(r'^\s*\S+\s*', '', code, flags=re.A)
         if a['key'] == 'PROJECT':
             if len(tk) <= 1:
                 return more('FIELD')
             a['pos'].append(tk[1].upper())
             if tk[1].upper() == 'END':
                 return bad('END CANNOT BE A PROJECT FIELD')
-            t = re.sub(r'^\S+\s*', '', t)
+            t = re.sub(r'^\S+\s*', '', t, flags=re.A)
         if a['key'] in ('DPVMODEL', 'NRVMODEL'):
             what = 'PIPE' if a['key'] == 'DPVMODEL' else 'SUPPLY'
             if len(tk) <= 1:
@@ -290,8 +316,8 @@ def analyse(raw, partial=False):
             err = check_field('pipe' if what == 'PIPE' else 'node', tk[1], a, what)
             if err is not None:
                 return bad('%s', err)
-            t = re.sub(r'^\S+\s*', '', t)
-        t = re.sub(r'\s+$', '', t)
+            t = re.sub(r'^\S+\s*', '', t, flags=re.A)
+        t = re.sub(r'\s+\Z', '', t, flags=re.A)
         if not len(t):
             return more('%s', c['fixed'][-1][0])
         a['text'] = t
@@ -320,7 +346,7 @@ def analyse(raw, partial=False):
     rest = c.get('rest') or ''
     if rest == 'fittings':
         for t in f:
-            if not re.match(r'^\d*[A-Z][A-Z0-9]*$', t, re.I):
+            if not re.match(r'^\d*[A-Z][A-Z0-9]*\Z', t, re.I | re.A):
                 return bad("'%s' IS NOT A FITTING: A CODE WITH AN OPTIONAL COUNT, SUCH AS 2E", t)
     elif rest == 'pairs':
         for t in f:
@@ -346,7 +372,7 @@ def analyse(raw, partial=False):
         if not f:
             return more('OUTLET')
         for t in f:
-            err = check_field('node', t, a, 'OUTLET')
+            err = check_field('node', t, {'pos': [], 'opt': []}, 'OUTLET')
             if err is not None:
                 return bad('%s', err)
     elif rest == 'names':
@@ -523,11 +549,11 @@ def check_field(type_, v, a, label, optional=0):
                 return 'JOINT_BASIS IS DERATE (EVERY SUPPLY LOWERED BY ONE PRESSURE) OR SCALE (BY ONE FACTOR)'
             return push(g)
         if o == 'SIZING_TRIALS':
-            if not (re.match(r'^\d+$', v) and 1 <= float(v) <= 50):
+            if not (re.match(r'^\d+\Z', v, re.A) and 1 <= float(v) <= 50):
                 return "SIZING_TRIALS '%s' IS A WHOLE NUMBER OF TRIALS, 1 TO 50" % v
             return push(v)
         if o == 'SIZING_MARGIN':
-            m = re.match(r'^(\d+(?:\.\d+)?|\.\d+)%$', v)
+            m = re.match(r'^(\d+(?:\.\d+)?|\.\d+)%\Z', v, re.A)
             if not ((m and float(m.group(1)) < 100) or (isnum and float(v) >= 0)):
                 return "SIZING_MARGIN '%s' IS A PERCENTAGE OF THE SUPPLY (10%%) OR A PRESSURE (50)" % v
             return push(v)
@@ -557,7 +583,9 @@ def nodes_used(a):
     if c is None:
         return []
     fixed = c['fixed']
-    n = [a['pos'][i] for i in range(len(fixed)) if fixed[i][1] == 'node']
+    # A field not given is undef in the Perl's list, and dropped at the end.
+    n = [a['pos'][i] if i < len(a['pos']) else None
+         for i in range(len(fixed)) if fixed[i][1] == 'node']
     if a.get('key') == 'AREA':
         n += a['rest']
     if a.get('key') == 'SCENARIO':
@@ -565,8 +593,10 @@ def nodes_used(a):
         n += [r[i] for i in range(len(r)) if i % 2 == 0]
     if a.get('key') == 'PC':
         r = a['rest']
-        n += [r[i + 1] for i in range(len(r)) if i % 3 == 0 and i + 2 <= len(r) - 1]
-        n += [r[i + 2] for i in range(len(r)) if i % 3 == 0 and i + 2 <= len(r) - 1]
+        # Each copy's start then its end, copy by copy.
+        for i in range(len(r)):
+            if i % 3 == 0 and i + 2 <= len(r) - 1:
+                n += [r[i + 1], r[i + 2]]
     return [x for x in n if x is not None]
 
 def nodes_defined(a):
@@ -576,12 +606,12 @@ def nodes_defined(a):
     c = command_spec(k)
     if c is None:
         return []
-    return [a['pos'][0]] if c['kind'] == 'node' else []
+    return [a['pos'][0] if a['pos'] else None] if c['kind'] == 'node' else []
 
 def names_defined(a):
     k = a.get('key') or ''
     if k in ('PIPE', 'FIXEDFLOW', 'PUMP'):
-        return [a['pos'][0]]
+        return [a['pos'][0] if a['pos'] else None]
     if k == 'PC':
         r = a['rest']
         return [r[i] for i in range(len(r)) if i % 3 == 0]
@@ -650,7 +680,7 @@ def translate(text):
         if k == 'METHOD':
             method = [p[0], n]
         if k == 'OPTION':
-            if not re.match(r'^(DESIGN_AREA|SIZING_\w+)$', p[0]):
+            if not re.match(r'^(DESIGN_AREA|SIZING_\w+)\Z', p[0], re.A):
                 options.append(['%s %s' % (p[0], p[1]), n])
             if re.match(r'^SIZING_', p[0]):
                 sizing[p[0]] = p[1]
@@ -751,10 +781,12 @@ def translate(text):
         elif k in ('DPVMODEL', 'DPVAIR', 'DPVTRIP'):
             slot = {'DPVMODEL': 'model', 'DPVAIR': 'air', 'DPVTRIP': 'trip'}[k]
             d = dpvdata.setdefault(p[0], {})
-            if d.get(slot):
+            # Perl's truth: a model or an air pressure given as 0 does not
+            # count as given, and a second line is then taken without a word.
+            if _true(d.get(slot)):
                 at(n, 'PIPE %s ALREADY HAS A %s, ON LINE %d', p[0], k, d.get(slot + '_line'))
             if k == 'DPVTRIP' and len(a['opt']) > 0 and a['opt'][0] is not None \
-                    and (not re.match(r'^\d+$', a['opt'][0]) or float(a['opt'][0]) < 1):
+                    and (not re.match(r'^\d+\Z', a['opt'][0], re.A) or float(a['opt'][0]) < 1):
                 at(n, 'DPVTRIP %s: THE NUMBER OF OPEN SPRINKLERS IS A WHOLE NUMBER, 1 OR MORE', p[0])
             if k == 'DPVTRIP' and float(p[1]) <= 0:
                 at(n, 'DPVTRIP %s: THE ORIFICE MUST BE MORE THAN 0', p[0])
@@ -772,14 +804,14 @@ def translate(text):
                 tmp = a['opt'][1] if len(a['opt']) > 1 else None
                 d[slot] = {'orifice_mm': size_mm(p[1], units['SIZE']),
                            'count': (None if cnt is None else
-                                     int(cnt) if re.match(r'^\d+$', cnt) else float(cnt)),
+                                     int(cnt) if re.match(r'^\d+\Z', cnt, re.A) else float(cnt)),
                            'temp': None if tmp is None else float(tmp),
                            'static': a['opt'][2] if len(a['opt']) > 2 else None}
             d[slot + '_line'] = n
         elif k in ('NRV', 'NRVMODEL', 'NRVLOSS'):
             slot = {'NRV': 'valve', 'NRVMODEL': 'model', 'NRVLOSS': 'loss'}[k]
             v = nrv.setdefault(p[0], {})
-            if v.get(slot):
+            if _true(v.get(slot)):          # Perl's truth: NRVMODEL 0 is not one
                 at(n, 'SUPPLY %s ALREADY HAS A %s, ON LINE %d', p[0], k, v.get(slot + '_line'))
             if k == 'NRV':
                 v[slot] = {'cv': p[1], 'crack': a['opt'][0] if a['opt'] else None}
@@ -806,7 +838,9 @@ def translate(text):
             items.append(['DEVICE', p[0], n])
 
     #---------------------------------------------------- resolve copies
-    for name in [k for k in pipe if 'copy_of' in pipe[k]]:
+    # A copy is one whose source's name is true in Perl: a copy of a pipe
+    # named 0 is not resolved, there or here, and fails when its row is made.
+    for name in [k for k in pipe if _true(pipe[k].get('copy_of'))]:
         p = pipe[name]
         trail = {}
         src = p['copy_of']
@@ -817,9 +851,9 @@ def translate(text):
             if src in trail:
                 at(p['line'], 'PIPE %s IS COPIED FROM ITSELF', name)
             trail[src] = 1
-            if 'copy_of' not in s:
+            if not _true(s.get('copy_of')):
                 for key_ in ('use', 'len', 'size', 'fits'):
-                    p[key_] = s[key_]
+                    p[key_] = s.get(key_)
                 p['root'] = src
                 break
             src = s['copy_of']
@@ -960,13 +994,13 @@ def translate(text):
             at(ln, '%s IS NOT DEFINED', sname)
         if not is_water(sname):
             at(ln, '%s IS NOT A WATER SUPPLY: A CHECK VALVE (NRV) GOES AT A WATER SUPPLY', sname)
-        if not v.get('valve'):
+        if not _true(v.get('valve')):
             at(ln, 'SUPPLY %s HAS NO CHECK VALVE (NRV) FOR THIS TO DESCRIBE', sname)
-        if not v.get('loss'):
+        if v.get('loss') is None:
             continue
         if float(v['valve']['cv']) != 0:
             at(v['loss_line'], 'NRVLOSS %s REQUIRES CV 0 (DO NOT COUNT LOSSES TWICE)', sname)
-        if not v.get('model'):
+        if not _true(v.get('model')):
             at(v['loss_line'], 'NRVLOSS %s REQUIRES NRVMODEL WITH MANUFACTURER DATA SOURCE', sname)
         pairs = v['loss']
         if float(pairs[0]) != 0 or float(pairs[1]) != 0:
@@ -981,7 +1015,7 @@ def translate(text):
     auto = []
     for name in sorted(pipe, key=lambda k: (pipe[k]['line'], k)):
         p = pipe[name]
-        if not (is_num(p['size']) and float(p['size']) == 0):
+        if not (is_num(p.get('size')) and float(p['size']) == 0):
             continue
         type_ = (p.get('use') or {}).get('type') or 'BORE'
         if type_ == 'BORE':
@@ -989,7 +1023,7 @@ def translate(text):
                  '<PIPETYPE> LINE BEFORE IT', name)
         if name in change:
             line, field = change[name]['line'], 3
-        elif 'copy_of' in p:
+        elif _true(p.get('copy_of')):
             line, field = pipe[p['root']]['line'], 5
         else:
             line, field = p['line'], 5
@@ -1096,9 +1130,15 @@ def translate(text):
 def pipe_row(p, name, frm, eqv, units, dw, at):
     n = p['line']
     use = p.get('use') or {'type': 'BORE'}
+    ln = length_metres(p.get('len'), units['LENGTH'])
     row = [name, frm if frm is not None else p['start'], p['end'],
-           fmt(length_metres(p['len'], units['LENGTH']))]
-    if use['type'] == 'BORE':
+           fmt(ln if ln is not None else 0)]
+    if p.get('fits') is None:
+        # A copy (PC) left unresolved - its source is a pipe named 0, which
+        # Perl takes as no source: it has no fittings list, and the Perl
+        # dies on it here, in these words.
+        raise RuntimeError("Can't use an undefined value as an ARRAY reference")
+    if use.get('type') == 'BORE':
         if p['fits']:
             at(n, 'PIPE %s: FITTINGS NEED A PIPE TYPE - PUT A USE <PIPETYPE> LINE BEFORE IT, '
                  'OR GIVE THE ALLOWANCE WITH EQV', name)
@@ -1110,7 +1150,7 @@ def pipe_row(p, name, frm, eqv, units, dw, at):
         if dn is None:
             at(n, 'PIPE %s: %s IS NOT A NOMINAL SIZE IN INCHES', name, p['size'])
         row.append(dn)
-        row.append('TYPE=%s' % use['type'])
+        row.append('TYPE=%s' % ('' if use.get('type') is None else use['type']))
         fit = [fitting_code(x) for x in p['fits']]
         if fit:
             row.append('FIT=' + ','.join(fit))
@@ -1119,10 +1159,10 @@ def pipe_row(p, name, frm, eqv, units, dw, at):
                    else ('C=%s' % use['c']))
     if eqv:
         row.append('EQV=%s' % fmt(length_metres(eqv['len'], units['LENGTH'])))
-    return ' '.join(str(x) for x in row)
+    return ' '.join(_pstr(x) for x in row)
 
 def fitting_code(t):
-    m = re.match(r'^(\d*)([A-Z][A-Z0-9]*)$', t.upper())
+    m = re.match(r'^(\d*)([A-Z][A-Z0-9]*)\Z', t.upper(), re.A)
     count, code = m.group(1), m.group(2)
     return count + (FIT_SHORT.get(code, code))
 
@@ -1147,7 +1187,7 @@ def device_row(d, p, pname, units, at):
     if k in ('OPP', 'OFD'):
         # The plate takes its pipe's nominal size and bore.
         dn, bore = pipe_size(p, units)
-        where = ((['DN=%s' % dn] if dn is not None else []) + ['PIPEDIA=%s' % fmt(bore)])
+        where = ((['DN=%s' % _pstr(dn)] if dn is not None else []) + ['PIPEDIA=%s' % fmt(bore)])
         cd = (['CD=%s' % a['opt'][0]] if a['opt'] else [])
         if k == 'OPP':
             return ('DEVICES', ' '.join([id_, s, x, 'ORIFICE_P', 'DP=%s' % a['pos'][1]] + where + cd), n)
@@ -1166,7 +1206,7 @@ def device_row(d, p, pname, units, at):
         dn = size_dn(size, units['SIZE'])
         if dn is None:
             at(n, 'DPV %s: %s IS NOT A NOMINAL SIZE IN INCHES', pname, size)
-        row = [id_, s, x, 'DPV', 'SIZE=%s' % dn, 'MODE=%s' % mode,
+        row = [id_, s, x, 'DPV', 'SIZE=%s' % _pstr(dn), 'MODE=%s' % mode,
                ('RATIO=%s' % fmt(ratio_value(set_))) if mode == 'RATIO' else ('TRIP=%s' % set_),
                'ACC=%s' % acc, 'HOST=%s' % pname]
         if r and r[0] == 'VALVE':
@@ -1175,7 +1215,7 @@ def device_row(d, p, pname, units, at):
                 have = [m for m in pipedata.dry_valve_models() if m[0] == r[1] and m[1] == r[2]]
                 if have:
                     at(n, 'DPV %s: THE DATABASE HAS %s %s IN DN%s ONLY, NOT DN%d',
-                       pname, r[1], r[2], ', DN'.join(have[0][2]), dn)
+                       pname, r[1], r[2], ', DN'.join(have[0][2]), _pd(dn))
                 else:
                     at(n, 'DPV %s: %s %s IS NOT A DRY PIPE VALVE IN THE DATABASE (%s)',
                        pname, r[1], r[2],
@@ -1192,18 +1232,27 @@ def device_row(d, p, pname, units, at):
 
 def pipe_size(p, units):
     use = p.get('use') or {'type': 'BORE'}
-    if use['type'] == 'BORE':
+    if use.get('type') == 'BORE':
         return (None, size_mm(p['size'], units['SIZE']))
     dn = p.get('auto_dn')
     if dn is None:
         dn = size_dn(p['size'], units['SIZE'])
     ensure_db()
-    b = pipedata.bore(use['type'], dn if dn is not None else 0)
-    return (dn, float(b) if b is not None else 0)
+    b = pipedata.bore(use.get('type'), dn if dn is not None else 0)
+    return (dn, pipedata._num(b) if b is not None else 0)
 
 #==============================================================================
 # read_string / read_model -- a .phc model read into a network.
 #==============================================================================
+
+def _byte_text(s):
+    # Free text of the model as the Perl holds it: one character for each
+    # byte of the file, so a UTF-8 e-acute is two characters in the JSON
+    # (\u00c3\u00a9) and two '?' in the report, and a Latin-1 one is one.
+    try:
+        return s.encode('utf-8', 'surrogateescape').decode('latin-1')
+    except (UnicodeError, AttributeError):
+        return s
 
 def read_string(text, dir_=None):
     rows, units, areas = translate(text)
@@ -1216,7 +1265,7 @@ def read_string(text, dir_=None):
             f = parts[0]
             v = parts[1] if len(parts) > 1 else ''
             v = re.sub(r'[^\x20-\x7E]', '', v)
-            v = re.sub(r'\s+$', '', v)
+            v = re.sub(r'\s+\Z', '', v, flags=re.A)
             net.setdefault('project', {})[f.upper()] = v
             continue
         try:
@@ -1241,7 +1290,9 @@ def read_string(text, dir_=None):
         if e is None:
             continue
         if d.get('model') is not None:
-            e['model'] = d['model']
+            e['model'] = _byte_text(d['model'])
+        if d.get('air') is not None or d.get('trip'):
+            e.setdefault('transient', {})
         if d.get('air') is not None:
             e['transient']['air_initial'] = float(d['air']) * net['f_pres']
         t = d.get('trip')
@@ -1267,10 +1318,10 @@ def read_string(text, dir_=None):
         e['nrv'] = {'cv': float(d['valve']['cv']),
                     'crack': float(crack) * net['f_pres'] if crack is not None else 0,
                     'crack_given': 1 if crack is not None else 0,
-                    'model': d.get('model'),
-                    'basis': 'CURVE' if d.get('loss') else ('CV' if float(d['valve']['cv']) > 0 else 'PIPEWORK')}
+                    'model': _byte_text(d.get('model')),
+                    'basis': 'CURVE' if d.get('loss') is not None else ('CV' if float(d['valve']['cv']) > 0 else 'PIPEWORK')}
         pairs = d.get('loss')
-        if pairs:
+        if pairs is not None:
             c = {'q': [], 'p': []}
             for i in range(0, len(pairs), 2):
                 c['q'].append(float(pairs[i]) * net['f_flow'])
@@ -1287,20 +1338,23 @@ def read_string(text, dir_=None):
         for (f, n) in areas['graphs']:
             if _graph is None:
                 from . import graph as _graph
-            p = f if os.path.isabs(f) else os.path.join(dir_, f)
+            # File::Spec's catfile: the folder and the file each tidied
+            # (a/./b, a//b, a leading ./), which is how the path is then
+            # printed in a warning.
+            p = f if os.path.isabs(f) else pipedata.catfile(dir_, f)
             try:
                 g = _graph.read_file(p)
                 why = '; '.join(x[1] for x in _graph.check(g)['errors'])
             except Exception as e:
                 g = None
                 why = str(e)
-            why = re.sub(r'\s+$', '', why or '')
+            why = re.sub(r'\s+\Z', '', why or '', flags=re.A)
             if len(why):
-                net.setdefault('warnings', []).append(
-                    'supply graph %s (line %d) is not in the report: %s' % (f, n, why))
+                net.setdefault('warnings', []).append(_byte_text(
+                    'supply graph %s (line %d) is not in the report: %s' % (f, n, why)))
             else:
                 net.setdefault('graph_sheets', []).append(
-                    {'file': f, 'path': p, 'line': n, 'graph': g})
+                    {'file': _byte_text(f), 'path': p, 'line': n, 'graph': g})
     # An assumed roughness is flagged wherever the warnings go.
     net.setdefault('warnings', [])
     net['warnings'] += roughness_warning(net)
@@ -1320,11 +1374,17 @@ def model_text(raw):
 
 def read_model(path):
     try:
-        with open(path, 'rb') as fh:
-            text = model_text(fh.read())
+        # A folder opens in Perl and reads as nothing: THE FILE HOLDS NO
+        # MODEL, not a file that cannot be opened.
+        if os.path.isdir(path) and os.access(path, os.R_OK):
+            text = ''
+        else:
+            with open(path, 'rb') as fh:
+                text = model_text(fh.read())
     except OSError:
         fail('cannot open input file %s', path)
-    return read_string(text, os.path.dirname(path))
+    # File::Basename's dirname: a bare file name is in '.'.
+    return read_string(text, os.path.dirname(path) or '.')
 
 # The fitting pick lists, read once from the database file and cleared by
 # reset_db_cache after it is edited: FIT => { source => { code => label } },
@@ -1338,22 +1398,28 @@ def fitting_tables():
     if FITCODE:
         return
     ensure_db()
+    # Read as pipedata.load reads it: lines ended by \n alone, a byte that
+    # is not UTF-8 carried as \xHH, and the fields a short line lacks undef
+    # (a blank label, the empty string as a key).
     try:
-        fh = open(pipedata.path(), encoding='utf-8')
+        with open(pipedata.path(), 'rb') as fh:
+            text = pipedata.decode(fh.read())
     except OSError:
         return
-    with fh:
-        for l in fh:
-            l = l.rstrip('\n')
-            if re.match(r'^\s*(#|$)', l):
-                continue
-            f = l.split('|')
-            if f[0] == 'FIT':
-                FITCODE.setdefault(f[1], {}).setdefault(f[2], _ascii(f[3]))
-            elif f[0] == 'KPRIME':
-                KPCODE.setdefault(f[1], _ascii(f[2]))
-            elif f[0] == 'PIPE':
-                DNS.setdefault(f[1], []).append(f[2])
+    K = lambda x: '' if x is None else x
+    for l in text.split('\n'):
+        if re.match(r'^\s*(#|$)', l):
+            continue
+        f = l.split('|')
+        while f and f[-1] == '':
+            f.pop()
+        f += [None] * (4 - len(f))
+        if f[0] == 'FIT':
+            FITCODE.setdefault(K(f[1]), {}).setdefault(K(f[2]), _ascii(f[3]))
+        elif f[0] == 'KPRIME':
+            KPCODE.setdefault(K(f[1]), _ascii(f[2]))
+        elif f[0] == 'PIPE':
+            DNS.setdefault(K(f[1]), []).append(f[2])
     # DNS entries stay as they are written in the file; the comparisons
     # against a DN numify in the original, so compare as strings here
 
@@ -1403,9 +1469,9 @@ def fitting_choices(type_, dn):
 # step_id -- the next name in a series: P7 -> P8, N09 -> N10, 4101 -> 4102.
 def step_id(id_):
     id_ = id_ or ''
-    m = re.match(r'^(.*?)(\d+)\Z', id_)
+    m = re.match(r'^(.*?)(\d+)\Z', id_, re.A)
     if m:
-        return m.group(1) + ('%0*d' % (len(m.group(2)), int(m.group(2)) + 1))
+        return m.group(1) + ('%0*d' % (len(m.group(2)), _pd(int(m.group(2)) + 1)))
     return id_ + '2'
 
 
@@ -1452,8 +1518,12 @@ def propose(line):
 def check_line(line, ctx=None):
     ctx = ctx or {}
     line = line if line is not None else ''
-    cursor = ctx.get('cursor', len(line))
-    use = ctx.get('use', 'BORE')
+    cursor = ctx.get('cursor')
+    if cursor is None:
+        cursor = len(line)
+    use = ctx.get('use')
+    if use is None:
+        use = 'BORE'
     if not isinstance(use, dict):
         use = {'type': str(use).upper()}
     units = dict(UNIT_DEFAULT)
@@ -1473,7 +1543,8 @@ def check_line(line, ctx=None):
     # Words before the cursor; inside or at the end of a word, that word is
     # the current one, otherwise a new one is starting.
     before = strip_comment(line)[:cursor]
-    w = before.split()
+    # split ' ': on the ASCII white space, as Perl's is for the model's bytes
+    w = [x for x in re.split(r'[ \t\n\r\f\v]+', before) if x != '']
     idx = len(w) - 1 if re.search(r'\S\Z', before) else len(w)   # 0 is the command
     if c:
         fields = template_fields(c)
@@ -1489,7 +1560,7 @@ def check_line(line, ctx=None):
         elif c['name'] in ('PIPE', 'CHANGEPIPE') and label == 'FITTINGS ...':
             i = 4 if c['name'] == 'PIPE' else 2
             sz = a['pos'][i] if i < len(a['pos']) else None
-            r['choices'] = fitting_choices(use['type'],
+            r['choices'] = fitting_choices(use.get('type'),
                                            size_dn(sz, units['SIZE']) if sz is not None else None)
         elif c['name'] == 'UNITS' and cur == 0:
             r['choices'] = [[x, ' '.join(UNIT_CHOICES[x])] for x in UNIT_QUANTITIES]
@@ -1536,7 +1607,7 @@ def check_line(line, ctx=None):
                            p[0], None, None, units, (ctx.get('method') or '') == 'DW', at)
             parse_row(net, 'PIPES', tokenize(row))
         elif c.get('otype') and float(p[3]) != 0:
-            req = ('P=' + fmt(-float(p[2]))) if float(p[2]) < 0 else ('Q=%s' % (p[2],))
+            req = ('P=' + pnum(-float(p[2]))) if float(p[2]) < 0 else ('Q=%s' % (p[2],))
             parse_row(net, 'DISCHARGES',
                            [p[0], p[0], c['otype'],
                             'K=' + fmt(k_factor_to_model(float(p[3]), units)), req])
@@ -1549,9 +1620,12 @@ def check_line(line, ctx=None):
         return r
 
     #---------------------------------------------- nodes, and what is next
+    # A list or table of nodes is true in Perl even when it is empty: with
+    # no node defined yet, every node a line uses is undefined.  A node is
+    # known by a true value (the editor's first line, 0, is not one).
     known = ctx.get('nodes')
-    if known:
+    if isinstance(known, (dict, list, tuple)) or _true(known):
         k = known if isinstance(known, dict) else {x: 1 for x in known}
-        r['undefined'] = [n for n in nodes_used(a) if n not in k]
+        r['undefined'] = [n for n in nodes_used(a) if not _true(k.get(n))]
     r['proposal'] = propose(line)
     return r

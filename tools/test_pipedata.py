@@ -191,5 +191,110 @@ if True:
     PD.load(was)
     shutil.rmtree(d, ignore_errors=True)
 
+print('READ AS THE PERL READ IT (the audit of 20 November 2026)')
+if True:
+    # The database is user editable, and Perl took whatever a line held: a
+    # short line's missing fields were undef, text where a number belongs
+    # was the number it starts with or 0, a byte that is not UTF-8 was kept
+    # as \xHH.  Each of these stopped the Python with a traceback; each is
+    # checked here against what the Perl gives for the same file.
+    import math
+    import subprocess
+    d = tempfile.mkdtemp()
+    was = PD.path()
+    with open(was, 'rb') as f:
+        good = f.read()
+
+    def db(extra, sub=None):
+        path = os.path.join(d, 'pipes.dat')
+        with open(path, 'wb') as f:
+            f.write((sub(good) if sub else good) + extra)
+        return path
+
+    def loads(extra, sub=None):
+        try:
+            PD.load(db(extra, sub))
+            return ''
+        except BaseException as e:
+            return str(e) or 'failed'
+
+    e = loads(b'DRYVALVE|ACME\nDRYVALVE\nPIPETYPE\n|\nXX\n')
+    is_('lines with fields missing still load', e == '')
+    is_('   a DRYVALVE line with nothing after it is listed blank',
+        e == '' and PD.dry_valve_models()[0] == ['', '', ['']])
+    e = loads(b'FIT|AS|E|Elb\xe9w|25|0.8\n')
+    r = R(type='ASAM', dn=25, spec='E') if e == '' else {'records': [{}]}
+    is_('a byte that is not UTF-8 is kept as \\xHH, not refused',
+        e == '' and r['records'][0].get('label') == 'Elb\\xE9w')
+    e = loads(b'FIT|AS|E|Elbow|25|abc\nFIT|AS|T|Tee|25\nFIT|AS|EL|Long|25|1.5x\n')
+    r = R(type='ASAM', dn=25, spec='E,T,EL') if e == '' else {'records': [], 'errors': None}
+    is_('a length that is no number: the number it starts with, or 0',
+        e == '' and r['errors'] == [] and [x['each'] for x in r['records']] == [0, 0, 1.5]
+        and r['total'] == 1.5)
+    e = loads(b'PIPETYPE|ZZ|Name|std|range|abc\nPIPE|ZZ|25|30|27|1\n'
+              b'PIPETYPE|ZY|Name|std|range\nPIPE|ZY|25|30|27|1\n')
+    is_('so is a C that is no number, or is missing',
+        e == '' and [R(type=t, dn=25, spec='E')['total'] for t in ('ZZ', 'ZY')] == [0, 0])
+    e = loads(b'PIPE|ASAM|abc|10|9|1\nFIT|AS|E|Elbow|abc|0.5\n')
+    is_('and a nominal size that is none (size 0: AS 2118.1)',
+        e == '' and R(type='ASAM', dn='abc', spec='E')['total'] == 0.5)
+    e = loads(b'DRYVALVE|TYCO|DPV-1|X|9|2.2|FT|100|S40|5.5|250PSI|CURRENT|src|DASH\n')
+    is_('a dry pipe valve size that is no number sorts as 0',
+        e == '' and [m[2] for m in PD.dry_valve_models() if m[:2] == ['TYCO', 'DPV-1']]
+        == [['X', '65', '80', '100', '150']])
+    e = loads(b'', lambda t: re.sub(rb'(?m)^DATASET\|[^|]*', b'DATASET|0', t))
+    is_('a DATASET named 0 is no DATASET (0 is false in Perl)',
+        re.search(r'has no DATASET line -- add one naming this data and its date\n\Z', e))
+    try:
+        PD.load(os.path.join(d, 'none', 'pipes.dat'))
+        e = ''
+    except BaseException as ex:
+        e = str(ex)
+    is_('no database: the reason in the system\'s words, the line ended',
+        e == 'cannot open the pipe and fitting database %s: %s\n'
+        % (os.path.join(d, 'none', 'pipes.dat'), os.strerror(2)))
+    PD.load(was)
+
+    is_('a count is printed as typed: 0100E is a count of 0100',
+        PD.parse_fittings('0100E')[1] == "fitting count of 0100 for 'E' is not plausible for "
+        "one pipe (limit 99); check the string")
+    is_('   and 007T is seven tees', PD.parse_fittings('007T') == ([[7, 'T']], None))
+    is_('a fitting string that is the number 0 is read, and refused',
+        PD.parse_fittings(0) == (None, "cannot read fitting code at '0'"))
+    is_('a DN given as a float is the same DN (25.0 is 25)',
+        PD.bore('S40', 25) is not None and PD.bore('S40', 25.0) == PD.bore('S40', 25)
+        and R(type='S40', dn=25.0, spec='E')['total'] == R(type='S40', dn=25, spec='E')['total'])
+    is_('no pipe type at all is the unknown type \'\'',
+        R(type=None, dn=25, spec='E')['errors'] == ["unknown pipe type ''"])
+    t = R(type='S40', dn=100, c=-120, spec='E')['total']
+    is_('a negative C gives NaN, not a complex number',
+        isinstance(t, float) and math.isnan(t))
+    if os.sep == '/':
+        is_('paths are tidied as File::Spec tidies them, not resolved',
+            [PD.catfile('.', './sub'), PD.catfile('a//b/', 'c//d/./e'), PD.catfile('.', '../x'),
+             PD.catfile('/', 'x'), PD.catfile('/a/b', 'x.phg')]
+            == ['./sub', 'a/b/c/d/e', './../x', '/x', '/a/b/x.phg'])
+        old = os.environ.get('PHCP_DATABASE_DIR')
+        os.environ['PHCP_DATABASE_DIR'] = './team//db/'
+        is_('   the database folder of the settings too', PD.default_path() == 'team/db/pipes.dat')
+        if old is None:
+            del os.environ['PHCP_DATABASE_DIR']
+        else:
+            os.environ['PHCP_DATABASE_DIR'] = old
+        # The program run through a linked folder names its database by the
+        # real path, and still knows it as its own.
+        link = os.path.join(d, 'link')
+        os.symlink(ROOT, link)
+        env = dict(os.environ)
+        env.pop('PHCP_DATABASE_DIR', None)
+        out = subprocess.run([sys.executable, os.path.join(link, 'phcp'), '--json',
+                              os.path.join(ROOT, 'examples', '07_pipe_database_demo.phc')],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=env).stdout.decode('utf-8', 'replace')
+        m = re.search(r'"file" : "([^"]*)"', out)
+        is_('through a linked folder, the database has its real path',
+            m and m.group(1) == os.path.realpath(os.path.join(ROOT, 'data', 'pipes.dat')))
+    shutil.rmtree(d, ignore_errors=True)
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)
