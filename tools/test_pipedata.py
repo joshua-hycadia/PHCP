@@ -269,6 +269,8 @@ if True:
     t = R(type='S40', dn=100, c=-120, spec='E')['total']
     is_('a negative C gives NaN, not a complex number',
         isinstance(t, float) and math.isnan(t))
+    is_('a C too large to raise to a power gives infinity, not an error',
+        R(type='ASAM', dn=25, c='1e300', spec='E')['total'] == float('inf'))
     if os.sep == '/':
         is_('paths are tidied as File::Spec tidies them, not resolved',
             [PD.catfile('.', './sub'), PD.catfile('a//b/', 'c//d/./e'), PD.catfile('.', '../x'),

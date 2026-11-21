@@ -409,6 +409,10 @@ def audit():
     is_('a value ends where its text ends, not before a newline',
         phc.length_metres('5M\n', 'M') is None and phc.ratio_value('3:1\n') is None
         and phc.length_metres('5M', 'M') == 5 and phc.ratio_value('3:1') == 3)
+    is_('-0.0 is 0 where the Perl adds 0 to it, and -0 in a product',
+        [phc.fmt(x) for x in (phc.size_mm('-0.0', 'MM'), phc.size_mm('-0.0', 'IN'),
+                              phc.ratio_value('-0.0'), phc.length_metres('-0.0', 'M'))]
+        == ['0', '-0', '0', '0'])
     is_('a length in a unit that is none is 0, not a crash',
         phc.length_metres('5', 'XX') == 0 and phc.length_metres('5', 'M') == 5)
     is_('TITLE x<1C>: a control character is not white space',

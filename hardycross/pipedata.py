@@ -71,7 +71,12 @@ def _true(x):
 # _pow -- Perl's x ** y: a negative x to a fractional power is NaN, where
 # Python would give a complex number.
 def _pow(x, y):
-    return x ** y if not x < 0 else float('nan')
+    if x < 0:
+        return float('nan')
+    try:
+        return x ** y
+    except OverflowError:           # C's pow: too large is infinity
+        return float('inf')
 
 # The database is read as Perl's :encoding(UTF-8) layer reads it: a byte
 # that is not UTF-8 is not an error, it becomes the four characters \xHH.

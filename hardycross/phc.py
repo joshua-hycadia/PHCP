@@ -178,7 +178,7 @@ def length_metres(t, unit):
         return None
     if is_num(t):
         # A unit that is none is undef in the Perl, and undef is 0 in a product.
-        return num(t) * TO_METRE.get(unit, 0)
+        return (num(t) + 0) * TO_METRE.get(unit, 0)
     m = _LEN_U.match(t)
     if m:
         return float(m.group(1)) * TO_METRE[m.group(2).upper()]
@@ -207,7 +207,8 @@ def size_dn(t, unit):
 def size_mm(t, unit):
     if not is_num(t):
         return None
-    return float(t) if unit == 'MM' else float(t) * 25.4
+    # 0 + $t in the Perl: -0.0 is 0 (the + 0), where a product keeps its sign
+    return float(t) + 0 if unit == 'MM' else float(t) * 25.4
 
 _RATIO = re.compile(r'^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)\Z', re.A)
 
@@ -217,7 +218,7 @@ def ratio_value(t):
     if m and float(m.group(2)) > 0:
         return float(m.group(1)) / float(m.group(2))
     if is_num(t):
-        return float(t)
+        return float(t) + 0
     return None
 
 def unit_code(u):
@@ -1317,7 +1318,7 @@ def read_string(text, dir_=None):
         if e is None:
             continue
         crack = d['valve'].get('crack')
-        e['nrv'] = {'cv': float(d['valve']['cv']),
+        e['nrv'] = {'cv': float(d['valve']['cv']) + 0,
                     'crack': float(crack) * net['f_pres'] if crack is not None else 0,
                     'crack_given': 1 if crack is not None else 0,
                     'model': _byte_text(d.get('model')),
