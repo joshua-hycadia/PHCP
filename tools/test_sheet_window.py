@@ -688,8 +688,9 @@ def main():
         wrote and asked.get('initialfile') == 'MODEL_REPORT.PDF',
         '%r %r' % (wrote, asked.get('initialfile')))
 
-    # A grid refreshed in place gives the main window the focus: the
-    # Perl's `$mw->focus && ...` in refresh_grid, which is not a question.
+    # A grid refreshed in place leaves the focus in the cell being typed in.
+    # (The Perl takes it away: its `$mw->focus && ...` in refresh_grid is
+    # not a question.  A defect there, deliberately not copied.)
     SW.saved_text = SW.full_text()
     SW.open_path(os.path.join(REPO, 'examples', '02_full_network.phc'))
     mw.update()
@@ -700,9 +701,9 @@ def main():
     c.event_generate('<KeyPress>', keysym='x', when='now')
     c.event_generate('<KeyRelease>', keysym='x', when='now')
     mw.update()
-    is_('a FROM node typed while SUPPLIES has rows: the focus goes to the '
-        'window',
-        SW.sheet['pipes'][0]['from'].endswith('x') and mw.focus_get() is mw,
+    is_('a FROM node typed while SUPPLIES has rows: the focus stays in the '
+        'cell',
+        SW.sheet['pipes'][0]['from'].endswith('x') and mw.focus_get() is c,
         '%r %s' % (SW.sheet['pipes'][0]['from'], mw.focus_get()))
     c = SW.grid_cell('SYSTEM', 1, 'length')
     c.focus_force()
@@ -718,7 +719,7 @@ def main():
     is_('undo puts the cell being typed in back as well',
         kept and typed.endswith('7') and not c.get().endswith('7')
         and c.get() == SW.sheet['pipes'][1]['length']
-        and mw.focus_get() is mw, '%r %r' % (typed, c.get()))
+        and mw.focus_get() is c, '%r %r' % (typed, c.get()))
     SW.saved_text = SW.full_text()
 
     mw.destroy()

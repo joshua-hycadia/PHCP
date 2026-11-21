@@ -328,26 +328,23 @@ if True:
             e is None and s['ok'] and s['path'] == 'pipes.dat' and not os.path.exists('pipes.dat.new')
             and s['sha256'] == hashlib.sha256(slurp('pipes.dat')).hexdigest(), s)
 
-        # A file with no newline at its end.  The Perl's open_db returns a
-        # hash built from a list in which a failed match is no element, so
-        # trailing_nl is true and the fingerprint is not kept: the text is
-        # ended with a newline, and saving over the file opened is refused
-        # until it has been saved elsewhere.  The port does the same.
+        # A file with no newline at its end is written back as it was, and
+        # can be saved over.  (The Perl cannot save over it: a slip in
+        # open_db loses the fingerprint.  A defect there, deliberately not
+        # copied.)
         with open('nonl.dat', 'wb') as o:
             o.write(ORIG.rstrip(b'\n'))
         d = DB.open_db('nonl.dat')
-        is_('a file with no newline at its end: written with one, as the Perl writes it',
-            DB.text(d).encode('utf-8') == ORIG.rstrip(b'\n') + b'\n' and d.get('sha256') is None)
+        is_('a file with no newline at its end: unchanged, it writes back to the same bytes',
+            DB.text(d).encode('utf-8') == ORIG.rstrip(b'\n')
+            and d.get('sha256') == hashlib.sha256(ORIG.rstrip(b'\n')).hexdigest())
         r0 = DB.rows(d, 'KPRIME')[0]
         f = list(r0['fields'])
         f[1] = 'CHANGED'
         DB.set_row(d, r0['line'], f)
         s = DB.save(d, None, 'D')
-        is_('   saving over it is refused, as the Perl refuses it',
-            not s['ok'] and re.match(r'THE DATABASE WAS SAVED BY SOMEONE ELSE', s['problems'][0]['message']), s)
-        s = DB.save(d, 'other.dat', 'D')
         s2 = DB.save(d, None, 'D')
-        is_('   saved elsewhere, and from then on saved freely', s['ok'] and s['path'] == 'other.dat' and s2['ok'], (s, s2))
+        is_('   it is saved over, and saved again', s['ok'] and s['path'] == 'nonl.dat' and s2['ok'], (s, s2))
 
         # a database that will not load: the problem as the Perl words it
         d = DB.open_db('pipes.dat')

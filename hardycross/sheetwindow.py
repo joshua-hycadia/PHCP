@@ -670,24 +670,22 @@ def refresh_grid(id_):
             if not isinstance(w, tk.Entry):
                 w.configure(text=val)
                 continue
-            # The Perl reads `elsif ($mw->focus && $w eq $mw->focus) { next }`.
-            # $mw->focus is not a question: it GIVES the main window the
-            # keyboard focus, and returns nothing, so no cell is ever passed
-            # over, and a grid refreshed in place takes the focus off
-            # whatever cell had it.  That is what the window does (after an
-            # undo, a fill, a replace, and a FROM or TO node typed while
-            # another grid has rows), so it is done here too.
-            _perl_mw_focus()
+            # The cell being typed in is not disturbed.  (The Perl means to pass
+            # over it:
+            # `elsif ($mw->focus && $w eq $mw->focus) { next }` -- but
+            # $mw->focus GIVES the main window the focus and returns
+            # nothing, so there a grid refreshed in place takes the focus
+            # off the cell and the next key is lost.  A defect, not copied:
+            # see PYTHON_PORT.md.)
+            # It keeps the focus and its cursor; its text is brought up to
+            # date only if something else changed it (an undo, a fill, a
+            # replace).
             if w.get() != val:
+                at = w.index('insert') if mw.focus_get() is w else None
                 w.delete(0, 'end')
                 w.insert(0, val)
-
-
-def _perl_mw_focus():
-    try:
-        mw.focus_set()
-    except tk.TclError:
-        pass
+                if at is not None:
+                    w.icursor(min(at, len(val)))
 
 
 def rebuild_grid(g):

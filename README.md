@@ -1587,7 +1587,7 @@ the counts the Perl gave:
 | several water supplies (`tools/test_supplies.py`) | 44 / 44 |
 | the dry pipe valve (`tools/test_dpv.py`) | 52 / 52 |
 | pipe and fitting database (`tools/test_pipedata.py`) | 58 / 58 |
-| database editor (`tools/test_dbedit.py`) | 57 / 57 |
+| database editor (`tools/test_dbedit.py`) | 56 / 56 |
 | QUICK TOOLS and orifice plate calculators (`tools/test_tools.py`) | 92 / 92 |
 | the reference manual against the program (`tools/test_manual.py`) | 15 / 15 |
 | spreadsheet logic, headless (`tools/test_sheet.py`) | 114 / 114 |

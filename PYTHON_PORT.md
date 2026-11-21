@@ -361,11 +361,12 @@ could have met:
 | an internal failure's words (`Illegal division by zero at ... line 322.`) | the interpreter's | Python's, on one line, same exit status | not the program's own text |
 | Perl `use warnings` lines on stderr | printed | not printed | diagnostics, not output |
 
-Copied from the Perl although they are defects there (say if the better
-behaviour is wanted instead): a pipes.dat with no newline at its end cannot
-be saved over from the DATABASE tab (`THE DATABASE WAS SAVED BY SOMEONE
-ELSE`); in the spreadsheet a grid refreshed in place takes the keyboard
-focus off the cell.
+Two defects of the Perl are corrected, not copied (decided 21 November
+2026): a pipes.dat with no newline at its end could not be saved over from
+the DATABASE tab (`THE DATABASE WAS SAVED BY SOMEONE ELSE`; a slip in open_db
+lost the fingerprint), and in the spreadsheet a grid refreshed in place took
+the keyboard focus off the cell being typed in, so the next key was lost.
+The Python saves the file, and leaves the focus and the cursor in the cell.
 
 Not verified: the JSON of `examples/04_grid1000` against the Perl (the Perl
 does not finish it in the time there is; its text output is identical);

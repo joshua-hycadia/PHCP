@@ -142,18 +142,14 @@ def open_db(path=None):
         lines.append({'text': l, 'kind': kind, 'fields': f})
     if lines and lines[-1]['text'] == '' and text.endswith('\n'):
         lines.pop()
-    if text.endswith('\n'):
-        return {'path': path, 'lines': lines, 'modified': 0, 'crlf': crlf,
-                'trailing_nl': 1, 'sha256': sha}
-    # A file that does not end in a newline.  The Perl builds this hash from
-    # a list in which the failed match  $text =~ /\n\z/  is no element at
-    # all, so every later pair moves up one: trailing_nl is the word
-    # 'sha256' (true: text() ends the file with a newline), the hash is the
-    # key of an undef, and sha256 is not set -- so SAVE over the file opened
-    # is refused as "saved by someone else" until it is saved elsewhere.
-    # Kept as the Perl has it; see the audit notes.
+    # A file that does not end in a newline is written back without one, and
+    # can be saved over like any other.  (The Perl cannot: its hash is built
+    # from a list in which the failed match  $text =~ /\n\z/  is no element,
+    # so the pairs shift, sha256 is never set, and SAVE over the file opened
+    # is refused as "saved by someone else".  A defect, not copied: see
+    # PYTHON_PORT.md.)
     return {'path': path, 'lines': lines, 'modified': 0, 'crlf': crlf,
-            'trailing_nl': 'sha256', sha: None}
+            'trailing_nl': 1 if (text.endswith('\n') or text == '') else 0, 'sha256': sha}
 
 # rows -- a table's records: [ { line: index, fields: [...] } ].
 def rows(db, kind):
