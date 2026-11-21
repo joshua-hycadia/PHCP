@@ -1570,35 +1570,35 @@ the counts the Perl gave:
 | the comparison sets (models, models_A, models_B), text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 900 / 900 identical |
 | the examples, text + JSON + report + `--save` + `--strict`, Perl 1.6.0 against Python | 10 / 10 identical |
 | the .phc language and its line checker (`tools/test_phc.py`) | 338 / 338 |
-| the JSON interface (`tools/test_json.py`) | 109 / 109 |
-| the results saved back into the model (`tools/test_results.py`) | 28 / 28 |
+| the JSON interface (`tools/test_json.py`) | 118 / 118 |
+| the results saved back into the model (`tools/test_results.py`) | 36 / 36 |
 | the audit's false positives refused (`tools/test_acceptance.py`) | 99 / 99 |
-| report hand-checks across 10 examples (`tools/test_report_checks.py`) | 615 / 615 |
-| PDF report structure across 10 examples (`tools/test_pdf.py`) | 188 / 188 |
-| validation, acceptance and exit status (`tools/test_validate.py`) | 58 / 58 |
+| report hand-checks across 10 examples (`tools/test_report_checks.py`) | 630 / 630 |
+| PDF report structure across 10 examples (`tools/test_pdf.py`) | 199 / 199 |
+| validation, acceptance and exit status (`tools/test_validate.py`) | 61 / 61 |
 | velocity pressure, hand check and OFF unchanged (`tools/test_velocity_pressure.py`) | 85 / 85 |
 | curves and the orifice plate Cd, against hand figures (`tools/test_curves.py`) | 32 / 32 |
-| dry pipe valve time estimates (`tools/test_drytime.py`) | 28 / 28 |
-| auto pipe sizing (`tools/test_sizing.py`; the Perl suite's 43 and the solves of example 12) | 44 / 44 |
-| supply graph, file, sheet and report (`tools/test_graph.py`) | 60 / 60 |
+| dry pipe valve time estimates (`tools/test_drytime.py`) | 29 / 29 |
+| auto pipe sizing (`tools/test_sizing.py`; the Perl suite's 43 and the solves of example 12) | 77 / 77 |
+| supply graph, file, sheet and report (`tools/test_graph.py`) | 71 / 71 |
 | reference values worked without PHCP (`tools/test_benchmarks.py`) | 32 / 32 |
 | check valves at water supplies (`tools/test_check_valves.py`) | 94 / 94 |
 | check valve refinements (`tools/test_nrv_refinements.py`) | 24 / 24 |
-| several water supplies (`tools/test_supplies.py`) | 43 / 43 |
+| several water supplies (`tools/test_supplies.py`) | 44 / 44 |
 | the dry pipe valve (`tools/test_dpv.py`) | 52 / 52 |
-| pipe and fitting database (`tools/test_pipedata.py`) | 39 / 39 |
-| database editor (`tools/test_dbedit.py`) | 42 / 42 |
-| QUICK TOOLS and orifice plate calculators (`tools/test_tools.py`) | 76 / 76 |
+| pipe and fitting database (`tools/test_pipedata.py`) | 58 / 58 |
+| database editor (`tools/test_dbedit.py`) | 57 / 57 |
+| QUICK TOOLS and orifice plate calculators (`tools/test_tools.py`) | 92 / 92 |
 | the reference manual against the program (`tools/test_manual.py`) | 15 / 15 |
-| spreadsheet logic, headless (`tools/test_sheet.py`) | 107 / 107 |
+| spreadsheet logic, headless (`tools/test_sheet.py`) | 114 / 114 |
 | AutoCAD exporter, structure (`tools/check_lisp.py`) | 5 / 5 |
 | fitting resolver stress, 20024 strings (`tools/stress_resolver.py`) | 0 problems |
 | Revit extension, without Revit (`tools/test_revit.py`) | 95 / 95 |
-| text editor logic, headless (`tools/test_editor.py`) | 117 / 117 |
-| text editor window, under Xvfb (`tools/test_editor_window.py`) | 167 / 167 |
-| spreadsheet window, under Xvfb (`tools/test_sheet_window.py`) | 62 / 62 |
-| isometric drawing, headless (`tools/test_isometric.py`) | 42 / 42 |
-| isometric window, under Xvfb (`tools/test_isometric_window.py`) | 31 / 31 |
+| text editor logic, headless (`tools/test_editor.py`) | 129 / 129 |
+| text editor window, under Xvfb (`tools/test_editor_window.py`) | 191 / 191 |
+| spreadsheet window, under Xvfb (`tools/test_sheet_window.py`) | 73 / 73 |
+| isometric drawing, headless (`tools/test_isometric.py`) | 46 / 46 |
+| isometric window, under Xvfb (`tools/test_isometric_window.py`) | 34 / 34 |
 | impossible models not accepted, through `phcp` and, in CI, the built phcp.exe (`tools/test_impossible.py`) | 20 / 20 |
 
 ### Comparison with other calculation programs

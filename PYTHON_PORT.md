@@ -325,3 +325,49 @@ below about 1E-66 mm, divides by zero in the friction loss.  Both programs
 refuse the model with exit status 2; the Perl's reason is its interpreter's
 own, naming its source file and line (`Illegal division by zero at
 .../HardyCross.pm line 322.`), the Python's is `float division by zero`.
+
+## The line-by-line audit of 20-21 November 2026
+
+After 2.0.0 was merged, every Perl sub was read beside its Python
+translation (seven reviews: the solver core, parser and command line; the
+.phc reader, database and sizing; validation, demand and supplies; the
+report, JSON and results block; the PDF, graph, tools and database editor;
+the editor, spreadsheet and isometric logic; the three Tk windows, with the
+Perl windows run under Perl/Tk beside the Python ones).  Each difference was
+confirmed by running both programs, corrected, and given a check in the
+module's suite.  `tools/fuzz_perl.py` was added: good models with random
+changes, through both programs.  What it and the reviews found is in the
+tables above and in the suites' "port audit" sections; the ones a user
+could have met:
+
+- `--json` crashed when the governing outlet was a fixed flow with a
+  minimum pressure; the report crashed when a supply took water in
+- `phcp_editor.py model.phc` did not open the model; WRITE REPORT with no
+  name crashed; a discarded proposal came back on Ctrl+Y
+- the spreadsheet's VALIDATION tab, its PROJECT drop-downs and its
+  CALCULATE state did not follow the sheet; dragging a point in the
+  isometric window did nothing; a click in the DATABASE tab took the row
+  below
+- a model or database with a Latin-1 byte was refused or re-encoded
+- the PDF's font streams were deflated differently (memLevel 8, the Perl 9)
+
+### Differences that remain, deliberately
+
+| what | the Perl | the Python | why |
+|---|---|---|---|
+| a node head that is not finite | crashes in Validate.pm line 233 (exit 255) | the NONFINITE finding, INDETERMINATE (exit 1) | the finding is what the Perl meant to make |
+| whole numbers past 2^53 (a solve that has run away; `"value"` and `MARGIN` figures that size) | exact 64-bit integers | floats | only in solves both report as diverged, or on absurd inputs; matching it means carrying integer typing through the engine |
+| several things wrong at once in a refused model | names one of them, which one changes from run to run (hash order) | the first in file order | the Perl is not one answer |
+| an internal failure's words (`Illegal division by zero at ... line 322.`) | the interpreter's | Python's, on one line, same exit status | not the program's own text |
+| Perl `use warnings` lines on stderr | printed | not printed | diagnostics, not output |
+
+Copied from the Perl although they are defects there (say if the better
+behaviour is wanted instead): a pipes.dat with no newline at its end cannot
+be saved over from the DATABASE tab (`THE DATABASE WAS SAVED BY SOMEONE
+ELSE`); in the spreadsheet a grid refreshed in place takes the keyboard
+focus off the cell.
+
+Not verified: the JSON of `examples/04_grid1000` against the Perl (the Perl
+does not finish it in the time there is; its text output is identical);
+anything inside AutoCAD or Revit; the windows on Windows itself beyond the
+suites CI runs there.
