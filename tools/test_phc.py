@@ -815,5 +815,181 @@ if True:
             r'DESIGN_AREA B: NO AREA OF THAT NAME \(A\)')
     refused('   ...or with no area at all', m + 'OPTION DESIGN_AREA B\n', 7, r'THE MODEL HAS NO AREA')
 
+#==============================================================================
+print('12. AS THE PERL READ IT - the audit of 20 November 2026')
+#==============================================================================
+# Each check is a place where the port read, worked or printed something
+# differently from the Perl 1.6.0; the figure expected is the Perl's, taken
+# by running it on the same input.
+if True:
+    import math
+    from hardycross import settings
+
+    def run_phcp(args, cwd=None):
+        pr_ = subprocess.run(PHCP + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+        return (pr_.returncode, pr_.stdout.decode('utf-8', 'surrogateescape'),
+                pr_.stderr.decode('utf-8', 'surrogateescape'))
+
+    def row_error(section, row):
+        try:
+            parse.parse_row(parse.new_net(), section, parse.tokenize(row))
+        except Exception as e:
+            return e.msg if is_model_error(e) else 'NOT A MODEL ERROR: %r' % (e,)
+        return None
+
+    # The tokeniser.
+    is_('FIT= is protected in any case: fit=2E,1T is one token',
+        parse.tokenize('P1 A B 10 100 fit=2E,1T Fit=1GV,2E x,y')
+        == ['P1', 'A', 'B', '10', '100', 'fit=2E+1T', 'Fit=1GV+2E', 'x', 'y'])
+    # Numbers.
+    is_('-0, -0.0 and -1e-400 are plain zero, not minus zero',
+        not [t for t in ('-0', '-0.0', '-.0', '-0e3', '-1e-400')
+             if parse.num(t) != 0 or math.copysign(1, parse.num(t)) < 0])
+    is_('   so is KEY=-0.0', math.copysign(1, parse.kv(['K=-0.0'], 'K')) > 0)
+    is_('digits that are not 0-9 are not a number',
+        not parse.is_num('٣') and not parse.is_num('１２') and parse.num('１２') == 0)
+    is_('a missing token reads as 0, a number handed over as itself',
+        parse.num(None) == 0 and parse.is_num(12.5) == 1 and parse.is_num(None) == 0)
+    hd = 'WATER W 0 500\nSPRINKLER S1 0 -50 8\nUSE BORE 120\n'
+    net, err = read_phc('WATER W -0.0 500\nSPRINKLER S1 -0 -50 8\nUSE BORE 120\nPIPE P1 W S1 10 50\n')
+    is_('an elevation typed -0.0 is 0: the report prints 0.000, not -0.000',
+        net is not None and not [n for n in net['nodes'][1:] if math.copysign(1, n['z']) < 0]
+        and '-0.000' not in report.write_report(net, hardycross.solve_model(net), 'x.phc'), err)
+    # A row shorter than its section expects: undef to Perl, never an IndexError.
+    n = parse.new_net()
+    parse.parse_row(n, 'SUPPLIES', ['S', 'N', 'STATIC'])
+    is_('a STATIC supply row with no pressure: 0, as Perl reads undef',
+        n['elems'][1]['kind'] == 'SUPPLY_STATIC' and n['elems'][1]['pstat'] == 0)
+    n = parse.new_net()
+    parse.parse_row(n, 'OPTIONS', ['PUMPDUTY', 'P1', '100'])
+    is_('a PUMPDUTY row with no pressure: 0', n['opts']['pump_duty'] == {'P1': [100, 0]})
+    is_('short rows are refused in the Perl\'s words',
+        row_error('UNITS', '') == 'unknown UNITS entry '
+        and row_error('SUPPLIES', 'S N') == 'curve needs at least two flow/pressure pairs'
+        and row_error('PUMPS', 'PU A') == 'curve needs at least two flow/pressure pairs'
+        and row_error('DISCHARGES', 'D') == 'discharge D needs any TWO of K, Q, P'
+        and row_error('DISCHARGES', '') == 'discharge  needs any TWO of K, Q, P'
+        and row_error('DEVICES', 'V A') == 'device type  is not known'
+        and row_error('OPTIONS', '') is None and row_error('NODES', '') is None,
+        [row_error('UNITS', ''), row_error('SUPPLIES', 'S N'), row_error('PUMPS', 'PU A'),
+         row_error('DISCHARGES', 'D'), row_error('DISCHARGES', ''), row_error('DEVICES', 'V A')])
+    n = parse.new_net()
+    parse.parse_row(n, 'DEVICES', parse.tokenize('V A B DPV MODE=TRIP'))
+    is_('DPV MODE=TRIP with no TRIP=: a trip pressure of 0',
+        n['elems'][1]['trip_pressure'] == 0 and n['elems'][1]['transient']['trip_pressure'] == 0)
+    # %d of a number no integer holds.
+    is_('a nominal size of 1e30, 1e19 or -1e30 is named as Perl\'s %d names it',
+        [row_error('PIPES', 'P1 A B 10 %s TYPE=ASAM' % s) for s in ('1e30', '1e19', '-1e30')]
+        == ['pipe P1: DATA_REQUIRED - DN%s is not in the database for ASAM; the bore is not guessed' % s
+            for s in ('-1', '-8446744073709551616', '-9223372036854775808')])
+    refused('   and through the .phc reader', hd + 'USE ASAM\nPIPE P1 W S1 10 1e30\n', 5,
+            r'DATA_REQUIRED - DN-1 IS NOT IN THE DATABASE FOR ASAM')
+    # A pipe that carries nothing, in no loop: a ring with no outlet on it,
+    # hung off the network by one pipe.  The flows that cancel at its end
+    # are whole numbers (400 - 400) with a minimum pressure of 100 and
+    # fractions (282.84 - 282.84) with one of 50, and Perl's zero is 0 for
+    # the first and -0.0 for the second.
+    ring = ('WATER N1 0 900\nSPRINKLER N2 0 -%d 80\nNODE A 0\nNODE B 0\nNODE C 0\nUSE BORE 120\n'
+            'PIPE P1 N1 N2 100 100\nPIPE BR A N2 10 50\nPIPE R1 A B 10 50\nPIPE R2 B C 10 50\nPIPE R3 C A 10 50\n')
+    d = tempfile.mkdtemp()
+    got = []
+    for pmin in (100, 50):
+        with open(os.path.join(d, 'ring.phc'), 'w') as o:
+            o.write(ring % pmin)
+        code, out, err = run_phcp([os.path.join(d, 'ring.phc')])
+        got.append(next((l for l in out.split('\n') if l.startswith('Q BR ')), 'exit %d %s' % (code, err)))
+    is_('a pipe that carries nothing prints the zero the Perl prints',
+        got == ['Q BR 0.0000', 'Q BR -0.0000'], got)
+    is_('   (whole numbers add to the integer 0, fractions to 0.0)',
+        hardycross.perl_add(400.0, -400.0) == 0 and isinstance(hardycross.perl_add(400.0, -400.0), int)
+        and isinstance(hardycross.perl_add(282.5, -282.5), float) and hardycross.perl_add(1.5, 2) == 3.5)
+    # A figure too large to raise to a power: infinity to Perl, an
+    # OverflowError to Python.  A bore of 1E80 mm has no friction; it solves.
+    big = 'WATER W 0 700\nNODE J 0\nSPRINKLER S1 3 -50 8\nUSE BORE 120\nPIPE P1 W J 20 %s\nPIPE P2 J S1 3 25\n'
+    with open(os.path.join(d, 'big.phc'), 'w') as o:
+        o.write(big % '1e80')
+    code, out, err = run_phcp([os.path.join(d, 'big.phc')])
+    is_('a bore of 1E80 mm is solved, not refused for a number out of range',
+        code == 0 and re.search(r'^Q P1 207\.1525$', out, re.M) is not None and err == '',
+        'exit %d: %s%s' % (code, out, err))
+    # A solve that runs away prints NaN as Perl's printf does.
+    with open(os.path.join(d, 'nan.phc'), 'w') as o:
+        o.write('WATER W 0 700\nNODE J 0\nSPRINKLER S1 3 -50 8\nSPRINKLER S2 3 -50 8\nUSE BORE 120\n'
+                'PIPE P1 W J 1e300 50\nPIPE P2 J S1 3 25\nPIPE P3 J S2 3 25\n')
+    code, out, err = run_phcp([os.path.join(d, 'nan.phc')])
+    is_('a flow that is not a number is printed NaN, exit status 1',
+        code == 1 and re.search(r'^Q P1 NaN$', out, re.M) is not None and 'nan' not in out
+        and re.search(r'^Q P3 56\.5685$', out, re.M) is not None,
+        'exit %d: %s%s' % (code, out, err))
+    # The report's format is chosen by /\.pdf$/i: $ matches before a final newline.
+    with open(os.path.join(d, 'm.phc'), 'w') as o:
+        o.write(big % '100')
+    code, out, err = run_phcp(['m.phc', 'r.pdf\n'], cwd=d)
+    with open(os.path.join(d, 'r.pdf\n'), 'rb') as f:
+        head = f.read(5)
+    is_('a report named "r.pdf" and a newline is a PDF, as /\\.pdf$/i makes it', code == 0 and head == b'%PDF-',
+        'exit %d, the file starts %r' % (code, head))
+    # An error that escapes everything: one line and exit status 255, as
+    # Perl's die, not a traceback and exit status 1 (INDETERMINATE).
+    boom = ('import sys, runpy; sys.argv = [%r, %r]\n'
+            'from hardycross import validate\n'
+            'def assess(*a, **k): raise ZeroDivisionError("division by zero")\n'
+            'validate.assess = assess\n'
+            'runpy.run_path(%r, run_name="__main__")\n'
+            % (PHCP[1], os.path.join(d, 'm.phc'), PHCP[1]))
+    pr_ = subprocess.run([sys.executable, '-c', boom], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT)
+    is_('an error that escapes: one line on stderr, exit status 255, no traceback',
+        pr_.returncode == 255 and pr_.stderr.decode() == 'division by zero\n' and pr_.stdout == b'',
+        'exit %d: %r %r' % (pr_.returncode, pr_.stdout, pr_.stderr))
+    for f in ('ring.phc', 'big.phc', 'nan.phc', 'm.phc', 'r.pdf\n'):
+        os.unlink(os.path.join(d, f))
+
+    # The machine's settings.
+    keep = {k: os.environ.get(k) for k in ('PHCP_SETTINGS', 'PHCP_DATABASE_DIR', 'HOME')}
+    f = os.path.join(d, 's.ini')
+    with open(f, 'wb') as o:
+        o.write(b'DATABASE_DIR=/x/caf\xe9\nA=1\rB=2\nN=b\xc2\xa0\nU=c\x1f \n c = x \n')
+    os.environ['PHCP_SETTINGS'] = f
+    os.environ.pop('PHCP_DATABASE_DIR', None)
+    s = settings.all()
+    is_('settings: a folder name that is not UTF-8 is read, byte for byte',
+        os.fsencode(s.get('DATABASE_DIR', '')) == b'/x/caf\xe9' and os.fsencode(settings.database_dir()) == b'/x/caf\xe9')
+    is_('settings: a line ends at a line feed only, and only ASCII space is trimmed',
+        s.get('A') == '1\rB=2' and 'B' not in s and s.get('N') == 'b ' and s.get('U') == 'c\x1f' and s.get('C') == 'x', s)
+    os.environ['PHCP_DATABASE_DIR'] = ''
+    is_('PHCP_DATABASE_DIR set to nothing is the program\'s own database, whatever the file says',
+        settings.database_dir() is None)
+    os.environ.pop('PHCP_DATABASE_DIR', None)
+    settings.set('c', 'new')
+    settings.set('u', None)
+    with open(f, 'rb') as o:
+        b = o.read()
+    is_('settings: set rewrites its own key and keeps the other lines as they were',
+        b == b'DATABASE_DIR=/x/caf\xe9\nA=1\rB=2\nN=b\xc2\xa0\nC=new\n', b)
+    os.environ['PHCP_SETTINGS'] = d
+    try:
+        settings.set('A', '1')
+        e = None
+    except OSError as x:
+        e = str(x)
+    is_('settings: a file that cannot be written is refused in the Perl\'s words',
+        e == 'cannot write the settings file %s: Is a directory\n' % d if os.name != 'nt' else e is not None, e)
+    os.environ['PHCP_SETTINGS'] = '0'
+    if os.name != 'nt':
+        got = []
+        for h in ('', '.', '/a//b/', '/a/./b', '/home/u'):
+            os.environ['HOME'] = h
+            got.append(settings.file())
+        is_('PHCP_SETTINGS=0 is not a file name; the path is tidied as File::Spec tidies it',
+            got == ['/.config/phcp/settings.ini', '.config/phcp/settings.ini', '/a/b/.config/phcp/settings.ini',
+                    '/a/b/.config/phcp/settings.ini', '/home/u/.config/phcp/settings.ini'], got)
+    for k, v in keep.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    os.unlink(f)
+    os.rmdir(d)
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)

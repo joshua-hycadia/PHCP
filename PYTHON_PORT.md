@@ -282,3 +282,46 @@ Five Perl checks (four in test_phc, one in test_tools) passed without
 testing anything: a failed match inside `is(...)`'s arguments shifts the
 explanation into the result.  The Python checks test the messages both
 programs really give; the counts are unchanged.
+
+## The line-by-line audit of 20 November 2026: the solver core, the network builder, the settings and the command line
+
+`HardyCross.pm`, `HardyCross/Parse.pm`, `HardyCross/PumpCheck.pm`,
+`HardyCross/Settings.pm` and `phcp.pl` read side by side with their Python,
+every function, and each suspected difference run through both programs.
+Each one below was confirmed against the Perl 1.6.0 and fixed to do what it
+does; `tools/test_phc.py` section 12 (24 checks) and `tools/test_curves.py`
+section 7 (8 checks) hold them.
+
+| area | the port did | the Perl does |
+|---|---|---|
+| a pipe that carries nothing, in no loop (a ring with no outlet, hung off the network by one pipe) | `Q BR -0.0000` | `Q BR 0.0000` where the flows that cancel are whole numbers (Perl adds those as integers), `-0.0000` where they are not |
+| an elevation or a value typed `-0`, `-0.0` | minus zero: `-0.000` in the report and the saved results | plain zero (`$t + 0`) |
+| a figure too large to raise to a power (a bore of 1E80 mm, a K of 1E200, a curve point at 1E300) | refused, `MODEL ERROR: (34, 'Numerical result out of range')`, exit 2 | infinity: solved |
+| a solve that runs away to not-a-number | `Q P1 nan` | `Q P1 NaN` (and `Inf`, `-Inf`) |
+| a nominal size no integer holds (`PIPE ... 1e30` under a pipe type) | `DN1000000000000000019884624838656` | `DN-1`, as `%d` prints it |
+| a report path ending `.pdf` and a newline | the text report | the PDF (`/\.pdf$/i`) |
+| `fit=2E,1T` in a row (lower case) | cut at the commas | one token, as `FIT=` is (`/gie`) |
+| digits that are not 0-9 (Arabic-Indic, full-width) handed to `is_num` | a number | not a number |
+| a row shorter than its section expects (`SUPPLIES S N STATIC`, `PUMPDUTY P1`, an empty row) | IndexError | the missing token is undef: 0, or the section's own refusal |
+| `DPV ... MODE=TRIP` with no `TRIP=` | TypeError | a trip pressure of 0 |
+| an element of no known kind | the message without its newline | `internal error: ...` and the newline |
+| `b3_reference_flow` of a DN held as text | 5000 | 500 for "50" and "65" |
+| settings file with a byte that is not UTF-8 (a Latin-1 folder name) | UnicodeDecodeError | read, byte for byte |
+| settings: a lone carriage return, a no-break space or a control character at the end of a value | a line end; trimmed | part of the value |
+| `PHCP_DATABASE_DIR` set to nothing | the file's `DATABASE_DIR` | the program's own database (`//`) |
+| `PHCP_SETTINGS=0`; `HOME` empty, `.` or with `//` in it | used as the file; `./.config/...`, `/a//b/.config/...` | not set; `/.config/...`, `.config/...`, `/a/b/.config/...` (File::Spec) |
+| a settings file that cannot be written | `[Errno 21] Is a directory: ...` | `cannot write the settings file X: Is a directory` |
+| an error nothing catches (a fault in the program, a damaged font file) | a traceback, exit 1 | one line, exit 255 (die); the Python prints its own words, one line, exit 255 |
+
+Left as it is, and why: a solve that runs away carries flows past 2^53 for the
+one sweep in which it is found to have diverged (INDETERMINATE, exit 1), and
+those flows are printed.  Perl adds whole numbers that large as exact 64-bit
+integers where a float rounds, so they can differ from the Perl's in the last
+digits (`Q P68 -13666017801514226.0000` for `...224.0000`).  Below 2^53, which
+is every solve that converges, the two are the same arithmetic.
+
+Also left: a typed pipe given a C of 0 (`USE ASAM 0`), or a bore
+below about 1E-66 mm, divides by zero in the friction loss.  Both programs
+refuse the model with exit status 2; the Perl's reason is its interpreter's
+own, naming its source file and line (`Illegal division by zero at
+.../HardyCross.pm line 322.`), the Python's is `float division by zero`.
