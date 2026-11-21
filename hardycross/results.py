@@ -47,14 +47,24 @@ def strip(text):
 def fingerprint(text, encoding=None):
     return hashlib.sha256(strip(text).encode(encoding or 'utf-8', 'surrogateescape')).hexdigest()
 
+# Perl's \s: the ASCII white space, and for the database's text (which the
+# Perl decodes) the Unicode spaces too -- but not the separators \x1c to
+# \x1f, which Python's \s takes in.
+_WS = r'[ \t\n\r\f\v\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]'
+
 def _word(s):
     s = '-' if s is None else s
-    s = re.sub(r'\s+', '_', s)
+    s = re.sub(_WS + '+', '_', s)
     s = re.sub(r'[^\x21-\x7e]', '', s)
     return s or '-'
 
+# _perl -- a formatted number as Perl's sprintf spells one that is not
+# finite: Inf, -Inf, NaN, where Python's % writes inf and nan.
+def _perl(s):
+    return s.replace('inf', 'Inf').replace('nan', 'NaN') if ('inf' in s or 'nan' in s) else s
+
 def _num(v, d):
-    return '-' if v is None else '%.*f' % (d, v)
+    return '-' if v is None else _perl('%.*f' % (d, v))
 
 #------------------------------------------------------------------------------
 # block -- the results block for a solved network, as text ending in "\n".
@@ -67,7 +77,11 @@ def block(net, ok, text, encoding=None):
     l = []
 
     def rec(w, *fields):
-        l.append('//= %-8s %s' % (w, ' '.join('-' if f is None else str(f) for f in fields)))
+        # A number is joined as Perl stringifies it, %.15g: a tolerance of
+        # 1.0 is "1", and 0.06 / 60 is "0.001".
+        l.append('//= %-8s %s' % (w, ' '.join('-' if f is None else
+                                               _perl('%.15g' % f) if isinstance(f, float) else str(f)
+                                               for f in fields)))
 
     t = time.gmtime()
     l.append('%s - PHCP %s, %04d-%02d-%02d %02d:%02d UTC, %s%s.  Replaced on every solve: edit the model '
@@ -90,17 +104,19 @@ def block(net, ok, text, encoding=None):
         'CONVERGED', 'YES' if s['hc_converged'] else 'NO',
         'SETTLED', 'YES' if s['outer_settled'] else 'NO',
         'TOL_FLOW', s['tol_flow'], 'TOL_LOOP', s['tol_loop'],
-        *(('VERIFY_LOOP', '%.3e' % va['verification']['loop']) if va.get('verification') else ()))
+        *(('VERIFY_LOOP', _perl('%.3e' % va['verification']['loop'])) if va.get('verification') else ()))
     for k in ('continuity', 'balance', 'loop', 'element'):
         r = (va.get('residuals') or {}).get(k)
         if not r:
             continue
-        rec('RESIDUAL', k.upper(), '%.3e' % r['value'], 'TOL', '%.3e' % r['tolerance'],
+        rec('RESIDUAL', k.upper(), _perl('%.3e' % r['value']), 'TOL', _perl('%.3e' % r['tolerance']),
             'PASS', 'YES' if r['pass'] else 'NO')
     el = net['elems'][1:]
     nid = lambda i: net['nodes'][i]['id']
+    # + 0.0: a loss of nothing against the flow is -1 * 0, which Perl works
+    # as integers and prints 0.0000; Python's float gives -0.0, "-0.0000".
     for e in [x for x in el if x['kind'] == 'PIPE']:
-        hf = elem_hf(e, e['q'], net['opts'])[0]
+        hf = elem_hf(e, e['q'], net['opts'])[0] + 0.0
         rec('PIPE', e['id'], 'FROM', nid(e['n1']), 'TO', nid(e['n2']),
             'FLOW', _num(e['q'] / uf, 4),
             'VELOCITY', _num(pipe_velocity(e['q'], e['dia']), 3),
@@ -158,10 +174,10 @@ def block(net, ok, text, encoding=None):
                 'ESTIMATE', 'YES')
 
     for e in [x for x in el if not re.match(r'^(PIPE|DISCHARGE|SUPPLY_)', x['kind'])]:
-        hf = 0 if e.get('closed') else elem_hf(e, e['q'], net['opts'])[0]
+        hf = 0 if e.get('closed') else elem_hf(e, e['q'], net['opts'])[0] + 0.0
         extra = ()
         if e['kind'] == 'DPV':
-            extra = ('MODEL', _word(e.get('db_model') or e.get('model')),
+            extra = ('MODEL', _word(e['db_model'] if e.get('db_model') is not None else e.get('model')),
                      'BASIS', e.get('loss')) + est(e['id'])
         elif e['kind'] == 'ORIFICE':
             extra = ('BORE', _num(e.get('bore'), 2))
@@ -209,7 +225,7 @@ def block(net, ok, text, encoding=None):
         l.append('//= %-8s %s %s %s %s' % ('FINDING', f['severity'].upper(),
                                             f['category'].upper(), f['code'], m))
     # The block's own fingerprint: every record above.
-    l.append('//= %-8s SHA256 %s' % ('CHECK', hashlib.sha256('\n'.join(l[1:]).encode()).hexdigest()))
+    l.append('//= %-8s SHA256 %s' % ('CHECK', hashlib.sha256('\n'.join(l[1:]).encode('utf-8', 'surrogateescape')).hexdigest()))
     l.append(END)
     return '\n'.join(l) + '\n'
 
@@ -218,8 +234,9 @@ def block(net, ok, text, encoding=None):
 #------------------------------------------------------------------------------
 _STATUS_RE = re.compile(r'^' + re.escape(BEGIN) + r'[^\n]*\n(.*?)^' + re.escape(END),
                         re.M | re.S)
-_CHECK_RE = re.compile(r'^//= CHECK\s+SHA256 ([0-9a-f]{64})\s*$')
-_MODEL_RE = re.compile(r'^//= MODEL\s+SHA256 ([0-9a-f]{64})')
+_CHECK_RE = re.compile(r'^//= CHECK\s+SHA256 ([0-9a-f]{64})\s*$', re.A)
+_MODEL_RE = re.compile(r'^//= MODEL\s+SHA256 ([0-9a-f]{64})', re.A)
+_CHECK_LINE = re.compile(r'^//= CHECK\s', re.A)
 
 def status(text):
     text = (text or '').replace('\r\n', '\n')
@@ -227,19 +244,24 @@ def status(text):
     if not m:
         return 'NONE'
     lines = [ln for ln in m.group(1).split('\n') if ln.startswith('//= ')]
+    # The first CHECK record is the one compared, as the Perl's list
+    # assignment takes the first match; every CHECK line is left out of
+    # what it covers.
     check = None
     for ln in lines:
         cm = _CHECK_RE.match(ln)
         if cm:
             check = cm.group(1)
-    recs = [ln for ln in lines if not ln.startswith('//= CHECK ')]
-    if not (check and check == hashlib.sha256('\n'.join(recs).encode()).hexdigest()):
+            break
+    recs = [ln for ln in lines if not _CHECK_LINE.match(ln)]
+    if not (check and check == hashlib.sha256('\n'.join(recs).encode('utf-8', 'surrogateescape')).hexdigest()):
         return 'TAMPERED'
     model = None
     for ln in recs:
         mm = _MODEL_RE.match(ln)
         if mm:
             model = mm.group(1)
+            break
     if not model:
         return 'TAMPERED'
     return 'CURRENT' if model == fingerprint(text) else 'STALE'
@@ -261,4 +283,6 @@ def read_block(text):
     m = _STATUS_RE.search(text)
     if not m:
         return None
-    return [ln[3:].split() for ln in m.group(1).split('\n') if ln.startswith('//= ')]
+    # split ' ' of the file's bytes: the ASCII white space alone.
+    return [[w for w in re.split(r'[ \t\n\r\f\v]+', ln[3:]) if w != '']
+            for ln in m.group(1).split('\n') if ln.startswith('//= ')]

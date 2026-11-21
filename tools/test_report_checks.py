@@ -212,6 +212,91 @@ for m in models:
             close_to('%s node %s PRESSURE + ELEV HEAD = TOTAL HEAD' % (name, f[0]),
                      num(p) + num(eh), num(th), ulp(p) + ulp(eh) + ulp(th))
 
+# The report where the examples do not go: what the port got wrong there,
+# each line as the Perl 1.6.0 prints it for the same model.  (Only with no
+# model named on the command line.)
+def report_of(text, name='m.phc'):
+    d = tempfile.mkdtemp()
+    m, rep = os.path.join(d, name), os.path.join(d, 'r.txt')
+    with open(m, 'w', newline='\n') as fh:
+        fh.write(text)
+    run(m, rep)
+    out = ''
+    if os.path.exists(rep):
+        with open(rep, 'rb') as fh:
+            out = fh.read().replace(b'\r\n', b'\n').decode('utf-8', 'surrogateescape')
+        os.unlink(rep)
+    os.unlink(m)
+    os.rmdir(d)
+    return out
+
+
+def said(what, text, rx):
+    close_to('port: ' + what, 1 if re.search(rx, text, re.M) else 0, 1, 0)
+
+
+if len(sys.argv) == 1:
+    HEAD = ('UNITS LENGTH M\nUNITS ELEVATION M\nUNITS SIZE MM\nUNITS PRESSURE KPA\nUNITS FLOW LPM\n'
+            'UNITS KFACTOR LPM/KPA\nMETHOD HW\n')
+    with open(os.path.join(ROOT, 'examples', '02_full_network.phc'), 'rb') as fh:
+        ex2 = fh.read().replace(b'\r\n', b'\n').decode('utf-8')
+    # Two supplies, so no demand point, with the density check asked for.
+    r = report_of(ex2.replace('PROJECT   REVISION A\n',
+                              'PROJECT   REVISION A\nPROJECT   DENSITY 5.0\nPROJECT   AREA_PER_SPRINKLER 12\n'))
+    said('the density check without a demand point shows a dash there', r,
+         r'^   Result against the design density +- +MEETS$')
+    # A density written "5.0.": Perl reads the number at its head.
+    r = report_of('PROJECT DENSITY 5.0.\nPROJECT AREA_PER_SPRINKLER 1.2.3\nPROJECT AREA_OF_OPERATION ..\n'
+                  + HEAD + 'WATER N1 0 900\nSPRINKLER N2 0 -50 80\nUSE BORE 120\nPIPE P1 N1 N2 100 100\n')
+    said('a density of "5.0." is 5', r, r'Design density +: 5\.00 mm/min$')
+    said('an area per sprinkler of "1.2.3" is 1.2', r, r'Area per sprinkler +: 1\.2 m2$')
+    said('an area of operation of ".." is 0', r, r'Area of operation +: 0\.0 m2$')
+    # C given on a typed pipe: the same as the type's is no note; another
+    # is printed as Perl prints a number, to 15 figures.
+    r = report_of(HEAD + 'WATER N1 0 900\nNODE N3 0\nSPRINKLER N2 0 -50 80\nUSE ASAM 120\n'
+                  'PIPE P1 N1 N3 100 100\nUSE ASAM 110.123456789012345678\nPIPE P2 N3 N2 10 100\n')
+    said('a C to 18 figures is listed to 15', r, r'^ ASAM .* 110\.123456789012/120 +2$')
+    said('and noted to 15', r, r"^  2  Pipe P2: C = 110\.123456789012 used in place of ASAM's C = 120\.$")
+    close_to('port: a C the same as the pipe type\'s is not noted', 1 if 'Pipe P1: C' in r else 0, 0, 0)
+    # A supply too weak, the sprinkler taking water in: the operating
+    # point is off the supply graph, and the report is still written.
+    r = report_of(HEAD + 'USE BORE 120\nWATER W 0 50\nNODE J1 0\nSPRINKLER S1 10 60 80\n'
+                  'PIPE A1 W J1 10 100\nPIPE R1 J1 S1 10 65\n')
+    said('a backward flow has no place on the supply graph, and the report is written', r,
+         r'^ SUPPLY GRAPH - pressure against flow\^1\.85$')
+    # An outlet named 0 with a fixed flow at its node: 0 is false to Perl.
+    r = report_of(HEAD + 'WATER WA 0 900\nNODE N3 0\nSPRINKLER 0 0 -50 80\nFIXEDFLOW FF1 0 30 20\n'
+                  'USE BORE 120\nPIPE P1 WA N3 100 100\nPIPE P2 N3 0 10 100\n')
+    said('the node schedule names the fixed flow at an outlet called 0', r, r'^ 0 .* 50\.00  FF1$')
+    # A design area named 0, the only other one: Perl's || takes it for none.
+    r = report_of(HEAD + 'OPTION DESIGN_AREA 1\nWATER WA 0 900\nNODE N3 0\nSPRINKLER S1 0 -50 80\n'
+                  'SPRINKLER S2 0 -50 80\nUSE BORE 120\nPIPE P1 WA N3 100 100\nPIPE P2 N3 S1 10 100\n'
+                  'PIPE P3 N3 S2 10 100\nAREA 0 S1\nAREA 1 S2\n')
+    said('the other design areas, one named 0, read as none', r, r'The other areas \(none\) were not solved')
+    # A DATA_SOURCE and a TITLE with nothing printable in them are empty,
+    # not missing.
+    r = report_of('TITLE é\nPROJECT DATA_SOURCE é\n' + HEAD
+                  + 'WATER N1 0 900\nSPRINKLER N2 0 -50 80\nUSE BORE 120\nPIPE P1 N1 N2 100 100\n')
+    said('an empty DATA_SOURCE is printed empty', r, r'Pipe data +:$')
+    # The model's file name is the bytes of the command line: two to an
+    # accented letter in UTF-8, each printed '?'.
+    sys.path.insert(0, ROOT)
+    import hardycross
+    from hardycross import phc as _phc, report as _report
+    net = _phc.read_string(HEAD + 'WATER N1 0 900\nSPRINKLER N2 0 -50 80\nUSE BORE 120\nPIPE P1 N1 N2 100 100\n')
+    # A supply at an elevation of 1e308 m: the solve runs away, and the
+    # figures that are not finite are spelled as Perl spells them.
+    r = report_of(HEAD + 'WATER N1 1e308 900\nSPRINKLER N2 0 -50 80\nUSE BORE 120\nPIPE P1 N1 N2 100 100\n')
+    said('a figure that is not finite is Inf or -Inf', r, r'^ N1 +1\d+\.000 +Inf +-Inf +0\.00 ')
+    close_to('port: and never inf or nan', 1 if re.search(r'(?<![A-Za-z])(inf|nan)(?![A-Za-z])', r) else 0, 0, 0)
+    # Perl's own %.0f (no width): a half added and truncated, ties to even.
+    close_to('port: %.0f as Perl prints it',
+             1 if [_report._f0(x) for x in (0.5000000000000001, 0.5, 1.5, 2.5, 119.6, -0.3, 0.0)]
+             == ['0', '0', '2', '2', '120', '-0', '0'] else 0, 1, 0)
+    said('a file name in UTF-8 counts and prints byte by byte',
+         _report.write_report(net, hardycross.solve_model(net), 'café.phc'),
+         r'^ MODEL FILE  : caf\?\?\.phc$')
+
 for t in tmpfiles:
     try:
         os.unlink(t)

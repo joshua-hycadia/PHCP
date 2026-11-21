@@ -11,6 +11,7 @@
 # parse the text line by line (AutoLISP) see the same lines.
 #
 
+import math
 import re
 
 from . import (VERSION, GAMMA_W as GW, elem_hf, pipe_velocity,
@@ -44,21 +45,118 @@ def r4(v):
 def r3(v):
     return None if v is None else 0 + float('%.3f' % v)
 
-# _numify -- the Perl's numification, 0 + $v, for values that reach JSON
-# as text: a database DN or Cv is read from pipes.dat as a string and
-# must print as a number, '100' as 100 and not "100".  (_num, further
-# down, stringifies a number for the JSON writer.)
-def _numify(v):
+# How a number is written depends, in the Perl, on how the scalar was made:
+# an integer (IV) prints its digits, a float (NV) prints as %.15g, and
+# JSON::PP decides between a number and a string by 0 + $value eq $value.
+# The port keeps the two kinds apart as Python's int and float, and each
+# way Json.pm makes a number is a function here that returns the kind the
+# Perl's does:
+#
+#   r4, r3, _r1   0 + sprintf('%.Nf', $v): always a float (the string has a
+#                 decimal point, so Perl adds it as an NV)
+#   _e6           0 + sprintf('%.6e', $v): an integer when the value is
+#                 whole and fits Perl's IV or UV, otherwise a float
+#   _numify       0 + $v: text as Perl numifies it; a float that is whole
+#                 and inside +/- 2**62 becomes an integer
+#   _pleased      a float that has been the operand of abs(), a comparison
+#                 or arithmetic: whole and under 2**53, Perl holds it as an
+#                 integer too, and prints that
+#
+# _num, further down, writes each kind as JSON::PP does.
+_NUM_RE = re.compile(r'[ \t\n\r\f\v]*([+-]?)(?:(\d+)(\.\d*)?([eE][+-]?\d+)?|(\.\d+)([eE][+-]?\d+)?'
+                     r'|(inf(?:inity)?|nan))', re.I | re.A)
+
+# Each 0 + $v in Json.pm is its own place (site), and the Perl's constant 0
+# there changes the first time it is added to a float it cannot take as an
+# integer (a fraction, or 2**53 and more): from then on, at that place, a
+# whole float inside +/- 2**62 is added as an integer.  Before it, only one
+# under 2**53 is.
+_PLUS0 = {}
+
+def _numify(v, site=None):
     if v is None:
-        return None
-    if isinstance(v, bool):
+        return 0
+    if isinstance(v, (bool, _Bool)):
         return 1 if v else 0
-    if isinstance(v, (int, float)):
+    if isinstance(v, int):
         return v
-    try:
-        return int(str(v).strip())
-    except ValueError:
-        return float(v)
+    if isinstance(v, float):
+        whole = math.isfinite(v) and v == math.floor(v)
+        if whole and abs(v) < 2.0 ** 53:
+            return int(v)
+        seen = _PLUS0.get(site)
+        _PLUS0[site] = True
+        if seen and whole and -2.0 ** 62 <= v < 2.0 ** 62:
+            return int(v)
+        return v
+    m = _NUM_RE.match(str(v))
+    if not m:
+        return 0
+    sign, whole, frac, exp, lead, lexp, special = m.groups()
+    if special:
+        f = _INF if special[0] in 'iI' else float('nan')
+        return -f if sign == '-' else f
+    if whole is not None and frac is None and exp is None:
+        # digits alone: an IV, a UV, or too large for either
+        i = int(sign + whole)
+        return i if -2 ** 63 <= i < 2 ** 64 else float(i)
+    f = float(sign + (whole + (frac or '') + (exp or '') if whole is not None else lead + (lexp or '')))
+    if exp is None and lexp is None:
+        # a decimal point and no exponent: Perl adds it as an NV
+        _PLUS0[site] = True
+        return 0 + f
+    f = _whole(f)
+    if isinstance(f, float):
+        _PLUS0[site] = True
+    return f
+
+# _whole -- a float as Perl holds the number of an exponent string: the
+# integer when it is one and fits an IV or a UV.
+def _whole(f):
+    if math.isfinite(f) and f == math.floor(f) and -2.0 ** 63 <= f < 2.0 ** 64:
+        return int(f)
+    return f
+
+def _e6(v):
+    return _whole(float('%.6e' % v))
+
+def _r1(v):
+    return None if v is None else 0 + float('%.1f' % v)
+
+def _pleased(v):
+    if isinstance(v, float) and math.isfinite(v) and v == math.floor(v) and abs(v) < 2.0 ** 53:
+        return int(v)
+    return v
+
+# _f1 -- Perl's sprintf('%.1f'): a number that is not finite is Inf, -Inf or
+# NaN there, where Python's % writes inf and nan.
+def _f1(v):
+    t = '%.1f' % v
+    return t.replace('inf', 'Inf').replace('nan', 'NaN') if not math.isfinite(v) else t
+
+# _pstr -- a number as Perl interpolates it in a string.
+def _pstr(v):
+    if isinstance(v, int):
+        return str(v)
+    if v != v:
+        return 'NaN'
+    if v in (_INF, -_INF):
+        return 'Inf' if v > 0 else '-Inf'
+    return '%.15g' % v
+
+_INF = float('inf')
+
+# _bytes -- the model's file name as the Perl holds it: the bytes of the
+# command line, one character each, so that a name in UTF-8 is written
+# byte by byte (caf\u00c3\u00a9.phc), as JSON::PP writes it.
+def _bytes(t):
+    if not isinstance(t, str) or t.isascii():
+        return t
+    return t.encode('utf-8', 'surrogateescape').decode('latin-1')
+
+# _uc -- Perl's uc of a byte string: a to z, and nothing above ASCII.
+def _uc(t):
+    return t if t.isascii() and t.isupper() else re.sub(r'[a-z]+', lambda m: m.group(0).upper(), t)
 
 # units -- the unit of each quantity, as the report prints it.
 def units(net):
@@ -69,6 +167,7 @@ def units(net):
 # results -- the JSON object (a dict) for a solved network.
 #------------------------------------------------------------------------------
 def results(net, ok, model, **o):
+    model = _bytes(model)
     uf, up = net['f_flow'], net['f_pres']
     node = lambda i: net['nodes'][i]
     el = net['elems'][1:]
@@ -166,7 +265,7 @@ def results(net, ok, model, **o):
                     'converged': TRUE if a.get('ok') else FALSE,
                     'governs': TRUE if a.get('governs') else FALSE}
                    for a in net['area_results']]
-                  if net.get('area_results') else None),
+                  if net.get('area_results') is not None else None),
     }
     u = j['units']
 
@@ -178,9 +277,9 @@ def results(net, ok, model, **o):
     j['demand_assessment'] = dict(va.get('demand_assessment') or {'status': 'NOT_ASSESSED'})
     j['validation'] = {
         'numerical': va['numerical'], 'physical': va['physical'], 'design': va['design'],
-        'residuals': {k: {'value': 0 + float('%.6e' % r['value']),
-                          'tolerance': 0 + float('%.6e' % r['tolerance']),
-                          **({'solver_tolerance': 0 + float('%.6e' % r['solver_tolerance'])} if r.get('solver_tolerance') is not None else {}),
+        'residuals': {k: {'value': _e6(r['value']),
+                          'tolerance': _e6(r['tolerance']),
+                          **({'solver_tolerance': _e6(r['solver_tolerance'])} if r.get('solver_tolerance') is not None else {}),
                           'unit': sym(r['unit']), 'at': r.get('at'),
                           'pass': TRUE if r['pass'] else FALSE}
                       for k, r in (va.get('residuals') or {}).items() if r},
@@ -231,7 +330,7 @@ def results(net, ok, model, **o):
     s += [('MANDATORY: %s - %s' % (f['code'], f['message'])).upper()
           for f in va['findings']
           if f['severity'] == 'error' and f['category'] != 'design']
-    if j.get('areas'):
+    if j.get('areas') is not None:
         s.append('DESIGN AREA %s GOVERNS, OF %d AREAS SOLVED' % (j['design_area'], len(j['areas'])))
     elif j.get('design_area') is not None:
         s.append('DESIGN AREA %s, CHOSEN BY OPTION DESIGN_AREA' % j['design_area'])
@@ -240,27 +339,30 @@ def results(net, ok, model, **o):
     if go:
         g = next((x for x in outlets if x['id'] == go['id']), None)
         if g:
-            s.append('GOVERNING OUTLET %s: %.1f %s AGAINST %.1f REQUIRED, MARGIN %.1f %s'
+            s.append('GOVERNING OUTLET %s: %s %s AGAINST %s REQUIRED, MARGIN %s %s'
                      % (go['id'],
-                        g['discharge_pressure'] if g['discharge_pressure'] is not None else g['pressure'],
-                        u['pressure'].upper(), g['required_pressure'], g['margin'],
+                        _f1(g['discharge_pressure'] if g.get('discharge_pressure') is not None else g['pressure']),
+                        u['pressure'].upper(), _f1(g['required_pressure']), _f1(g['margin']),
                         u['pressure'].upper()))
     for f in fail:
-        s.append('FAIL: %s AT %s %.1f %s AGAINST %.1f REQUIRED'
+        s.append('FAIL: %s AT %s %s %s AGAINST %s REQUIRED'
                  % (f['type'], f['id'],
-                    f['discharge_pressure'] if f['discharge_pressure'] is not None else f['pressure'],
-                    u['pressure'].upper(), f['required_pressure']))
+                    _f1(f['discharge_pressure'] if f.get('discharge_pressure') is not None else f['pressure']),
+                    u['pressure'].upper(), _f1(f['required_pressure'])))
     if outlets:
         s.append(('%d OUTLET%s FAIL' % (len(fail), '' if len(fail) == 1 else 'S'))
                  if fail else 'EVERY OUTLET PASSES')
     d = j.get('demand')
     if d:
-        s.append('SUPPLY %s %s THE DEMAND: %.1f %s AVAILABLE AT %.1f %s, %.1f NEEDED'
+        s.append('SUPPLY %s %s THE DEMAND: %s %s AVAILABLE AT %s %s, %s NEEDED'
                  % (d['supply'], 'MEETS' if d['meets'] is TRUE else 'DOES NOT MEET',
-                    d['available'], u['pressure'].upper(),
-                    d['flow'], u['flow'].upper(), d['pressure']))
+                    _f1(d['available']), u['pressure'].upper(),
+                    _f1(d['flow']), u['flow'].upper(), _f1(d['pressure'])))
     nw = len(j['warnings'])
     nv = sum(1 for p in pipes if abs(p['velocity']) > (net['opts'].get('vel_limit') if net['opts'].get('vel_limit') is not None else 6))
+    # The Perl's abs() above leaves a whole velocity held as an integer.
+    for p in pipes:
+        p['velocity'] = _pleased(p['velocity'])
     if nv:
         s.append('%d PIPE%s OVER THE VELOCITY LIMIT' % (nv, '' if nv == 1 else 'S'))
     if nw:
@@ -285,13 +387,13 @@ def check_valves_json(net):
             'pressure': r4(demand.gauge(net, s['n2']) / up),
             'supply_pressure': r4(demand.avail_of(s, q if q > 0 else 0) / up),
             'loss': (r4(v['loss'] / up) if (v and not s.get('closed')) else None),
-            'cv': (_numify(v['cv']) if v else None),
+            'cv': (_numify(v['cv'], 'nrv_cv') if v else None),
             'loss_basis': v.get('basis') if v else None,
             'loss_curve_max_flow': (r4(v['curve']['qhi'] / uf) if (v and v.get('curve')) else None),
             'opening_pressure': (r4(v['crack'] / up) if v else None),
             'opening_pressure_given': (TRUE if v and v.get('crack_given') else (FALSE if v else None)),
             'model': v.get('model') if v else None,
-            'switches': (_numify(v['switches']) if v else None),
+            'switches': (_numify(v['switches'], 'switches') if v else None),
         })
     return out
 
@@ -310,10 +412,10 @@ def supplies_json(net, s):
                        'extrapolated': TRUE if r['extrapolated'] else FALSE}
                       for r in s['operating']],
         'supply_sum': Q(s['supply_sum']), 'net_demand': Q(s['net_demand']),
-        'balance': 0 + float('%.6e' % (s['balance'] / uf)),
+        'balance': _e6(s['balance'] / uf),
         'governing': s.get('governing'),
     }
-    if s.get('conditional'):
+    if s.get('conditional') is not None:
         j['conditional'] = [{'id': c['id'], 'status': c['status'], 'reason': c.get('reason'),
                              'basis': 'the other supplies as modelled',
                              'required_flow': Q(c.get('flow')),
@@ -341,15 +443,17 @@ def supplies_json(net, s):
                                         'margin': P(r['margin']),
                                         'share_percent': r4(r['share']),
                                         'status': r['status']} for r in jd['supplies']]}
-    if s.get('scenarios'):
+    # An empty list is written too (OPTION SUPPLY_SCENARIOS OFF and no
+    # SCENARIO line): the Perl tests the array reference, which is true.
+    if s.get('scenarios') is not None:
         j['scenarios'] = [{'name': sc['name'], 'description': sc['description'],
                            'required': TRUE if sc.get('required') else FALSE,
                            'line': sc.get('line'),
-                           'definition': {k: _numify(v) for k, v in sc['shares'].items()},
+                           'definition': {k: _numify(v, 'definition') for k, v in sc['shares'].items()},
                            'acceptance': sc.get('acceptance'),
                            'governing': sc.get('governing'), 'margin': P(sc.get('margin')),
                            'findings': sc.get('findings') or [], 'error': sc.get('error'),
-                           'supplies': [{'id': r['id'], 'percent': _numify(r['percent']),
+                           'supplies': [{'id': r['id'], 'percent': _numify(r['percent'], 'percent'),
                                          'flow': Q(r['flow']), 'pressure': P(r['pressure']),
                                          'status': r['status']} for r in sc['supplies']]}
                           for sc in s['scenarios']]
@@ -362,7 +466,7 @@ def dpv_json(net, va, dry):
     uf, up = net['f_flow'], net['f_pres']
     dry = dry or []
     drymap = {d['id']: d for d in dry}
-    r1 = lambda v: (None if v is None else 0 + float('%.1f' % v))
+    r1 = _r1
     out = []
     for e in [x for x in net['elems'][1:] if x['kind'] == 'DPV']:
         d = drymap.get(e['id'])
@@ -413,10 +517,10 @@ def dpv_json(net, va, dry):
             'accelerator': e.get('accelerator'),
             'loss_basis': e.get('loss'), 'equivalent_length': r4(e.get('eql')),
             'loss_source': e.get('loss_source'), 'data_status': e.get('data_status'),
-            'database_valve': ({'maker': db['maker'], 'model': db['model'], 'dn': _numify(db['dn']),
+            'database_valve': ({'maker': db['maker'], 'model': db['model'], 'dn': _numify(db['dn'], 'dn'),
                                 'reference_bore': r4(e.get('ref_bore')),
-                                'reference_c': (None if e.get('ref_c') is None else _numify(e['ref_c'])),
-                                'cv': (None if e.get('cv') is None else _numify(e['cv'])),
+                                'reference_c': (None if e.get('ref_c') is None else _numify(e['ref_c'], 'ref_c')),
+                                'cv': (None if e.get('cv') is None else _numify(e['cv'], 'dpv_cv')),
                                 'published_trip': db.get('trip'),
                                 'rated_pressure': db.get('pmax'),
                                 'status': db.get('status'), 'source': db.get('source')}
@@ -462,7 +566,7 @@ def traceability(net, va):
                        'maxiter': va['solver']['maxiter']},
         'assumptions': assume,
         'scenarios': [{'name': sc['name'], 'line': sc.get('line'),
-                        'shares': {a: _numify(b) for a, b in sc['shares']}}
+                        'shares': {a: _numify(b, 'shares') for a, b in sc['shares']}}
                        for sc in (net.get('scenarios') or [])],
     }
 
@@ -475,14 +579,14 @@ def assumptions(net):
     return {
         'friction_method': ('DARCY-WEISBACH' if (o.get('method') or 'HW') == 'DW'
                             else 'HAZEN-WILLIAMS'),
-        'hw_constant': (None if (o.get('method') or 'HW') == 'DW' else 0 + o['hwk']),
+        'hw_constant': (None if (o.get('method') or 'HW') == 'DW' else _numify(o['hwk'], 'hwk')),
         'fitting_basis': o.get('fitting_basis') or 'CORRECTED',
         'velocity_pressure': TRUE if o.get('vel_press') else FALSE,
         'joint_basis': ((o.get('joint_basis') or 'DERATE') if multi else None),
         'joint_basis_is_assumption': (TRUE if multi else None),
         'supply_margin': r4((o.get('supply_margin') or 0) / net['f_pres']),
-        'orifice_duty_tolerance_percent': 0 + (o.get('orif_dp_tol') if o.get('orif_dp_tol') is not None else ORIF_DP_TOL),
-        'curve_extrapolation_limit': 0 + EXTRAP_MAX,
+        'orifice_duty_tolerance_percent': _numify(o.get('orif_dp_tol') if o.get('orif_dp_tol') is not None else ORIF_DP_TOL, 'orif'),
+        'curve_extrapolation_limit': _numify(EXTRAP_MAX, 'extrap'),
         'solver_tolerances': {'flow': r4(o['tol_flow'] / net['f_flow']),
                               'loop': r4(o['tol_loop'] / net['f_pres'])},
         'dry_pipe_valves': ('tripped and fully open (steady state)'
@@ -493,18 +597,21 @@ def assumptions(net):
 # error_result -- the JSON object when the model could not be read or solved.
 #------------------------------------------------------------------------------
 def error_result(e, model):
-    msg = e.msg if is_model_error(e) else str(e)
-    msg = msg.rstrip()
+    model = _bytes(model)
+    # The message as the Perl holds it: bytes (it may name the file), and
+    # uc() of bytes changes the ASCII letters alone.
+    msg = _bytes(e.msg if is_model_error(e) else str(e))
+    msg = re.sub(r'[ \t\n\r\f\v]+\Z', '', msg)
     line = None
-    m = re.match(r'^line (\d+): ', msg, re.I)
+    m = re.match(r'line ([0-9]+): ', msg, re.I)
     if m:
-        line = 0 + int(m.group(1))
+        line = _numify(m.group(1), 'line')
         msg = msg[m.end():]
     return {'interface': INTERFACE, 'program': 'PHCP %s' % VERSION, 'model': model,
             'status': 'error', 'acceptance': 'ERROR', 'converged': FALSE,
-            'errors': [{'line': line, 'message': msg.upper()}],
-            'summary': ['NOT SOLVED: %s%s' % (msg.upper(),
-                                              (' (LINE %d)' % line) if line is not None else '')]}
+            'errors': [{'line': line, 'message': _uc(msg)}],
+            'summary': ['NOT SOLVED: %s%s' % (_uc(msg),
+                                              (' (LINE %s)' % _pstr(line)) if line is not None else '')]}
 
 #------------------------------------------------------------------------------
 # The encoder: JSON::PP's canonical-pretty-ascii output, byte for byte.
@@ -535,7 +642,7 @@ def _str(s):
         o = ord(ch)
         if ch in _ESC:
             out.append(_ESC[ch])
-        elif o < 0x20 or o >= 0x7f:
+        elif o < 0x20 or o > 0x7f:      # DEL is written as it is, as JSON::PP does
             if o > 0xffff:
                 # surrogate pair, as \uXXXX\uXXXX
                 o -= 0x10000
@@ -546,13 +653,39 @@ def _str(s):
             out.append(ch)
     return '"' + ''.join(out) + '"'
 
+# Whether a float that Perl cannot also hold as an integer (one with a
+# fraction, or of 2**53 and more) has been written yet in this process.
+# JSON::PP's test works on one variable it uses again for every value, and
+# what the first such float leaves in it is what makes the test fail for
+# the large whole ones after it: the first is written bare, the rest in
+# quotes.  phcp writes one document a run, so this is "earlier in it".
+_NV_SEEN = [False]
+
 def _num(x):
-    # Perl's number stringification: %.15g.
+    # An integer is its digits.  A float is Perl's stringification, %.15g
+    # -- and JSON::PP (4.16, without B) takes a scalar for a number only
+    # when 0 + $value eq $value.  A whole float from 2**53 up, inside
+    # +/- 2**62, fails that once a float has gone before it (_NV_SEEN):
+    # Perl adds it as an integer, whose digits are not the %.15g text, and
+    # JSON::PP writes it as a string, in quotes.  Inf and NaN are written
+    # bare, and a negative zero as 0.
     if isinstance(x, bool):
         return 'true' if x else 'false'
     if isinstance(x, int):
         return str(x)
-    return '%.15g' % x
+    seen = _NV_SEEN[0]
+    if not (math.isfinite(x) and x == math.floor(x) and abs(x) < 2.0 ** 53):
+        _NV_SEEN[0] = True
+    if x != x:
+        return 'NaN'
+    if x in (_INF, -_INF):
+        return 'Inf' if x > 0 else '-Inf'
+    if x == 0:
+        return '0'
+    s = '%.15g' % x
+    if seen and abs(x) >= 2.0 ** 53 and -2.0 ** 62 <= x < 2.0 ** 62:
+        return '"' + s + '"'
+    return s
 
 def _enc(v, ind):
     pad = '   ' * ind

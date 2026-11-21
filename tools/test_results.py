@@ -130,6 +130,32 @@ with open(os.path.join(EX, '01_single_branch.phc'), 'rb') as fin:
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
 is_('--save with the model on standard input is refused', code != 0)
 
+# What the port got wrong where the examples do not go, each as the Perl
+# 1.6.0 does it on the same input.
+m = os.path.join(TMP, 'tol.phc')
+with open(m, 'w', newline='\n') as f:
+    f.write(re.sub(r'TOL_LOOP \S+', 'TOL_LOOP 2',
+                   re.sub(r'TOL_FLOW \S+', 'TOL_FLOW 1', slurp(os.path.join(EX, '01_single_branch.phc')))))
+save(m)
+saved = slurp(m)
+is_('a tolerance of 1 is written 1, as Perl prints a number, not 1.0',
+    re.search(r'^//= SOLVER .* TOL_FLOW 1 TOL_LOOP 2 VERIFY_LOOP ', saved, re.M) is not None)
+check = re.search(r'^//= CHECK +SHA256 [0-9a-f]{64}$', saved, re.M).group(0)
+forged = '//= CHECK    SHA256 ' + '0' * 64
+is_('of two CHECK records the first is the one compared',
+    results.status(saved.replace(check, check + '\n' + forged)) == 'CURRENT'
+    and results.status(saved.replace(check, forged + '\n' + check)) == 'TAMPERED')
+is_('a CHECK line of any spacing is left out of what the check covers',
+    results.status(saved.replace(check, check + '\n//= CHECK\tX')) == 'CURRENT')
+is_('a block edited to a byte that is not UTF-8 is TAMPERED, not an error',
+    results.status(saved.replace('//= PROGRAM  PHCP', '//= PROGRAM  PH\udce9CP')) == 'TAMPERED')
+is_('a figure that is not finite is written Inf, -Inf or NaN',
+    [results._num(x, 4) for x in (float('inf'), float('-inf'), float('nan'), None, -0.0)]
+    == ['Inf', '-Inf', 'NaN', '-', '-0.0000'])
+is_('read_block splits a record at ASCII white space alone',
+    results.read_block(saved.replace('//= PROGRAM  PHCP', '//= PROGRAM  PH\x1fCP\xa0Z'))[1]
+    == ['PROGRAM', 'PH\x1fCP\xa0Z', 'VERSION', hardycross.VERSION])
+
 for f in glob.glob(os.path.join(TMP, '*')):
     os.unlink(f)
 os.rmdir(TMP)
