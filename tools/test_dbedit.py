@@ -333,11 +333,11 @@ if True:
         # open_db loses the fingerprint.  A defect there, deliberately not
         # copied.)
         with open('nonl.dat', 'wb') as o:
-            o.write(ORIG.rstrip(b'\n'))
+            o.write(ORIG.rstrip(b'\r\n'))
         d = DB.open_db('nonl.dat')
         is_('a file with no newline at its end: unchanged, it writes back to the same bytes',
-            DB.text(d).encode('utf-8') == ORIG.rstrip(b'\n')
-            and d.get('sha256') == hashlib.sha256(ORIG.rstrip(b'\n')).hexdigest())
+            DB.text(d).encode('utf-8') == ORIG.rstrip(b'\r\n')
+            and d.get('sha256') == hashlib.sha256(ORIG.rstrip(b'\r\n')).hexdigest())
         r0 = DB.rows(d, 'KPRIME')[0]
         f = list(r0['fields'])
         f[1] = 'CHANGED'
