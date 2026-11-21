@@ -28,7 +28,10 @@
 #   release        on a version tag (v1.2.3) or a release published on
 #                  GitHub: the programs, the user guide and the reference
 #                  manual (docs/*.docx, docs/*.pdf) attached to the release,
-#                  with the notes in release_notes/<tag>.md if there are any
+#                  with the notes in release_notes/<tag>.md if there are any.
+#                  A run by hand on main with RELEASE_TAG given (v1.2.3, the
+#                  version in hardycross/__init__.py) makes the tag and the
+#                  release itself, for where a tag cannot be pushed
 #
 # Runs on every pull request and every push to main.
 
@@ -42,6 +45,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Make this release from main (v1.2.3). Empty: tests only.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -103,6 +111,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           # The report and --save run the demand search, which re-solves a
           # model many times: in Perl the grids above G050 take too long
           # for the runner there.  Their text and JSON are still compared.
@@ -110,9 +119,10 @@ jobs:
         run: |
           set -e
           # A pull request, and a release (a tag or a published release: the
-          # commit main has already checked in full), run the sample; a push
-          # to main or a run by hand, everything the runner's time allows.
-          if [ "$EVENT" = pull_request ] || [ "$EVENT" = release ] || [ "$REF_TYPE" = tag ]; then
+          # commit main has already checked in full; a run by hand that makes
+          # a release likewise), run the sample; a push to main or a run by
+          # hand, everything the runner's time allows.
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = release ] || [ "$REF_TYPE" = tag ] || [ -n "$RELEASE_TAG" ]; then
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --set examples
             python3 tools/compare_perl.py --perl perl-1.6.0 -v --modes text,json --every 10 \
               --set models --set models_A --set models_B
@@ -188,7 +198,9 @@ jobs:
           if-no-files-found: warn
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [test-linux, parity, build-windows]
     runs-on: ubuntu-latest
     permissions:
@@ -201,9 +213,23 @@ jobs:
       - name: Attach the programs to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.release.tag_name || github.ref_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.release_tag || github.ref_name }}
+          BY_HAND: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -e
+          target=""
+          if [ "$BY_HAND" = true ]; then
+            # A release made by hand: from main only, and the tag is the
+            # program's own version, so a slip of the hand makes nothing.
+            version=$(sed -n "s/^VERSION = '\(.*\)'$/\1/p" hardycross/__init__.py)
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "a release is made from main, not $GITHUB_REF"; exit 1
+            fi
+            if [ "$TAG" != "v$version" ]; then
+              echo "the tag $TAG is not this program's version, v$version"; exit 1
+            fi
+            target="--target $GITHUB_SHA"
+          fi
           files="phcp.exe"
           [ -f phcp_editor.exe ] && files="$files phcp_editor.exe"
           [ -f phcp_sheet.exe ] && files="$files phcp_sheet.exe"
@@ -214,7 +240,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $files --clobber
           elif [ -f "release_notes/$TAG.md" ]; then
-            gh release create "$TAG" $files --title "PHCP ${TAG#v}" --notes-file "release_notes/$TAG.md"
+            gh release create "$TAG" $files $target --title "PHCP ${TAG#v}" --notes-file "release_notes/$TAG.md"
           else
-            gh release create "$TAG" $files --title "PHCP ${TAG#v}" --generate-notes
+            gh release create "$TAG" $files $target --title "PHCP ${TAG#v}" --generate-notes
           fi
