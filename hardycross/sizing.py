@@ -42,7 +42,7 @@ def choices(type_, fits, unit):
         if not pipedata.pipe_row(type_, dn):
             continue
         bore = pipedata.bore(type_, dn)
-        if not bore:
+        if not pipedata._true(bore):    # Perl's truth: a bore of 0 is none
             continue
         if len(spec):
             r = pipedata.resolve(type=type_, dn=dn, spec=spec)
@@ -51,8 +51,9 @@ def choices(type_, fits, unit):
         tok = inch.get(dn) if (unit or 'MM') == 'IN' else dn
         if tok is not None:
             # bore as a number: the database holds it as text ('53.0'), and
-            # the sums below use it as one (Perl numified it silently).
-            out.append([dn, tok, float(bore)])
+            # the sums below use it as one (Perl numified it silently, and
+            # text that is no number as 0).
+            out.append([dn, tok, pipedata._num(bore)])
     return out
 
 #------------------------------------------------------------------------------
@@ -62,7 +63,7 @@ def choices(type_, fits, unit):
 def margin_of(v, net):
     if v is None or not len(v):
         return {'kind': 'FIXED', 'p': 0, 'text': 'none (SIZING_MARGIN not set)'}
-    m = re.match(r'^([\d.]+)%\Z', v)
+    m = re.match(r'^([\d.]+)%\Z', v, re.A)
     if m:
         return {'kind': 'PERCENT', 'f': float(m.group(1)) / 100,
                 'text': '%s%% of the supply pressure' % m.group(1)}
@@ -86,7 +87,7 @@ def reduce(net, m, extra):
         c = s['curve']
         q = [0] + [x for x in (y - hose for y in c['q']) if x > 1e-9]
         if len(q) < 2:
-            q.append(q[-1] + (c['qhi'] or 1))
+            q.append(q[-1] + (c.get('qhi') or 1))
         seen = set()
         qq = []
         for x in q:
@@ -383,11 +384,9 @@ def size(net, ok, **arg):
             n = read_string(t + ('' if t.endswith('\n') else '\n')
                             + ('OPTION DESIGN_AREA %s\n' % case if case is not None else ''),
                             dir_)
-            try:
-                c = solve_model(n)
-            except Exception:
-                c = None
-            if not c:
+            # No eval round this solve in the Perl: one that dies stops the
+            # sizing with its error; one that does not converge fails it.
+            if not solve_model(n):
                 passes = 0
                 continue
             d = demand.demand_point(n)
@@ -402,17 +401,15 @@ def size(net, ok, **arg):
         if passes:
             break
         # Short at the demand point: ask for that much more and search again.
-        extra += (required - dmargin) + 0.5
+        # (undef - undef is 0 in Perl: no case reached a demand point.)
+        extra += ((required or 0) - (dmargin or 0)) + 0.5
     if passes is None:
         passes = 0
 
     # The answer, solved and reported as any model.
     t = sized(idx)
     out = read_string(t, dir_)
-    try:
-        c = solve_model(out)
-    except Exception:
-        c = None
+    c = solve_model(out)        # not in an eval in the Perl: an error is one
     emap = {e.get('id') or '': e for e in out['elems'][1:]}
     res = []
     for i in range(len(units)):
@@ -440,6 +437,7 @@ def size(net, ok, **arg):
 # spacing and comment kept.
 #------------------------------------------------------------------------------
 def set_field(line, n, value):
+    # \S and \s are the Perl's, of the model's bytes: ASCII white space only.
     m = re.match(r'^(.*?)((?://.*)?)\Z', line, re.S)
     code, rest = m.group(1), m.group(2)
     i = -1
@@ -449,7 +447,7 @@ def set_field(line, n, value):
         i += 1
         return str(value) if i == n else mm.group(1)
 
-    return re.sub(r'(\S+)', repl, code) + rest
+    return re.sub(r'(\S+)', repl, code, flags=re.A) + rest
 
 #------------------------------------------------------------------------------
 # annotate -- the user's own .phc text with each sized pipe's size written as
@@ -469,13 +467,13 @@ def annotate(text, sizing, offset=0):
 
 # mark -- one line with //AS - <size> after its fields.
 def mark(line, tok):
-    m = re.match(r'^(.*?)\s*((?://.*)?)\Z', line, re.S)
+    m = re.match(r'^(.*?)\s*((?://.*)?)\Z', line, re.S | re.A)
     code, comment = m.group(1), m.group(2)
-    comment = re.sub(r'^//AS - \S+\s*', '', comment)
+    comment = re.sub(r'^//AS - \S+\s*', '', comment, flags=re.A)
     return '%s  //AS - %s%s' % (code, tok, (' ' + comment) if len(comment) else '')
 
 # clear -- the //AS comments taken off again (a pipe no longer sized).
 def clear(text):
-    text = re.sub(r'[ \t]*//AS - \S+[ \t]*(//)', r' \1', text, flags=re.M)
-    text = re.sub(r'[ \t]*//AS - \S+[ \t]*$', '', text, flags=re.M)
+    text = re.sub(r'[ \t]*//AS - \S+[ \t]*(//)', r' \1', text, flags=re.M | re.A)
+    text = re.sub(r'[ \t]*//AS - \S+[ \t]*$', '', text, flags=re.M | re.A)
     return text

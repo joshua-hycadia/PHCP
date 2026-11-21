@@ -13,6 +13,7 @@
 # Perl numifies them, so 'DASH' stays a word and not a 0.
 #
 
+import codecs
 import hashlib
 import os
 import re
@@ -42,6 +43,75 @@ _ISSUED = None
 _PATH = None
 _SHA256 = None
 
+# _num -- a database field as the number Perl makes of it where it is used
+# in arithmetic (0 + $s): the leading number of the text, 0 when it has
+# none (a blank, a word, a missing field), never an error.  The database is
+# user editable, so a field may hold anything.
+_NUM_PREFIX = re.compile(r'[ \t\n\r\f\v]*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)', re.A)
+_NUM_WORD = re.compile(r'[ \t\n\r\f\v]*([-+]?)(inf(?:inity)?|nan)', re.I)
+
+def _num(s):
+    if s is None:
+        return 0.0
+    if isinstance(s, (int, float)):
+        return float(s)
+    m = _NUM_PREFIX.match(s)
+    if m:
+        return float(m.group(1))
+    m = _NUM_WORD.match(s)
+    if m:
+        v = float('nan') if m.group(2).lower() == 'nan' else float('inf')
+        return -v if m.group(1) == '-' else v
+    return 0.0
+
+# _true -- Perl's truth of a scalar: undef, '' and '0' are false.
+def _true(x):
+    return x is not None and x != '' and x != '0' and x != 0
+
+# _pow -- Perl's x ** y: a negative x to a fractional power is NaN, where
+# Python would give a complex number.
+def _pow(x, y):
+    if x < 0:
+        return float('nan')
+    try:
+        return x ** y
+    except OverflowError:           # C's pow: too large is infinity
+        return float('inf')
+
+# The database is read as Perl's :encoding(UTF-8) layer reads it: a byte
+# that is not UTF-8 is not an error, it becomes the four characters \xHH.
+def _perl_utf8_error(e):
+    return (''.join('\\x%02X' % b for b in e.object[e.start:e.end]), e.end)
+codecs.register_error('phcp-perl-utf8', _perl_utf8_error)
+
+def decode(data):
+    return data.decode('utf-8', 'phcp-perl-utf8')
+
+# canonpath, catfile -- File::Spec's, which the Perl builds its paths with:
+# a path is tidied (// and /./ taken out, a leading ./ dropped) but never
+# resolved.  On Windows os.path does the same work.
+def canonpath(p):
+    if os.sep != '/':
+        return os.path.normpath(p) if p != '' else p
+    p = re.sub(r'/{2,}', '/', p)
+    p = re.sub(r'(?:/\.)+(?:/|\Z)', '/', p)
+    if p != './':
+        p = re.sub(r'^(?:\./)+', '', p)
+    p = re.sub(r'^/(?:\.\./)+', '/', p)
+    p = re.sub(r'^/\.\.$', '/', p)
+    if p != '/':
+        p = re.sub(r'/\Z', '', p)
+    return p
+
+def catfile(d, f):
+    if os.sep != '/':
+        return os.path.normpath(os.path.join(d, f))
+    f = canonpath(f)
+    d = canonpath(d + '/')
+    if not d.endswith('/'):
+        d += '/'
+    return d + f
+
 def _prog_dir():
     # The directory of the program that started us, as $0 / PAR_PROGNAME in
     # program.  phcp sets this from its own path at startup; the tests use it
@@ -49,7 +119,10 @@ def _prog_dir():
     return getattr(sys, 'phcp_program_dir', None) or os.path.dirname(os.path.abspath(sys.argv[0]))
 
 def _module_dir():
-    return os.path.dirname(os.path.abspath(__file__))
+    # Links resolved: the Perl finds its modules through FindBin, which
+    # resolves them, so a program run through a linked folder still knows
+    # its own database as the built-in one.
+    return os.path.dirname(os.path.realpath(__file__))
 
 def user_path():
     prog = os.environ.get('PAR_PROGNAME') or sys.argv[0]
@@ -58,7 +131,7 @@ def user_path():
 def default_path():
     d = settings.database_dir()
     if d is not None:
-        return os.path.join(d, 'pipes.dat')
+        return catfile(d, 'pipes.dat')
     name = 'pipes.dat'
     try_ = [user_path(),
             os.path.join(os.path.dirname(_module_dir()), 'data', name)]
@@ -67,9 +140,11 @@ def default_path():
         try_.append(os.path.join(sys._MEIPASS, 'data', name))
     if os.environ.get('PAR_TEMP'):
         try_.append(os.path.join(os.environ['PAR_TEMP'], 'inc', 'lib', 'data', name))
+    # A found file is named plainly, links resolved (Cwd::abs_path), as the
+    # report prints it.
     for p in try_:
-        if os.path.isfile(p) and os.access(p, os.R_OK):
-            return os.path.abspath(p)
+        if os.access(p, os.R_OK):
+            return os.path.realpath(p)
     return try_[1]
 
 def origin(path=None):
@@ -92,55 +167,69 @@ def load(path=None):
     global _PIPETYPE, _PIPE, _FIT, _KPRIME, _DRYVALVE, _DATASET, _ISSUED, _PATH, _SHA256
     path = path if path is not None else default_path()
     try:
-        with open(path, 'rb') as raw:
-            data = raw.read()
+        # A folder opens in Perl and reads as nothing: it is then a database
+        # with no DATASET line, not one that cannot be opened.
+        if os.path.isdir(path) and os.access(path, os.R_OK):
+            data = b''
+        else:
+            with open(path, 'rb') as raw:
+                data = raw.read()
     except OSError as e:
         extra = ''
         if settings.database_dir() is not None:
             extra = (' (the database folder set in the PHCP settings, '
                      + settings.file() + ')')
-        raise SystemError('cannot open the pipe and fitting database %s: %s%s'
-                          % (path, e, extra))
+        # The reason in the system's words alone ($!), and the line ended,
+        # as the Perl's die message is.
+        raise SystemError('cannot open the pipe and fitting database %s: %s%s\n'
+                          % (path, e.strerror or e, extra))
     _PIPETYPE = {}; _PIPE = {}; _FIT = {}; _KPRIME = {}; _DRYVALVE = {}
     _DATASET = None; _ISSUED = None
     _SHA256 = hashlib.sha256(data).hexdigest()
     _PATH = path
-    text = data.decode('utf-8')
+    text = decode(data)
+    # A hash key that is undef is the empty string.
+    K = lambda x: '' if x is None else x
     for l in text.split('\n'):
-        l = re.sub(r'\r$', '', l)
+        l = re.sub(r'\r\Z', '', l)
         if re.match(r'^\s*(#|$)', l):
             continue
+        # Perl's split drops the empty fields a line ends with, so a field
+        # left blank at the end of a line is a missing one.
         f = l.split('|')
-        kind = f.pop(0)
+        while f and f[-1] == '':
+            f.pop()
+        kind = f.pop(0) if f else None
         if kind == 'DATASET':
             _DATASET = f[0] if len(f) > 0 else None
             _ISSUED = f[1] if len(f) > 1 else None
         elif kind == 'PIPETYPE':
             code, name, std, rng, c, eps = (f + [None] * 6)[:6]
             if eps is not None and (eps == 'DASH' or
-                    not re.match(r'^\s*(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*$', eps)):
+                    not re.match(r'^\s*(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\s*\Z', eps)):
                 eps = None
-            _PIPETYPE[code] = {'name': name, 'std': std, 'range': rng, 'c': c, 'eps': eps}
+            _PIPETYPE[K(code)] = {'name': name, 'std': std, 'range': rng, 'c': c, 'eps': eps}
         elif kind == 'PIPE':
             code, dn, od, bore, k = (f + [None] * 5)[:5]
-            _PIPE.setdefault(code, {})[dn] = {'od': od, 'bore': bore, 'k': k}
+            _PIPE.setdefault(K(code), {})[K(dn)] = {'od': od, 'bore': bore, 'k': k}
         elif kind == 'FIT':
             src, code, label, dn, le = (f + [None] * 5)[:5]
-            _FIT.setdefault(src, {}).setdefault(code, {})[dn] = {'label': label, 'le': le}
-            _FIT[src][code]['_label'] = label
+            _FIT.setdefault(K(src), {}).setdefault(K(code), {})[K(dn)] = {'label': label, 'le': le}
+            _FIT[K(src)][K(code)]['_label'] = label
         elif kind == 'KPRIME':
             code, label, kp, use = (f + [None] * 4)[:4]
-            _KPRIME[code] = {'label': label, 'kp': kp, 'use': use}
+            _KPRIME[K(code)] = {'label': label, 'kp': kp, 'use': use}
         elif kind == 'DRYVALVE':
             (maker, model, dn, inch, eql, unit, c, ref, trip, pmax,
              status, source, note) = (f + [None] * 13)[:13]
-            _DRYVALVE.setdefault(maker.upper(), {}).setdefault(model.upper(), {})[dn] = {
-                'maker': maker.upper(), 'model': model.upper(), 'dn': dn, 'inch': inch,
+            maker, model = K(maker).upper(), K(model).upper()
+            _DRYVALVE.setdefault(maker, {}).setdefault(model, {})[K(dn)] = {
+                'maker': maker, 'model': model, 'dn': dn, 'inch': inch,
                 'eql': eql, 'eql_unit': (unit or '').upper(), 'c': c, 'ref': ref, 'trip': trip,
                 'pmax': pmax, 'status': status, 'source': source, 'note': note or ''}
-    if not _DATASET:
+    if not _true(_DATASET):
         raise SystemError('database %s has no DATASET line -- add one naming '
-                          'this data and its date' % path)
+                          'this data and its date\n' % path)
     return 1
 
 def dataset():   return _DATASET or ''
@@ -154,6 +243,10 @@ def pipe_types(): return sorted(_PIPETYPE)
 # tables by the DN as text ('25'); callers arrive with either the text or
 # the number, and the original's look-ups stringified the same way.
 def _dnkey(dn):
+    if dn is None:
+        return ''
+    if isinstance(dn, float):
+        return '%.15g' % dn
     return str(dn) if isinstance(dn, int) else dn
 
 def bore(type_, dn):
@@ -173,7 +266,7 @@ def dry_valve(maker, model, dn):
     if r is None:
         return None
     v = dict(r)
-    num = re.compile(r'^\s*(\d+\.?\d*|\.\d+)\s*$')
+    num = re.compile(r'^\s*(\d+\.?\d*|\.\d+)\s*\Z')
     if r['eql_unit'] == 'CV':
         m = num.match(r['eql'] or '')
         v['cv'] = float(m.group(1)) if m else None
@@ -181,7 +274,7 @@ def dry_valve(maker, model, dn):
         m = num.match(r['eql'] or '')
         v['eql_m'] = (float(m.group(1)) * (0.3048 if r['eql_unit'] == 'FT' else 1.0)
                       if m else None)
-    m = re.match(r'^(\d+\.?\d*)IN$', r['ref'] or '', re.I)
+    m = re.match(r'^(\d+\.?\d*)IN\Z', r['ref'] or '', re.I)
     if m:
         v['bore_mm'] = float(m.group(1)) * 25.4
     elif (r['ref'] or '').upper() == 'S40':
@@ -189,17 +282,17 @@ def dry_valve(maker, model, dn):
         # it is used (the Hazen-Williams loss, the JSON, the report), so it
         # is made a number here, as the IN branch above is.
         b = bore('S40', dn)
-        v['bore_mm'] = float(b) if b is not None else None
+        v['bore_mm'] = _num(b) if b is not None else None
     else:
         v['bore_mm'] = None
     m = num.match(r['trip'] or '')
     v['trip_ratio'] = float(m.group(1)) if m else None
     v['pmax_kpa'] = None
-    m = re.match(r'^(\d+\.?\d*)PSI$', r['pmax'] or '', re.I)
+    m = re.match(r'^(\d+\.?\d*)PSI\Z', r['pmax'] or '', re.I)
     if m:
         v['pmax_kpa'] = float(m.group(1)) * 6.894757
     else:
-        m = re.match(r'^(\d+\.?\d*)KPA$', r['pmax'] or '', re.I)
+        m = re.match(r'^(\d+\.?\d*)KPA\Z', r['pmax'] or '', re.I)
         if m:
             v['pmax_kpa'] = float(m.group(1))
     return v
@@ -208,7 +301,7 @@ def dry_valve_models():
     out = []
     for mk in sorted(_DRYVALVE):
         for md in sorted(_DRYVALVE[mk]):
-            out.append([mk, md, sorted(_DRYVALVE[mk][md], key=lambda x: float(x))])
+            out.append([mk, md, sorted(_DRYVALVE[mk][md], key=_num)])
     return out
 
 # ------------------------------------------------------------- which source
@@ -217,11 +310,11 @@ def governing_source(type_, dn):
         return {'method': 'EQUIVALENT_LENGTH', 'class': 'A3', 'table': 'CPVC',
                 'doc': 'TYCO/BlazeMaster IH-1900 rev. 04/2019 Table F2',
                 'corrections': 0, 'status': APPROVED}
-    if type_.startswith('PE'):
+    if (type_ or '').startswith('PE'):
         return {'method': 'LE_OVER_D', 'class': 'B', 'table': 'PPI',
                 'doc': 'PPI Handbook of PE Pipe 2nd ed. Ch. 6 Eq. 2-9, Table 2-2',
                 'corrections': 0, 'status': APPROVED}
-    dn = float(dn)
+    dn = _num(dn)
     fallback = type_ == 'PVCM16'
     tno = 'AS' if dn <= 150 else 'FM'
     if tno == 'AS':
@@ -244,7 +337,7 @@ _FIT_RE = re.compile(
     r'|E45|E15|EL|EF|GLV|CPL|TR|BV|AV|E|T)')
 
 def parse_fittings(spec):
-    spec = re.sub(r'\s+', '', spec or '')
+    spec = re.sub(r'\s+', '', '' if spec is None else str(spec))
     if not len(spec):
         return ([], None)
     items = []
@@ -255,16 +348,18 @@ def parse_fittings(spec):
             break
         m = _FIT_RE.match(rest)
         if m:
-            n = m.group(1) if m.group(1) != '' else '1'
+            # The count is printed as it was typed (0100), and counted as
+            # its number.
+            typed = m.group(1) if m.group(1) != '' else '1'
             code = m.group(2)
             rest = rest[m.end():]
-            n = int(n)
+            n = int(typed)
             if n == 0:
                 return (None, "fitting count of zero in '%s' - a count of zero "
                               "is not a fitting; check the string" % code)
             if n > MAX_COUNT:
-                return (None, "fitting count of %d for '%s' is not plausible for "
-                              "one pipe (limit %d); check the string" % (n, code, MAX_COUNT))
+                return (None, "fitting count of %s for '%s' is not plausible for "
+                              "one pipe (limit %d); check the string" % (typed, code, MAX_COUNT))
             items.append([n, code])
         else:
             return (None, "cannot read fitting code at '%s'" % rest)
@@ -278,6 +373,8 @@ def resolve(**a):
         out['errors'].append(err); out['total'] = None; return out
     if not items:
         return out
+    if type_ is None:
+        type_ = ''                  # undef in a message and as a hash key
     if type_ not in _PIPETYPE:
         out['errors'].append("unknown pipe type '%s'" % type_)
         out['total'] = None
@@ -288,10 +385,10 @@ def resolve(**a):
                              % (dn, type_))
         out['total'] = None
         return out
-    bore_f = float(b)
+    bore_f = _num(b)
     if c is None:
         c = _PIPETYPE[type_]['c']
-    c = float(c)
+    c = _num(c)
     src = governing_source(type_, dn)
     for n, code in items:
         r = {'count': n, 'code': code, 'type': type_, 'dn': dn,
@@ -318,8 +415,8 @@ def resolve(**a):
                 r['status'] = DATA_REQUIRED
                 out['records'].append(r)
                 continue
-            each = float(kp['kp']) * bore_f / 1000
-            r.update({'label': kp['label'], 'base': float(kp['kp']), 'cmult': 1, 'dmult': 1,
+            each = _num(kp['kp']) * bore_f / 1000
+            r.update({'label': kp['label'], 'base': _num(kp['kp']), 'cmult': 1, 'dmult': 1,
                       'each': each, 'total': n * each,
                       'note': "Le = K'd = %s x %.4f m" % (kp['kp'], bore_f / 1000)})
             if out['total'] is not None:
@@ -348,7 +445,7 @@ def resolve(**a):
             continue
         cm, dm, basis_bore = 1, 1, None
         if src['corrections']:
-            cm = (c / 120) ** 1.85
+            cm = _pow(c / 120, 1.85)
             bb = bore(src['basis_type'], dn)
             if bb is None:
                 out['errors'].append('DATA_REQUIRED: no %s basis bore at DN%s '
@@ -357,12 +454,12 @@ def resolve(**a):
                 r['status'] = DATA_REQUIRED
                 out['records'].append(r)
                 continue
-            basis_bore = float(bb)
-            dm = 1 if a.get('standard_only') else (bore_f / basis_bore) ** 4.87
-        each = float(cell['le']) * cm * dm
+            basis_bore = _num(bb)
+            dm = 1 if a.get('standard_only') else _pow(bore_f / basis_bore, 4.87)
+        each = _num(cell['le']) * cm * dm
         # A source without corrections (CPVC) has no basis type: the Perl
         # stores undef there, so .get(), not a KeyError.
-        r.update({'label': cell['label'], 'base': float(cell['le']),
+        r.update({'label': cell['label'], 'base': _num(cell['le']),
                   'basis_type': src.get('basis_type'), 'basis_bore': basis_bore,
                   'basis_c': 120, 'cmult': cm, 'dmult': dm,
                   'each': each, 'total': n * each})

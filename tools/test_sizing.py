@@ -300,8 +300,203 @@ def main():
     plain = phc.read_string(slurp(os.path.join(ROOT, 'examples', '01_single_branch.phc')))
     is_('a model with no size 0 is not touched', not plain.get('auto_sizing') and sizing.size(plain, 1)[0] is plain)
 
+    audit()
+
     print('\n%d passed, %d failed' % (PASS[0], FAIL[0]))
     sys.exit(1 if FAIL[0] else 0)
+
+
+#------------------------------------------------------------------------------
+# audit -- the line-by-line audit of 20 November 2026 against the Perl: each
+# check is of a place where sizing.py or phc.py did something other than
+# Sizing.pm or Phc.pm on the same input, with what the Perl gives.  (The
+# phc.py checks are here because tools/test_phc.py is the check-for-check
+# port of test_phc.pl; these have no Perl counterpart to sit beside.)
+#------------------------------------------------------------------------------
+def audit():
+    import tempfile
+    import shutil
+    print('8. AS THE PERL DOES IT (the audit of 20 November 2026)')
+    B = lambda b: b.decode('utf-8', 'surrogateescape')      # the model's bytes, as phc reads them
+    base = 'UNITS LENGTH M\nWATER N1 0.0 900\nSPRINKLER N2 0.0 -50 80\n'
+
+    def reads(text, dir_=None):
+        try:
+            return phc.read_string(text, dir_), ''
+        except Exception as ex:
+            return None, (ex.msg if hardycross.is_model_error(ex) else str(ex))
+
+    # sizing.py
+    one = base.replace('900', '900 1000 800 2000 600') + 'USE S40\nPIPE P1 N1 N2 100.0 0 E\n'
+    real = sizing.solve_model
+    calls = [0, 0, None]
+
+    def solve(net):
+        calls[0] += 1
+        if calls[0] == calls[1]:
+            if calls[2] is None:
+                return 0
+            raise RuntimeError(calls[2])
+        return real(net)
+
+    def run(at, how):
+        calls[0], calls[1], calls[2] = 0, at, how
+        n = phc.read_string(one)
+        try:
+            return sizing.size(n, real(n)), ''
+        except Exception as ex:
+            return None, str(ex)
+
+    sizing.solve_model = solve
+    try:
+        run(0, None)
+        total = calls[0]
+        got, e = run(total, 'boom')
+        is_('a solve of the answer that dies stops the sizing with its error', got is None and e == 'boom', e)
+        got, e = run(total - 1, 'boom')
+        is_('   so does the solve of the demand check', got is None and e == 'boom', e)
+        got, e = run(total - 1, None)
+        is_('   one that does not converge there is searched again, not a crash',
+            got is not None and e == '', e)
+    finally:
+        sizing.solve_model = real
+    nb = B(b'PIPE P1\xc2\xa0A 0 //x')
+    is_('a no-break space is not white space: the fields are the Perl\'s',
+        sizing.set_field(nb, 3, 25) == B(b'PIPE P1 A 0 //x').replace('P1 A', B(b'P1\xc2\xa0A'))
+        and sizing.set_field(nb, 2, 25) == B(b'PIPE P1\xc2\xa0A 25 //x'))
+    is_('   in a comment mark, and when the marks are cleared',
+        sizing.mark(B(b'PIPE P1\xc2\xa0 //x'), 25) == B(b'PIPE P1\xc2\xa0  //AS - 25 //x')
+        and sizing.clear(B(b'PIPE A  //AS - 25 // x\nPIPE B //AS - 1\xc2\xa0x\n')) == 'PIPE A // x\nPIPE B\n')
+
+    # phc.py: one line
+    is_('an AREA line\'s outlets are in rest, not among its fields',
+        phc.analyse('AREA A1 S1 S2')['pos'] == ['A1'] and phc.analyse('AREA A1 S1 S2')['rest'] == ['S1', 'S2'])
+    is_('with no node defined yet, a line\'s nodes are all undefined',
+        phc.check_line('PIPE P1 A B 1000 25', {'nodes': {}})['undefined'] == ['A', 'B']
+        and phc.check_line('PIPE P1 A B 1000 25', {'nodes': []})['undefined'] == ['A', 'B'])
+    is_('   and a node is known by a true value',
+        phc.check_line('PIPE P1 A B 1000 25', {'nodes': {'A': 0, 'B': 2}})['undefined'] == ['A'])
+    is_('a PC line names each copy\'s start and end, copy by copy',
+        phc.nodes_used(phc.analyse('PC P1 P2 A B P3 C D')) == ['A', 'B', 'C', 'D'])
+    is_('a line cut short names what it has',
+        phc.nodes_used(phc.analyse('PIPE P1')) == [] and phc.nodes_defined(phc.analyse('NODE')) == [None]
+        and phc.names_defined(phc.analyse('PIPE')) == [None])
+    is_('a cursor and a USE given as nothing are the defaults',
+        phc.check_line('PIPE P1 A B 1000 25', {'cursor': None, 'use': None})['status'] == 'ok')
+    is_('a USE with no type offers no fittings, and is no crash',
+        phc.check_line('PIPE P1 A B 1000 25 ', {'use': {'c': 120}})['choices'] == [])
+    rows = []
+    real_row = phc.parse_row
+    phc.parse_row = lambda net, sec, tk: (rows.append(' '.join(tk)), real_row(net, sec, tk))[1]
+    try:
+        phc.check_line('SPRINKLER S1 0 -123.456789012345 8', {})
+    finally:
+        phc.parse_row = real_row
+    is_('a least pressure is checked to 15 figures, as it is solved',
+        rows and rows[-1] == 'S1 S1 SPRINKLER K=8 P=123.456789012345', rows)
+    is_('step_id past the largest whole numbers, as Perl\'s %d prints them',
+        phc.step_id('P99999999999999999999') == 'P-0000000000000000001'
+        and phc.step_id('P9223372036854775807') == 'P-9223372036854775808'
+        and phc.step_id('N09') == 'N10' and phc.step_id(B(b'N\xd9\xa3')) == B(b'N\xd9\xa3') + '2')
+    is_('a size past them is a float, printed 1e+30',
+        phc.size_dn('1e30', 'MM') == 1e30 and isinstance(phc.size_dn('1e30', 'MM'), float)
+        and phc.size_dn('1e19', 'MM') == 10000000000000000000 and phc.size_dn('24.5', 'MM') == 25
+        and phc.pipe_row({'line': 1, 'use': {'type': 'S40'}, 'start': 'A', 'end': 'B', 'len': '1',
+                          'size': '1e30', 'fits': []}, 'P', None, None, phc.UNIT_DEFAULT, False, None)
+        == 'P A B 0.001 1e+30 TYPE=S40')
+    is_('only a last line ending is taken off a line',
+        phc.strip_comment('abc\r\n\n') == 'abc\r\n' and phc.strip_comment('abc // x\r\n') == 'abc ')
+    is_('a value ends where its text ends, not before a newline',
+        phc.length_metres('5M\n', 'M') is None and phc.ratio_value('3:1\n') is None
+        and phc.length_metres('5M', 'M') == 5 and phc.ratio_value('3:1') == 3)
+    is_('-0.0 is 0 where the Perl adds 0 to it, and -0 in a product',
+        [phc.fmt(x) for x in (phc.size_mm('-0.0', 'MM'), phc.size_mm('-0.0', 'IN'),
+                              phc.ratio_value('-0.0'), phc.length_metres('-0.0', 'M'))]
+        == ['0', '-0', '0', '0'])
+    is_('a length in a unit that is none is 0, not a crash',
+        phc.length_metres('5', 'XX') == 0 and phc.length_metres('5', 'M') == 5)
+    is_('TITLE x<1C>: a control character is not white space',
+        phc.analyse('TITLE x\x1c').get('text') == 'x\x1c'
+        and phc.check_line('PIPE\x1cP1 A', {})['template']['current'] == 0)
+
+    # phc.py: a model
+    n, e = reads(base + B(b'TITLE\xc2\xa0Foo\nUSE BORE 120\nPIPE P1 N1 N2 100.0 100\n'))
+    is_('TITLE<no-break space>Foo has no text: refused', n is None and e == 'line 4: TITLE NEEDS TEXT', e)
+    dpv = base + 'USE S40 120\nPIPE P1 N1 N2 100.0 100\nDPV P1 100 RATIO 5.5 OFF EQL 3\n'
+    n, e = reads(dpv + 'DPVMODEL P1 0\nDPVMODEL P1 ACME X\n')
+    is_('DPVMODEL 0 is no model (0 is false in Perl): a second line is taken',
+        n is not None and [x.get('model') for x in elems(n) if x['id'] == 'P1.DPV'] == ['ACME X'], e)
+    n, e = reads(dpv + 'DPVMODEL P1 ACME\nDPVMODEL P1 ACME X\n')
+    is_('   any other is given once', n is None and re.search(r'ALREADY HAS A DPVMODEL, ON LINE 7', e), e)
+    n, e = reads(base + 'USE BORE 120\nPIPE P1 N1 N2 100.0 100\nNRV N1 0\nNRVMODEL N1 0\nNRVLOSS N1 0 0 100 5\n')
+    is_('NRVMODEL 0 is none: NRVLOSS is refused for want of one',
+        n is None and e == 'line 8: NRVLOSS N1 REQUIRES NRVMODEL WITH MANUFACTURER DATA SOURCE', e)
+    n, e = reads(base + 'NODE N3 0\nUSE BORE 120\nPIPE 0 N1 N3 100.0 100\nPC 0 A N3 N2\n')
+    is_('a copy (PC) of a pipe named 0 is refused, as the Perl dies on it',
+        n is None and e == "Can't use an undefined value as an ARRAY reference", e)
+    n, e = reads(dpv + B(b'DPVMODEL P1 Caf\xc3\xa9 \xe9 X\nNRV N1 0\nNRVMODEL N1 Caf\xc3\xa9\n'))
+    is_('a model\'s make is carried byte for byte (UTF-8 or Latin-1)',
+        n is not None and [x.get('model') for x in elems(n) if x['id'] == 'P1.DPV'] == ['Caf\xc3\xa9 \xe9 X']
+        and [x['nrv']['model'] for x in elems(n) if x.get('nrv')] == ['Caf\xc3\xa9'], e)
+    d = tempfile.mkdtemp()
+    try:
+        n, e = reads(base + B(b'USE BORE 120\nPIPE P1 N1 N2 100.0 100\nSUPPLYGRAPH ./sub/./caf\xc3\xa9.phg\n'), d)
+        want = ('supply graph ./sub/./caf\xc3\xa9.phg (line 6) is not in the report: CANNOT READ %s: %s'
+                % (os.path.join(d, 'sub', 'caf\xc3\xa9.phg'), os.strerror(2)))
+        is_('a supply graph\'s path is tidied (File::Spec), its name byte for byte',
+            n is not None and (os.sep != '/' or n['warnings'][:1] == [want]), (e, n and n['warnings']))
+        m = os.path.join(d, 'folder.phc')
+        os.mkdir(m)
+        try:
+            phc.read_model(m)
+            e = ''
+        except Exception as ex:
+            e = ex.msg if hardycross.is_model_error(ex) else str(ex)
+        is_('a folder given as the model holds no model', e == 'THE FILE HOLDS NO MODEL: NO NODES AND NO PIPES', e)
+        m = os.path.join(d, 'm.phc')
+        with open(m, 'w') as fh:
+            fh.write(base + 'USE BORE 120\nPIPE P1 N1 N2 100.0 100\n')
+        was = os.getcwd()
+        os.chdir(d)
+        try:
+            is_('a model named without a folder is in "."', phc.read_model('m.phc')['model_dir'] == '.')
+        finally:
+            os.chdir(was)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    n, e = reads(base + 'USE S40 120\nPIPE P1 N1 N2 100.0 100 0100E\n')
+    is_('a fitting count is named as typed (0100)',
+        n is None and re.search(r"FITTING COUNT OF 0100 FOR 'E'", e), e)
+    # The fitting pick lists read the database as pipedata.load does.
+    d = tempfile.mkdtemp()
+    was = pipedata.path()
+    try:
+        with open(was, 'rb') as fh:
+            data = fh.read()
+        with open(os.path.join(d, 'pipes.dat'), 'wb') as fh:
+            fh.write(data + b'FIT|AS|ZQ\nKPRIME|ZK\nPIPE|ZP\nFIT|AS|ZR|R\xe9d|25|1\n'
+                     b'PIPETYPE|0|Zero|std|range|120|0.045\nPIPE|0|20|26|0|1\nPIPE|0|25|33|27|1\n')
+        pipedata.load(os.path.join(d, 'pipes.dat'))
+        phc.reset_db_cache()
+        # 0 is false in Perl: a bore of 0 is no size to choose, but a pipe
+        # type named 0 is a type (the Perl asks whether it is defined).
+        n, e = reads(base + 'USE 0\nPIPE P1 N1 N2 100.0 0\n')
+        is_('a pipe type named 0 is sized; its size with a bore of 0 is left out',
+            [c[0] for c in sizing.choices('0', [], 'MM')] == [25]
+            and n is not None and n['auto_sizing'][0]['type'] == '0', e)
+        is_('   and is one as it is typed',
+            phc.check_line('PIPE P1 A B 10 0', {'use': {'type': '0'}})['status'] == 'ok')
+        try:
+            ch = dict(phc.fitting_choices('ASAM', 25))
+            e = ''
+        except Exception as ex:
+            ch, e = {}, repr(ex)
+        is_('the pick list reads short lines and bytes that are not UTF-8',
+            ch.get('ZQ') == '' and ch.get('ZR') == 'R\\XE9D', e)
+    finally:
+        pipedata.load(was)
+        phc.reset_db_cache()
+        shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == '__main__':
