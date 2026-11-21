@@ -439,8 +439,14 @@ def part8(tmp):
     g = G.read_file(put('a.phg', b'A\nA 5\nDUTY\n'))
     is_('a curve line cut short reads as blank text, not as nothing',
         g['A'][0] == ['', ''] and g['A'][1] == ['5', ''] and g['duty'][0] == ['', '', '', ''], (g['A'][:2], g['duty'][0]))
-    g = G.read_file(tmp)
-    is_('a folder given for the file reads as an empty graph', g == G.new_graph())
+    # A folder opens and reads as nothing, as Perl's open and <> do; on
+    # Windows no folder opens, and it is a file that cannot be read.
+    if os.name == 'nt':
+        r, e = raises(lambda: G.read_file(tmp))
+        is_('a folder given for the file cannot be read (Windows)', not r and e.startswith('CANNOT READ %s: ' % tmp), e)
+    else:
+        g = G.read_file(tmp)
+        is_('a folder given for the file reads as an empty graph', g == G.new_graph())
 
     # write_file: the bytes Perl's print writes with no encoding layer
     g = G.new_graph()

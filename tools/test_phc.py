@@ -827,8 +827,9 @@ if True:
 
     def run_phcp(args, cwd=None):
         pr_ = subprocess.run(PHCP + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
-        return (pr_.returncode, pr_.stdout.decode('utf-8', 'surrogateescape'),
-                pr_.stderr.decode('utf-8', 'surrogateescape'))
+        # (text mode on Windows writes each newline as CR LF)
+        return (pr_.returncode, pr_.stdout.decode('utf-8', 'surrogateescape').replace('\r\n', '\n'),
+                pr_.stderr.decode('utf-8', 'surrogateescape').replace('\r\n', '\n'))
 
     def row_error(section, row):
         try:
@@ -924,8 +925,11 @@ if True:
     # The report's format is chosen by /\.pdf$/i: $ matches before a final newline.
     with open(os.path.join(d, 'm.phc'), 'w') as o:
         o.write(big % '100')
-    code, out, err = run_phcp(['m.phc', 'r.pdf\n'], cwd=d)
-    with open(os.path.join(d, 'r.pdf\n'), 'rb') as f:
+    # (A file name cannot hold a newline on Windows, so there it is the
+    # same rule seen on a name that can exist: .PDF in capitals.)
+    rname = 'r.PDF' if os.name == 'nt' else 'r.pdf\n'
+    code, out, err = run_phcp(['m.phc', rname], cwd=d)
+    with open(os.path.join(d, rname), 'rb') as f:
         head = f.read(5)
     is_('a report named "r.pdf" and a newline is a PDF, as /\\.pdf$/i makes it', code == 0 and head == b'%PDF-',
         'exit %d, the file starts %r' % (code, head))
@@ -939,9 +943,9 @@ if True:
             % (PHCP[1], os.path.join(d, 'm.phc'), PHCP[1]))
     pr_ = subprocess.run([sys.executable, '-c', boom], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT)
     is_('an error that escapes: one line on stderr, exit status 255, no traceback',
-        pr_.returncode == 255 and pr_.stderr.decode() == 'division by zero\n' and pr_.stdout == b'',
+        pr_.returncode == 255 and pr_.stderr.decode().replace('\r\n', '\n') == 'division by zero\n' and pr_.stdout == b'',
         'exit %d: %r %r' % (pr_.returncode, pr_.stdout, pr_.stderr))
-    for f in ('ring.phc', 'big.phc', 'nan.phc', 'm.phc', 'r.pdf\n'):
+    for f in ('ring.phc', 'big.phc', 'nan.phc', 'm.phc', rname):
         os.unlink(os.path.join(d, f))
 
     # The machine's settings.
@@ -952,10 +956,15 @@ if True:
     os.environ['PHCP_SETTINGS'] = f
     os.environ.pop('PHCP_DATABASE_DIR', None)
     s = settings.all()
+    # The bytes of a value are those of the file in the encoding the file is
+    # read in: UTF-8, or the machine's code page on Windows.
+    import locale
+    def raw(v):
+        return (v or '').encode(locale.getpreferredencoding(False), 'surrogateescape')
     is_('settings: a folder name that is not UTF-8 is read, byte for byte',
-        os.fsencode(s.get('DATABASE_DIR', '')) == b'/x/caf\xe9' and os.fsencode(settings.database_dir()) == b'/x/caf\xe9')
+        raw(s.get('DATABASE_DIR')) == b'/x/caf\xe9' and raw(settings.database_dir()) == b'/x/caf\xe9')
     is_('settings: a line ends at a line feed only, and only ASCII space is trimmed',
-        s.get('A') == '1\rB=2' and 'B' not in s and s.get('N') == 'b ' and s.get('U') == 'c\x1f' and s.get('C') == 'x', s)
+        s.get('A') == '1\rB=2' and 'B' not in s and raw(s.get('N')) == b'b\xc2\xa0' and s.get('U') == 'c\x1f' and s.get('C') == 'x', s)
     os.environ['PHCP_DATABASE_DIR'] = ''
     is_('PHCP_DATABASE_DIR set to nothing is the program\'s own database, whatever the file says',
         settings.database_dir() is None)
@@ -964,6 +973,8 @@ if True:
     settings.set('u', None)
     with open(f, 'rb') as o:
         b = o.read()
+    if os.name == 'nt':
+        b = b.replace(b'\r\n', b'\n')        # text mode, as the Perl writes it there
     is_('settings: set rewrites its own key and keeps the other lines as they were',
         b == b'DATABASE_DIR=/x/caf\xe9\nA=1\rB=2\nN=b\xc2\xa0\nC=new\n', b)
     os.environ['PHCP_SETTINGS'] = d
