@@ -114,10 +114,17 @@ def case(args):
     path = os.path.join(tmp, 'case%d.phc' % seed)
     with open(path, 'wb') as fh:
         fh.write('\n'.join(lines).encode('utf-8', 'surrogateescape'))
-    try:
-        problems = compare_perl.compare(perl_dir, path, modes)
-    finally:
-        pass
+    problems = compare_perl.compare(perl_dir, path, modes)
+    # The Perl is not always one answer: where several things are wrong at
+    # once, which it names first follows its hash order, which changes from
+    # run to run.  A case differs only if no run of the Perl gives the
+    # Python's answer.
+    for _ in range(6):
+        if not problems or any('timeout' in p for p in problems):
+            break
+        again = compare_perl.compare(perl_dir, path, modes)
+        if not again:
+            problems = []
     timed_out = any('timeout' in p for p in problems)
     if problems and not timed_out:
         os.makedirs(keep, exist_ok=True)
