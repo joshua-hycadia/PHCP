@@ -697,8 +697,17 @@ def dpv_checks(net, e, P, D):
                   % (id_, e.get('size') if e.get('size') is not None else 'none'))
     if e.get('host') and e['host'].get('dia') and size > 0:
         if size < 0.6 * e['host']['dia'] or size > 1.6 * e['host']['dia']:
+            # The Perl's limit is the bore as the host pipe holds it: for a
+            # pipe sized from the database, the database's text ("53.0"),
+            # which the JSON then writes as text.
+            lim = e['host']['dia']
+            if e['host'].get('ptype') is not None:
+                from . import pipedata as _pipedata
+                db = _pipedata.bore(e['host']['ptype'], e['host'].get('dn'))
+                if db is not None:
+                    lim = db
             P(code='DPV_SIZE_PIPE', severity='warning', item=id_, value=e.get('size'),
-              limit=e['host']['dia'], unit='mm',
+              limit=lim, unit='mm',
               message=_P('dry pipe valve %s: DN%d in a pipe of %.1f mm bore; check the valve suits its pipe')
                       % (id_, e.get('size'), e['host']['dia']))
 
