@@ -269,7 +269,21 @@ if True:
     # JSON::PP's 0 + $value eq $value fails there; an integer as its digits.
     # value: as it stands, through r4, through %.6e, through 0 + $v, and
     # r3 after abs() has looked at it (a pipe's velocity).
+    #
+    # The quotes, and the integer 0 + $v makes of a large float, come only
+    # after the Perl has met a float it cannot hold as an integer -- in the
+    # document for the quotes, at that 0 + $v for the integer.  The first
+    # such number is written bare; the table is of the ones after it.
     inf = float('inf')
+    J._NV_SEEN[0] = False
+    J._PLUS0.clear()
+    first = (J.encode([5, 'a', J.r4(1e15), J.r4(1e16), J.r4(1e16), J._numify(1e16, 'x'), J._numify(0.5, 'x'),
+                       J._numify(1e16, 'x')]),
+             J.encode([J.r4(0.5), J.r4(1e16)]))
+    is_('the first large whole float of a run is bare, the next in quotes',
+        first == ('[\n   5,\n   "a",\n   1e+15,\n   1e+16,\n   "1e+16",\n   "1e+16",\n   0.5,\n'
+                  '   10000000000000000\n]\n', '[\n   0.5,\n   "1e+16"\n]\n'), repr(first))
+    J._PLUS0[None] = True
     table = [
         (5.0, '5', '5', '5', '5', '5'),
         (0.1 + 0.2, '0.3', '0.3', '0.3', '0.3', '0.3'),
@@ -313,6 +327,8 @@ if True:
              (None, '0')]
     bad = ['%r: %s' % (t, enc(J._numify(t))) for t, want in texts if enc(J._numify(t)) != want]
     is_('text is made a number as Perl makes it, 0 + $v (%d texts)' % len(texts), not bad, '; '.join(bad))
+    is_('a figure of the summary that is not finite is Inf, -Inf or NaN',
+        [J._f1(x) for x in (inf, -inf, float('nan'), 2.25)] == ['Inf', '-Inf', 'NaN', '2.2'])
     is_('an integer keeps its digits, and DEL is written as it is',
         enc(12345678901234567890) == '12345678901234567890' and enc('a\x7f\x1f/b') == '"a\x7f\\u001f/b"')
 
