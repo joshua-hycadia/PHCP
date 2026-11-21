@@ -929,6 +929,18 @@ if True:
         head = f.read(5)
     is_('a report named "r.pdf" and a newline is a PDF, as /\\.pdf$/i makes it', code == 0 and head == b'%PDF-',
         'exit %d, the file starts %r' % (code, head))
+    # An error that escapes everything: one line and exit status 255, as
+    # Perl's die, not a traceback and exit status 1 (INDETERMINATE).
+    boom = ('import sys, runpy; sys.argv = [%r, %r]\n'
+            'from hardycross import validate\n'
+            'def assess(*a, **k): raise ZeroDivisionError("division by zero")\n'
+            'validate.assess = assess\n'
+            'runpy.run_path(%r, run_name="__main__")\n'
+            % (PHCP[1], os.path.join(d, 'm.phc'), PHCP[1]))
+    pr_ = subprocess.run([sys.executable, '-c', boom], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT)
+    is_('an error that escapes: one line on stderr, exit status 255, no traceback',
+        pr_.returncode == 255 and pr_.stderr.decode() == 'division by zero\n' and pr_.stdout == b'',
+        'exit %d: %r %r' % (pr_.returncode, pr_.stdout, pr_.stderr))
     for f in ('ring.phc', 'big.phc', 'nan.phc', 'm.phc', 'r.pdf\n'):
         os.unlink(os.path.join(d, f))
 

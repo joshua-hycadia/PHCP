@@ -1569,7 +1569,7 @@ the counts the Perl gave:
 | direct comparison with the C++ engine (before the Q^1.85 curves - not re-run; the C++ engine is not in this repository) | worst 0.005 L/min, 0.0049 kPa |
 | the comparison sets (models, models_A, models_B), text + JSON + exit status, Perl 1.6.0 against Python (`tools/compare_perl.py`) | 900 / 900 identical |
 | the examples, text + JSON + report + `--save` + `--strict`, Perl 1.6.0 against Python | 10 / 10 identical |
-| the .phc language and its line checker (`tools/test_phc.py`) | 337 / 337 |
+| the .phc language and its line checker (`tools/test_phc.py`) | 338 / 338 |
 | the JSON interface (`tools/test_json.py`) | 109 / 109 |
 | the results saved back into the model (`tools/test_results.py`) | 28 / 28 |
 | the audit's false positives refused (`tools/test_acceptance.py`) | 99 / 99 |

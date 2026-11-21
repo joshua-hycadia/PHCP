@@ -199,4 +199,17 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # An error nothing above caught (a fault in the program, a damaged data
+    # file): Perl's die prints its one line and exits 255, or with the
+    # system's error number when the failure was the system's.  No
+    # traceback, and never exit status 1, which means INDETERMINATE.  The
+    # words are Python's own: the Perl's name its source file and line.
+    try:
+        main()
+    except Exception as e:
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        sys.stderr.write('%s\n' % (str(e).rstrip('\n') or type(e).__name__))
+        sys.exit((e.errno if isinstance(e, OSError) and e.errno else 0) or 255)

@@ -289,7 +289,7 @@ programs really give; the counts are unchanged.
 `HardyCross/Settings.pm` and `phcp.pl` read side by side with their Python,
 every function, and each suspected difference run through both programs.
 Each one below was confirmed against the Perl 1.6.0 and fixed to do what it
-does; `tools/test_phc.py` section 12 (23 checks) and `tools/test_curves.py`
+does; `tools/test_phc.py` section 12 (24 checks) and `tools/test_curves.py`
 section 7 (8 checks) hold them.
 
 | area | the port did | the Perl does |
@@ -311,8 +311,16 @@ section 7 (8 checks) hold them.
 | `PHCP_DATABASE_DIR` set to nothing | the file's `DATABASE_DIR` | the program's own database (`//`) |
 | `PHCP_SETTINGS=0`; `HOME` empty, `.` or with `//` in it | used as the file; `./.config/...`, `/a//b/.config/...` | not set; `/.config/...`, `.config/...`, `/a/b/.config/...` (File::Spec) |
 | a settings file that cannot be written | `[Errno 21] Is a directory: ...` | `cannot write the settings file X: Is a directory` |
+| an error nothing catches (a fault in the program, a damaged font file) | a traceback, exit 1 | one line, exit 255 (die); the Python prints its own words, one line, exit 255 |
 
-Left as it is, and why: a typed pipe given a C of 0 (`USE ASAM 0`), or a bore
+Left as it is, and why: a solve that runs away carries flows past 2^53 for the
+one sweep in which it is found to have diverged (INDETERMINATE, exit 1), and
+those flows are printed.  Perl adds whole numbers that large as exact 64-bit
+integers where a float rounds, so they can differ from the Perl's in the last
+digits (`Q P68 -13666017801514226.0000` for `...224.0000`).  Below 2^53, which
+is every solve that converges, the two are the same arithmetic.
+
+Also left: a typed pipe given a C of 0 (`USE ASAM 0`), or a bore
 below about 1E-66 mm, divides by zero in the friction loss.  Both programs
 refuse the model with exit status 2; the Perl's reason is its interpreter's
 own, naming its source file and line (`Illegal division by zero at
