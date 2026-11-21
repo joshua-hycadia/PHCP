@@ -333,5 +333,40 @@ if True:
     is_('node type is a list too',
         [c for c in nd if c['key'] == 'type' and (c.get('kind') or '') == 'type'])
 
+
+#------------------------------------------------------------------------------
+# The audit of the port against the Perl, 20 November 2026: differences found
+# by running HardyCross::Sheet and this module on the same input.  Each
+# expectation is the Perl's answer.
+#------------------------------------------------------------------------------
+print('\nPort audit: the Perl\'s answers')
+s = SH.new_sheet()
+is_('the PRA band hint ends BLANK: 5.',
+    [c for c in SH.device_columns(s, 'PRA') if c['key'] == 'band'][0]['hint'].endswith('BLANK: 5.'))
+is_('FS to US are not white space to trim', SH.trim(' \x1fa\x1f ') == '\x1fa\x1f')
+
+# A name of 0 is false to Perl.
+s = SH.read_text('NODE A 0\nNODE S2 0\nPIPE 0 W A 10 25 2E\nPC 0 P9 A S2\n')
+is_('a copy of a pipe named 0 is left unresolved, as in the Perl',
+    s['pipes'][1]['length'] == '' and s['pipes'][1].get('copy_of') == '0'
+    and 'PIPE      P9 A S2\n' in SH.to_text(s))
+s = SH.read_text('NODE 0 0\nNODE A 0\nPIPE P1 0 A 5 25\nPUMP 0 0 A 800 100 700\nPUMPDUTY 0 100 700\n')
+t = SH.to_text(s)
+is_('the duty of a pump named 0 is written under P- and its node',
+    'PUMPDUTY  P-A 100 700' in t and 'PUMP      0 0 A 800 100 700' in t, t)
+line = s['at']['node']['0']
+is_('a node named 0: an ELEVATION message stays on the line\'s own cell',
+    SH.locate(s, {'line': line, 'what': 'X ELEVATION Y'}) == s['map'][line]
+    and SH.locate(s, {'line': line, 'what': 'MINFLOW'})['col'] == 'min_flow')
+
+# A tied device is matched on its node as stored, not trimmed.
+s = SH.read_text('NODE A 0\nNODE B 0\nPIPE P1 A B 5 25\nBFP P1 0 20\n')
+s['devices'][0]['node'] = ' B '
+is_('a device whose node text is not the node\'s is not shown',
+    len(SH.device_rows(s, 'BFP')) == 0)
+SH.reconcile(s)
+is_('and the node type gets a row of its own',
+    [[x['node'], x['tied']] for x in s['devices']] == [[' B ', 1], ['B', 1]])
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)

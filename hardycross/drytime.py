@@ -51,7 +51,8 @@ def dry_part(net, dpv):
     pipe = {}
     while q:
         v = q.pop(0)
-        if supply_node.get(v):
+        # Perl truth of the supply's id: a supply named 0 is not seen here.
+        if supply_node.get(v) not in (None, '', '0'):
             return {'error': 'the pipework downstream of the valve reaches water supply %s: it is not a '
                              'dry system' % supply_node[v]}
         if v == dpv['n1']:

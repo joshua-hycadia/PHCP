@@ -83,6 +83,25 @@ def _ascii(s):
     s = re.sub(r'[^\x20-\x7E]', '', s)
     return s.upper()
 
+# _num -- a field as the number Perl makes of it where it compares it: the
+# number its ASCII figures spell from the start, 0 if there are none.  \d
+# matches the figures of any script in the file's text, in Perl as here, but
+# only 0-9 count: a DN of Arabic-Indic threes is 0, and refused.
+_NUMIFY_RE = re.compile(r'\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)')
+
+def _num(v):
+    m = _NUMIFY_RE.match(str(v))
+    return float(m.group(1)) if m else 0.0
+
+# _field -- a row's field, '' where the row is too short to have it (a
+# record cut short in the file), as Perl's undef joins and compares.
+def _field(f, i):
+    return f[i] if i < len(f) and f[i] is not None else ''
+
+# _err -- the system's reason for a failed open or rename, as Perl's $!.
+def _err(e):
+    return (e.strerror or str(e)).upper()
+
 #------------------------------------------------------------------------------
 # open_db -- the database file as a list of lines.  Each line is
 #   { text }                         a comment or blank, kept as it is
@@ -95,13 +114,19 @@ def open_db(path=None):
         with open(path, 'rb') as fh:
             raw = fh.read()
     except OSError as e:
-        hardycross.fail('CANNOT OPEN THE DATABASE %s: %s', path, str(e).upper())
+        hardycross.fail('CANNOT OPEN THE DATABASE %s: %s', path, _err(e))
     sha = hashlib.sha256(raw).hexdigest()
-    text = raw.decode('utf-8')
+    # utf8::decode leaves a file that is not UTF-8 as its bytes (a Latin-1
+    # file opens, each byte a character), where bytes.decode would refuse it.
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        text = raw.decode('latin-1')
     crlf = '\r\n' in text
     text = text.replace('\r\n', '\n')
     lines = []
-    for l in text.split('\n'):
+    # Perl's split gives no lines at all for an empty file, not one empty line
+    for l in (text.split('\n') if text != '' else []):
         # A stray carriage return, from a file with mixed line endings, is
         # not part of the last field: '41.1\r' is not a number.
         l = re.sub(r'\r+\Z', '', l)
@@ -117,8 +142,14 @@ def open_db(path=None):
         lines.append({'text': l, 'kind': kind, 'fields': f})
     if lines and lines[-1]['text'] == '' and text.endswith('\n'):
         lines.pop()
+    # A file that does not end in a newline is written back without one, and
+    # can be saved over like any other.  (The Perl cannot: its hash is built
+    # from a list in which the failed match  $text =~ /\n\z/  is no element,
+    # so the pairs shift, sha256 is never set, and SAVE over the file opened
+    # is refused as "saved by someone else".  A defect, not copied: see
+    # PYTHON_PORT.md.)
     return {'path': path, 'lines': lines, 'modified': 0, 'crlf': crlf,
-            'trailing_nl': text.endswith('\n'), 'sha256': sha}
+            'trailing_nl': 1 if (text.endswith('\n') or text == '') else 0, 'sha256': sha}
 
 # rows -- a table's records: [ { line: index, fields: [...] } ].
 def rows(db, kind):
@@ -161,16 +192,16 @@ def check_row(db, kind, f, line=None):
             if not re.match(r'^[A-Z0-9_]+\Z', v):
                 return "%s '%s' MUST BE CAPITALS AND DIGITS, WITHOUT SPACES" % (head, v)
         elif typ == 'int':
-            if not (re.match(r'^\d+\Z', v) and int(v) > 0):
+            if not (re.match(r'^\d+\Z', v) and _num(v) > 0):
                 return "%s '%s' MUST BE A WHOLE NUMBER ABOVE ZERO" % (head, v)
         elif typ in ('num', 'num0'):
             if typ == 'num0' and v == 'DASH':
                 continue
-            if not (re.match(r'^(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\Z', v) and float(v) > 0):
+            if not (re.match(r'^(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?\Z', v) and _num(v) > 0):
                 return ("%s '%s' MUST BE A NUMBER ABOVE ZERO" % (head, v)
                        + (', OR DASH IF NONE IS PUBLISHED' if typ == 'num0' else ''))
     if (kind == 'PIPE' and f[2] != 'DASH' and f[3] != 'DASH'
-            and float(f[3]) >= float(f[2])):
+            and _num(f[3]) >= _num(f[2])):
         return 'BORE MM %s MUST BE LESS THAN OD MM %s' % (f[3], f[2])
     if not db:
         return None
@@ -180,9 +211,9 @@ def check_row(db, kind, f, line=None):
     for r in rows(db, kind):
         if line is not None and r['line'] == line:
             continue
-        if '|'.join(r['fields'][i] for i in key[kind]) == k:
+        if '|'.join(_field(r['fields'], i) for i in key[kind]) == k:
             return 'THERE IS ALREADY A ROW FOR %s' % ' '.join(f[i] for i in key[kind])
-    if kind == 'PIPE' and not any(r['fields'][0] == f[0] for r in rows(db, 'PIPETYPE')):
+    if kind == 'PIPE' and not any(_field(r['fields'], 0) == f[0] for r in rows(db, 'PIPETYPE')):
         return 'PIPE TYPE %s IS NOT IN PIPE TYPES: ADD IT THERE FIRST' % f[0]
     return None
 
@@ -191,7 +222,8 @@ def check_row(db, kind, f, line=None):
 # problem, or None when the edit was made.
 #------------------------------------------------------------------------------
 def set_row(db, line, new):
-    if line >= len(db['lines']) or line < 0:
+    # a negative line counts from the end, as a Perl array index does
+    if line >= len(db['lines']) or line < -len(db['lines']):
         return 'NO SUCH ROW'
     l = db['lines'][line]
     f = merge(l.get('fields') or [], new)
@@ -219,14 +251,14 @@ def add_row(db, kind, new):
     return None, at
 
 def delete_row(db, line):
-    if line >= len(db['lines']) or line < 0:
+    if line >= len(db['lines']) or line < -len(db['lines']):
         return 'NO SUCH ROW'
     l = db['lines'][line]
     if l.get('kind') not in TABLE:
         return 'NOT A ROW OF A TABLE'
     if l['kind'] == 'PIPETYPE':
-        code = l['fields'][0]
-        n = len([r for r in rows(db, 'PIPE') if r['fields'][0] == code])
+        code = _field(l['fields'], 0)
+        n = len([r for r in rows(db, 'PIPE') if _field(r['fields'], 0) == code])
         if n:
             return 'PIPE TYPE %s STILL HAS %d PIPE SIZES: DELETE THOSE FIRST' % (code, n)
     del db['lines'][line]
@@ -271,7 +303,7 @@ def use_folder(dir_, copy=False):
             with open(target, 'wb') as fout:
                 fout.write(b)
         except OSError as e:
-            return 'CANNOT READ %s' % frm if e.filename == frm else 'CANNOT WRITE %s: %s' % (target, str(e).upper())
+            return 'CANNOT READ %s' % frm if e.filename == frm else 'CANNOT WRITE %s: %s' % (target, _err(e))
     try:
         pipedata.load(target)
     except Exception as e:
@@ -288,8 +320,12 @@ def use_builtin():
     return None
 
 def _exc_msg(e):
-    return (e.msg if hasattr(e, 'msg') else
-            (e.args[0] if getattr(e, 'args', None) else str(e)))
+    if hasattr(e, 'msg'):
+        return e.msg
+    # Not a model error: in the Perl a die with its text, which ends in a
+    # newline -- and the newline is part of the problem reported.
+    m = str(e.args[0]) if getattr(e, 'args', None) else str(e)
+    return m if m.endswith('\n') else m + '\n'
 
 # today -- the date as the DATASET line writes it: 28 October 2026.
 def today(ts=None):
@@ -307,7 +343,10 @@ def text(db, date=None):
         for l in db['lines']:
             if (l.get('kind') or '') != 'DATASET':
                 continue
-            l['fields'][1] = date or today()
+            # a DATASET line cut short gets its date all the same
+            while len(l['fields']) < 2:
+                l['fields'].append('')
+            l['fields'][1] = date if date is not None else today()
             l['text'] = '|'.join(['DATASET'] + list(l['fields']))
     nl = '\r\n' if db['crlf'] else '\n'
     t = nl.join(l['text'] for l in db['lines'])
@@ -340,7 +379,7 @@ def changed_on_disk(db):
             raw = fh.read()
     except OSError:
         return False
-    return hashlib.sha256(raw).hexdigest() != db['sha256']
+    return hashlib.sha256(raw).hexdigest() != db.get('sha256')
 
 def save(db, path=None, date=None):
     path = path or save_path(db)
@@ -352,7 +391,8 @@ def save(db, path=None, date=None):
             'THE DATABASE WAS SAVED BY SOMEONE ELSE AFTER YOU OPENED IT. '
             'NOTHING WAS SAVED: RELOAD IT, AND MAKE YOUR CHANGE AGAIN.'}]}
     b = text(db, date).encode('utf-8')
-    d = os.path.dirname(path)
+    # File::Basename's dirname: a file named with no folder is in '.'
+    d = os.path.dirname(path) or '.'
     if not os.path.isdir(d):
         os.makedirs(d)
     tmp = path + '.new'
@@ -360,7 +400,7 @@ def save(db, path=None, date=None):
         with open(tmp, 'wb') as fh:
             fh.write(b)
     except OSError as e:
-        hardycross.fail('CANNOT WRITE %s: %s', tmp, str(e).upper())
+        hardycross.fail('CANNOT WRITE %s: %s', tmp, _err(e))
     try:
         pipedata.load(tmp)
     except Exception as e:
@@ -373,7 +413,7 @@ def save(db, path=None, date=None):
     try:
         os.replace(tmp, path)
     except OSError as e:
-        hardycross.fail('CANNOT REPLACE %s: %s', path, (e.strerror or str(e)).upper())
+        hardycross.fail('CANNOT REPLACE %s: %s', path, _err(e))
     pipedata.load(path)
     phc.reset_db_cache()
     db['path'] = path

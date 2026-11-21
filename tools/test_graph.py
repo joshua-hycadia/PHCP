@@ -412,6 +412,81 @@ def part7():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def part8(tmp):
+    #==========================================================================
+    print('8. AS THE PERL - the file and the sheet where the two could differ')
+    #==========================================================================
+    # Each of these was a difference between the port and the Perl 1.6.0,
+    # found by reading the two side by side and run on both; the figures
+    # asserted are the Perl's.
+    def put(name, data):
+        p = os.path.join(tmp, name)
+        with open(p, 'wb') as o:
+            o.write(data)
+        return p
+
+    g = G.read_file(put('d.phg', b'A 0 600\nA 1000 400\nDUTY 500 300 X -\nDUTY 600 200 - -\n'))
+    is_("a duty's description of '-' stands; only its label, flow and pressure take '-' for blank",
+        g['duty'][0] == ['X', '-', '500', '300'] and g['duty'][1] == ['', '-', '600', '200'], g['duty'][:2])
+    g = G.read_file(put('cr.phg', b'A 0 600\rA 1000 400\nA 2000 300\n'))
+    is_('a carriage return alone does not end a line: only a newline does',
+        g['A'][0] == ['0', '600'] and g['A'][1] == ['2000', '300'] and g['A'][2] == ['', ''], g['A'][:3])
+    r, e = raises(lambda: G.read_file(put('cr2.phg', b'A 0 600\rZZ 1\nQQ 2\n')))
+    is_('   and the line numbers count newlines', not r and re.search(r'^LINE 2: UNKNOWN WORD QQ', e), e)
+    r, e = raises(lambda: G.read_file(put('u.phg', b'UNITS\n')))
+    is_('UNITS with nothing after it is refused by its line, not a crash',
+        not r and re.search(r'^LINE 1: UNITS TAKES FLOW \(LPM LPS M3H GPM\) OR PRESSURE \(KPA BAR MPA PSI M\)\n\Z', e), e)
+    g = G.read_file(put('a.phg', b'A\nA 5\nDUTY\n'))
+    is_('a curve line cut short reads as blank text, not as nothing',
+        g['A'][0] == ['', ''] and g['A'][1] == ['5', ''] and g['duty'][0] == ['', '', '', ''], (g['A'][:2], g['duty'][0]))
+    # A folder opens and reads as nothing, as Perl's open and <> do; on
+    # Windows no folder opens, and it is a file that cannot be read.
+    if os.name == 'nt':
+        r, e = raises(lambda: G.read_file(tmp))
+        is_('a folder given for the file cannot be read (Windows)', not r and e.startswith('CANNOT READ %s: ' % tmp), e)
+    else:
+        g = G.read_file(tmp)
+        is_('a folder given for the file reads as an empty graph', g == G.new_graph())
+
+    # write_file: the bytes Perl's print writes with no encoding layer
+    g = G.new_graph()
+    g['project']['PROJECT'] = 'caf\xe9'
+    g['project']['BY'] = '\u20acuro'
+    g['A'][0] = [0, 600]
+    g['A'][1] = [1500 / 60, 0.1 + 0.2]
+    G.write_file(g, os.path.join(tmp, 'w.phg'))
+    with open(os.path.join(tmp, 'w.phg'), 'rb') as f:
+        b = f.read().replace(b'\r\n', b'\n')
+    is_('a line of Latin-1 characters is written as those bytes, a line with a wider one as UTF-8',
+        b'PROJECT caf\xe9\n' in b and b'BY      \xe2\x82\xacuro\n' in b and b'A       25 0.3\n' in b, b[:120])
+
+    # the sheet: '0' is false to the Perl
+    g = G.read_file(EX)
+    g['project']['BY'] = '0'
+    g['project']['JOB'] = '0'
+    s = G.sheet(g, 1, 1, model='x.phg', program='P')[0]
+    is_("PREPARED BY 0 and Job 0 are not printed ('0' is no name)",
+        'PREPARED BY' not in s and 'Job 0' not in s and re.search(r'^BT /F1 8 Tf [\d.]+ 545\.00 Td \(\) Tj ET$', s, re.M))
+    s = G.sheet(G.read_file(EX), 1, 1, model='x.phg', program='P')[0]
+    is_('   and a name is: PREPARED BY PHCP, Job HC-DEMO-010',
+        '(PREPARED BY PHCP) Tj' in s and 'Job HC-DEMO-010' in s)
+
+    # figures of another script: \d matches them, in Perl too, and they are 0
+    g = G.new_graph()
+    g['A'][0] = ['0', '600']
+    g['A'][1] = ['\u066300', '\u0664']
+    g['A'][2] = ['5\u0663', '1\u0660']
+    c = G.check(g)
+    is_('figures that are not 0-9 count for nothing: a flow of Arabic-Indic 300 is 0',
+        [e[1] for e in c['errors']] == ['A ROW 2: FLOWS MUST RISE FROM ROW TO ROW, WITH NO FLOW TWICE']
+        and c['points']['A'] == [[0.0, 600.0], [5.0, 1.0]], (c['errors'], c['points']['A']))
+    g = G.new_graph()
+    g['A'][0] = ['-0', '600']
+    g['A'][1] = ['100', '500']
+    is_("a flow of -0 is 0, and printed 0", ' A  WATER SUPPLY, AS MEASURED        0 at 600, 100 at 500' in G.text_sheet(g),
+        G.text_sheet(g)[2:4])
+
+
 def main():
     tmp = tempfile.mkdtemp()
     try:
@@ -421,6 +496,7 @@ def main():
         part4(tmp)
         part5(tmp)
         part6(tmp)
+        part8(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     part7()

@@ -572,6 +572,156 @@ def main():
         and str(mw.cget('background')) == paper
         and str(SW.grids['SYSTEM']['hclip'].cget('background')) == head)
 
+    #======================================================================
+    print('AS THE PERL WINDOW DOES IT (the line-by-line audit)')
+    #======================================================================
+    from tkinter import filedialog
+    from hardycross.window import database as _database
+    from hardycross.window import project as _project
+    tmpd = tempfile.mkdtemp()
+
+    def state():
+        return '%s / %s' % (int(bool(SW.calculate_enabled())),
+                            SW.state_text())
+
+    # VALIDATION lists what VALIDATE found, and a click goes to the cell.
+    bad = os.path.join(tmpd, 'bad.phc')
+    with open(bad, 'w') as fh:
+        fh.write('WATER W1 0 500\nNODE N1 0\nSPRINKLER S1 0 60 8\n'
+                 'PIPE P1 W1 N1 5000 25\nPIPE P2 N1 S9 3000 25\n')
+    SW.open_path(bad)
+    v = SW.validate()
+    mw.update()
+    rows = _results.validation_rows()
+    is_('a failed VALIDATE lists every problem in the VALIDATION tab',
+        not v['ok'] and len(rows) == len(v['items']) == 3
+        and rows[2][0] == 'LINE 6'
+        and rows[2][2] == 'NODE S9 IS USED, BUT NOT DEFINED',
+        str(rows)[:300])
+    win.select_tab(SW.toptabs, 'DATABASE')
+    _results.vtable['labels'][8].event_generate('<ButtonRelease-1>',
+                                              when='now')
+    mw.update()
+    is_('a click on a problem goes to its cell on the sheet',
+        SW.toptabs['current'] == 'SYSTEM'
+        and mw.focus_get() is SW.grid_cell('SYSTEM', 1, 'pipe'),
+        SW.toptabs['current'])
+    items = SW.validation['items']
+    SW.validation['items'] = [{'tab': 'PROJECT', 'field': 'TITLE',
+                               'what': 'X', 'why': 'Y'}] + items
+    win.select_tab(SW.toptabs, 'SYSTEM')
+    SW.go_to_fault(0)
+    mw.update()
+    is_('   and one in the settings goes to its PROJECT field',
+        SW.toptabs['current'] == 'PROJECT', SW.toptabs['current'])
+    SW.validation['items'] = items
+
+    # What the shared tabs change is this window's state too.
+    SW.open_path(os.path.join(REPO, 'examples', '01_single_branch.phc'))
+    SW.validate()
+    was = state()
+    _database.db_after_change()
+    is_('a change of database turns CALCULATE off until validated again',
+        was == '1 / VALID - READY TO CALCULATE'
+        and state() == '0 / NOT VALIDATED' and SW.valid_text is None,
+        '%s -> %s' % (was, state()))
+    SW.validate()
+    _project.ENTRY_VARS['TITLE'][0].set('A NEW TITLE')
+    _project.settings_changed()
+    is_('so does a change in the PROJECT tab',
+        state() == '0 / NOT VALIDATED' and mw.title().endswith(' *'),
+        '%s %s' % (state(), mw.title()))
+    SW.validate()
+    r = SW.calculate()
+    had = len(_results.table_rows('PIPES'))
+    real_ok = SW.ok_to_discard
+    SW.ok_to_discard = lambda: True      # no dialog in a test
+    try:
+        SW.file_new()
+    finally:
+        SW.ok_to_discard = real_ok
+    is_('NEW empties the results of the model before it',
+        r.get('ok') and had > 0 and len(_results.table_rows('PIPES')) == 0
+        and _results.validation_rows()[0][2].startswith('NOT VALIDATED YET')
+        and state() == '0 / NOT VALIDATED',
+        '%s %s' % (had, len(_results.table_rows('PIPES'))))
+
+    # The PROJECT tab's drop-downs are this sheet's settings.
+    SW.open_path(os.path.join(REPO, 'examples', '01_single_branch.phc'))
+    mw.update()
+    mb = win.form['LENGTH']
+    mb.nametowidget(mb.cget('menu')).invoke(1)          # CM
+    mb = win.form['METHOD']
+    mb.nametowidget(mb.cget('menu')).invoke(1)          # DW
+    mw.update()
+    heads = [c['head'] for c in SW.grid_spec('SYSTEM')[0]]
+    is_('a unit and a method chosen in PROJECT are the sheet\'s',
+        SW.sheet['settings']['units']['LENGTH'] == 'CM'
+        and SW.sheet['settings']['method'] == 'DW'
+        and 'LENGTH (CM)' in heads
+        and re.search(r'^UNITS\s+LENGTH CM$', SW.full_text(), re.M)
+        and re.search(r'^METHOD\s+DW$', SW.full_text(), re.M)
+        and mw.title().endswith(' *'),
+        '%s %s' % (SW.sheet['settings']['units'].get('LENGTH'), heads[:4]))
+
+    # Messages and the report's name.
+    SW.write_file('/nonexistent/dir/x.phc')
+    is_('a file that cannot be written says why, and only why',
+        SW.statusbar.cget('text') == 'CANNOT WRITE /NONEXISTENT/DIR/X.PHC: '
+                                     'NO SUCH FILE OR DIRECTORY',
+        SW.statusbar.cget('text'))
+    SW.open_path(os.path.join(REPO, 'examples', '01_single_branch.phc'))
+    asked = {}
+    real_save = filedialog.asksaveasfilename
+
+    def fake_save(**kw):
+        asked.update(kw)
+        return os.path.join(tmpd, 'asked.txt')
+
+    SW.path = os.path.join(tmpd, 'MODEL.PHC')
+    filedialog.asksaveasfilename = fake_save
+    try:
+        wrote = SW.file_report()
+    finally:
+        filedialog.asksaveasfilename = real_save
+    is_('WRITE REPORT offers MODEL_REPORT.PDF for MODEL.PHC',
+        wrote and asked.get('initialfile') == 'MODEL_REPORT.PDF',
+        '%r %r' % (wrote, asked.get('initialfile')))
+
+    # A grid refreshed in place leaves the focus in the cell being typed in.
+    # (The Perl takes it away: its `$mw->focus && ...` in refresh_grid is
+    # not a question.  A defect there, deliberately not copied.)
+    SW.saved_text = SW.full_text()
+    SW.open_path(os.path.join(REPO, 'examples', '02_full_network.phc'))
+    mw.update()
+    c = SW.grid_cell('SYSTEM', 0, 'from')
+    c.focus_force()
+    mw.update()
+    c.icursor('end')
+    c.event_generate('<KeyPress>', keysym='x', when='now')
+    c.event_generate('<KeyRelease>', keysym='x', when='now')
+    mw.update()
+    is_('a FROM node typed while SUPPLIES has rows: the focus stays in the '
+        'cell',
+        SW.sheet['pipes'][0]['from'].endswith('x') and mw.focus_get() is c,
+        '%r %s' % (SW.sheet['pipes'][0]['from'], mw.focus_get()))
+    c = SW.grid_cell('SYSTEM', 1, 'length')
+    c.focus_force()
+    mw.update()
+    c.icursor('end')
+    c.event_generate('<KeyPress>', keysym='7', when='now')
+    c.event_generate('<KeyRelease>', keysym='7', when='now')
+    mw.update()
+    typed = c.get()
+    kept = mw.focus_get() is c
+    SW.edit_undo()
+    mw.update()
+    is_('undo puts the cell being typed in back as well',
+        kept and typed.endswith('7') and not c.get().endswith('7')
+        and c.get() == SW.sheet['pipes'][1]['length']
+        and mw.focus_get() is c, '%r %r' % (typed, c.get()))
+    SW.saved_text = SW.full_text()
+
     mw.destroy()
     print('\n%d passed, %d failed' % (passed[0], failed[0]))
     return 1 if failed[0] else 0

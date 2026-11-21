@@ -68,6 +68,25 @@ _OUTLET = {'SPRINKLER': 1, 'HYDRANT': 1, 'HREEL': 1}
 # pairs.
 MIN_PAIRS = 4
 
+# Perl's \s and Python's differ on four characters: the separators FS, GS, RS
+# and US (\x1c-\x1f) are white space to Python's \s, str.split and str.strip,
+# and are not to Perl's.  _WS and _NWS are Perl's two classes, so a word, a
+# blank line and a trimmed cell are what they are in the Perl.
+_WS = r'[^\S\x1c-\x1f]'
+_NWS = r'[\S\x1c-\x1f]'
+_TRIM = re.compile('^' + _WS + '+|' + _WS + r'+\Z')
+_TAIL = re.compile(_WS + r'+\Z')
+_BLANK = re.compile('^' + _WS + '*$')
+_COMMENT = re.compile('^' + _WS + '*//')
+_GAP = re.compile(_WS + '+')
+
+
+# _true -- Perl's truth of a name: undef, '' and '0' are false.  The Perl
+# tests a node, pipe or pump name itself in a few places, so one named 0 is
+# treated there as no name at all.
+def _true(v):
+    return v is not None and v != '' and v != '0' and v != 0
+
 
 #------------------------------------------------------------------------------
 # trim / normal_type -- a cell's text, and a node type brought to the words
@@ -77,7 +96,7 @@ MIN_PAIRS = 4
 def trim(v):
     if v is None:
         return ''
-    return re.sub(r'^\s+|\s+\Z', '', str(v))
+    return _TRIM.sub('', str(v))
 
 
 def normal_type(t):
@@ -199,7 +218,9 @@ def device_rows(sheet, type_):
         if d['type'] != type_:
             continue
         if d['tied']:
-            node = trim(d.get('node'))
+            node = d.get('node')
+            if node is None:
+                node = ''
             if not live.get(node):
                 continue
             if normal_type(sheet['nodes'].get(node, {}).get('type')) != type_:
@@ -262,7 +283,7 @@ def reconcile(sheet):
             continue
         d = None
         for cand in sheet['devices']:
-            if trim(cand.get('node')) == id_ and cand['type'] == t:
+            if (cand.get('node') or '') == id_ and cand['type'] == t:
                 d = cand
                 break
         if d is None:
@@ -461,7 +482,7 @@ def device_columns(sheet, type_):
             pipe,
             _col('ratio', 'RATIO', 10, 'THE PRESSURE RATIO, WRITTEN 3:1 OR 1.5. THE OUTLET IS THE INLET DIVIDED BY THE RATIO.'),
             _col('min_inlet', 'MIN INLET (%s)' % pr, 14, 'THE LEAST INLET PRESSURE THE VALVE IS RATED FOR. BLANK, OR 0: NO MINIMUM.'),
-            _col('band', 'BAND (%)', 10, 'HOW FAR EITHER SIDE OF THE RATIO, AS A PERCENTAGE OF THE INLET. BLANK: 5%.'),
+            _col('band', 'BAND (%)', 10, 'HOW FAR EITHER SIDE OF THE RATIO, AS A PERCENTAGE OF THE INLET. BLANK: 5.'),
         ]
     return c
 
@@ -479,7 +500,7 @@ def code_and_note(line):
         return line, ''
     note = line[i:]
     code = line[:i]
-    code = re.sub(r'\s+\Z', '', code)
+    code = _TAIL.sub('', code)
     return code, note
 
 
@@ -511,9 +532,9 @@ def read_text(text):
 
     for raw in doc['network'].split('\n'):
         raw = re.sub(r'\r\Z', '', raw)
-        if re.match(r'^\s*$', raw):
+        if _BLANK.match(raw):
             continue
-        if re.match(r'^\s*//', raw):
+        if _COMMENT.match(raw):
             sheet['notes'].append(raw)
             continue
         note = code_and_note(raw)[1]
@@ -680,7 +701,7 @@ def read_text(text):
 # equivalent length is not copied: EQV belongs to the pipe it names.
 def _resolve_pipe_copies(sheet, by):
     for p in sheet['pipes']:
-        if not p.get('copy_of'):
+        if not _true(p.get('copy_of')):
             continue
         name, seen = p['copy_of'], {}
         src = None
@@ -689,10 +710,10 @@ def _resolve_pipe_copies(sheet, by):
             src = by.get(name)
             if src is None:
                 break
-            if not src.get('copy_of'):
+            if not _true(src.get('copy_of')):
                 break
             name = src['copy_of']
-        if src is not None and not src.get('copy_of'):
+        if src is not None and not _true(src.get('copy_of')):
             for f in ('length', 'type', 'c', 'diam', 'fittings'):
                 p[f] = src[f]
         del p['copy_of']
@@ -889,7 +910,7 @@ def to_text(sheet):
                        'col': ('c' if len(c) and type_ == trim(p['type']).upper()
                                else 'type'), 'pipe': i})
             prev = key
-        fits = [x for x in re.split(r'\s+', trim(p['fittings'])) if len(x)]
+        fits = [x for x in _GAP.split(trim(p['fittings'])) if len(x)]
         line = cmd('PIPE', trim(p['pipe']), trim(p['from']), trim(p['to']),
                    trim(p['length']), trim(p['diam']), *fits)
         if len(p.get('note') or ''):
@@ -910,7 +931,7 @@ def to_text(sheet):
                 line = line + ' ' + d['note']
             add(line, loc)
             if type_ == 'PUMP':
-                duty_name = d['name'] or ('P-' + (d['node'] or ''))
+                duty_name = d['name'] if _true(d['name']) else ('P-' + (d['node'] or ''))
             elif type_ == 'BP':
                 duty_name = d['pipe']
             else:
@@ -1027,7 +1048,7 @@ def locate(sheet, item):
         return None
     loc = dict(sheet['map'][line])
     msg = (item.get('what') or '').upper()
-    if loc.get('node') and 'ELEVATION' in msg:
+    if _true(loc.get('node')) and 'ELEVATION' in msg:
         ids = node_rows(sheet)
         row = dict((v, i) for i, v in enumerate(ids))
         if loc['node'] in row:
@@ -1038,7 +1059,7 @@ def locate(sheet, item):
         loc['col'] = 'static'
     elif 'MINFLOW' in msg:
         loc['col'] = 'min_flow'
-        if loc.get('node'):
+        if _true(loc.get('node')):
             loc['tab'] = 'NODES'
     elif 'FITTING' in msg:
         loc['col'] = 'fittings'

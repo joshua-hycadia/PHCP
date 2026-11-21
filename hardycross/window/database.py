@@ -125,7 +125,9 @@ def db_open():
         DBV['error'] = None
     except Exception as e:
         msg = getattr(e, 'msg', None) or str(e)
-        DBV['error'] = ' '.join(str(msg).upper().split())
+        # capitals, and nothing after the last word (s/\s+\z//); the
+        # message is otherwise as it was given
+        DBV['error'] = str(msg).upper().rstrip()
         DBV['db'] = None
 
 
@@ -243,19 +245,26 @@ def db_fill():
         DBV['shown_rows'].append(i)
     h.bind('<ButtonRelease-1>', _row_click)
     if DBV.get('sel') is not None and DBV['sel'] in DBV['shown_rows']:
-        n = DBV['shown_rows'].index(DBV['sel']) + 1
+        # the heading is the Text's first line: row k is on line k + 2
+        n = DBV['shown_rows'].index(DBV['sel']) + 2
         h.tag_add('band', '%d.0' % n, '%d.end' % n)
         h.see('%d.0' % n)
     h.configure(state='disabled')
 
 
 def _row_click(e):
+    # A click on a row selects it and puts it in the fields (the HList's
+    # -browsecmd).  The heading is line 1 of the Text, so the row under
+    # the pointer is the line less two.  A click on the heading, or
+    # below the last row, is on no row: nothing is selected and the
+    # fields keep what is typed in them.
     h = DBV['hlist']
-    n = int(h.index('@%d,%d' % (e.x, e.y)).split('.')[0])
+    n = int(h.index('@%d,%d' % (e.x, e.y)).split('.')[0]) - 1
+    if not 1 <= n <= len(DBV['shown_rows']):
+        return
     h.tag_remove('band', '1.0', 'end')
-    if 1 <= n <= len(DBV['shown_rows']):
-        h.tag_add('band', '%d.0' % n, '%d.end' % n)
-        DBV['sel'] = DBV['shown_rows'][n - 1]
+    h.tag_add('band', '%d.0' % (n + 1), '%d.end' % (n + 1))
+    DBV['sel'] = DBV['shown_rows'][n - 1]
     db_form()
 
 
@@ -399,12 +408,15 @@ def db_choose_folder(dir_=None, answer=None):
     if not os.path.exists(os.path.join(dir_, 'pipes.dat')):
         if answer is None:
             from tkinter import messagebox
-            answer = messagebox.askyesno(
+            answer = messagebox.askquestion(
                 title='NO DATABASE IN THAT FOLDER', icon='question',
+                type='yesno',
                 message='%s HAS NO PIPES.DAT.\n\nCOPY THE DATABASE IN '
                         'USE THERE, TO START A SHARED DATABASE FOR THE '
                         'TEAM?' % dir_)
-        if not answer:
+        # the answer is the button's name, as Perl's messageBox gave it:
+        # anything but YES leaves the folder as it is
+        if str(answer).lower() != 'yes':
             return
         copy = 1
     err = dbedit.use_folder(dir_, copy)

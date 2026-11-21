@@ -69,10 +69,42 @@ def _s(value):
     return value
 DEVICE = ('BP', 'BFP', 'PRV', 'OPP', 'OFD', 'PRA')
 
-_ISO_GRID = re.compile(r'^\s*//ISO\s+GRID\s+(\S+)\s*$', re.I)
+
+def _true(v):
+    """Perl's truth of a name: undef, '' and '0' are false.  A cell holds
+    the name of its point, and the Perl tests that name, so a point named
+    0 does not take up its cell."""
+    return v is not None and v != '' and v != '0' and v != 0
+
+
+def _f(value):
+    """A field in a written line: undef is an empty string in a Perl join."""
+    return '' if value is None else str(value)
+
+# Perl's \s and Python's differ on four characters: the separators FS, GS, RS
+# and US (\x1c-\x1f) are white space to Python's \s, str.split and str.strip,
+# and are not to Perl's.  _WS and _NWS are Perl's two classes, so a word, a
+# blank line and a trimmed cell are what they are in the Perl.
+_WS = r'[^\S\x1c-\x1f]'
+_NWS = r'[\S\x1c-\x1f]'
+_ISO_GRID = re.compile('^%s*//ISO%s+GRID%s+(%s+)%s*$' % (_WS, _WS, _WS, _NWS, _WS), re.I)
 _ISO_POINT = re.compile(
-    r'^\s*//ISO\s+(\S+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+(?:\.\d+)?)\s*$', re.I)
-_ISO_OTHER = re.compile(r'^\s*//ISO\b', re.I)
+    r'^%s*//ISO%s+(%s+)%s+(-?\d+)%s+(-?\d+)%s+(-?\d+(?:\.\d+)?)%s*$'
+    % (_WS, _WS, _NWS, _WS, _WS, _WS, _WS), re.I)
+_ISO_OTHER = re.compile(r'^%s*//ISO\b' % _WS, re.I)
+_BLANK = re.compile('^' + _WS + '*$')
+_COMMENT = re.compile('^' + _WS + '*//')
+_LEAD = re.compile('^' + _WS + '+')
+_TRIM = re.compile('^' + _WS + '+|' + _WS + r'+\Z')
+_GAP = re.compile(_WS + '+')
+_GAPS = re.compile('(' + _WS + '+)')
+_HAS = re.compile(_NWS)
+_SPACE_OR_TILDE = re.compile(_WS + '|~')
+
+
+def _words(text):
+    """The fields of a line, as Perl's grep { length } split /\\s+/."""
+    return [t for t in _GAP.split(text) if t]
 
 
 #------------------------------------------------------------------------------
@@ -98,15 +130,15 @@ def read_network(text, units=None):
         n += 1
         if line.endswith('\r'):
             line = line[:-1]
-        if not line.strip():
+        if _BLANK.match(line):
             continue
-        if line.lstrip().startswith('//'):
+        if _COMMENT.match(line):
             iso_line(d, line)
             continue
         m = re.search(r'//(.*)$', line)
         note = m.group(1) if m else None
         if note is not None:
-            note = note.lstrip()
+            note = _LEAD.sub('', note)
         a = phc.analyse(line)
         if a['status'] != 'ok':
             d['extras'].append(line)
@@ -410,7 +442,7 @@ def place_child(d, parent, child, len_m, slot):
 
 
 def cell_free(d, ix, iy, iz):
-    return not d['occ'].get(occ_key(ix, iy, iz))
+    return not _true(d['occ'].get(occ_key(ix, iy, iz)))
 
 
 def set_cell(d, n, ix, iy):
@@ -463,14 +495,14 @@ def write_network(d):
             f += [n['static']] + list(n.get('pairs') or [])
         elif n['kind'] != 'NODE':
             f += [n['minflow'], n['k']]
-        out.append(emit('%-9s %s' % (n['kind'], ' '.join(str(x) for x in f)),
+        out.append(emit('%-9s %s' % (n['kind'], ' '.join(_f(x) for x in f)),
                        n.get('note')))
     for f in d['flows']:
         f_ = [f['name'], f['node'], f['flow']]
         if f.get('minp') is not None and f['minp'] != '':
             f_.append(f['minp'])
         out.append(emit('%-9s %s' % ('FIXEDFLOW',
-                                     ' '.join(str(x) for x in f_)),
+                                     ' '.join(_f(x) for x in f_)),
                         f.get('note')))
     prev = 'BORE\0'        # the use a pipe has when no USE was written
     for p in d['pipes']:
@@ -480,9 +512,9 @@ def write_network(d):
             u = [p['use_type']]
             if p.get('use_c') is not None and p['use_c'] != '':
                 u.append(p['use_c'])
-            out.append('%-9s %s' % ('USE', ' '.join(str(x) for x in u)))
+            out.append('%-9s %s' % ('USE', ' '.join(_f(x) for x in u)))
             prev = key
-        out.append(emit('%-9s %s' % ('PIPE', ' '.join(str(x) for x in
+        out.append(emit('%-9s %s' % ('PIPE', ' '.join(_f(x) for x in
             [p['name'], p['start'], p['end'], p['len'], p['size']] +
             list(p.get('fits') or []))), p.get('note')))
         if p.get('eqv') is not None:
@@ -490,10 +522,10 @@ def write_network(d):
                             p.get('eqv_note')))
         if p.get('device'):
             out.append('%-9s %s' % (p['device']['kind'],
-                ' '.join(str(x) for x in
+                ' '.join(_f(x) for x in
                          [p['name']] + list(p['device'].get('args') or []))))
     for p in d['pumps']:
-        out.append(emit('%-9s %s' % ('PUMP', ' '.join(str(x) for x in
+        out.append(emit('%-9s %s' % ('PUMP', ' '.join(_f(x) for x in
             [p['name'], p['in'], p['out'], p['churn']] +
             list(p.get('pairs') or []))), p.get('note')))
     if d['extras']:
@@ -665,7 +697,7 @@ def snap_axis(node, ix, iy, iz):
 # gets stored.
 def steps_for_length(d, token):
     token = _s(token)
-    if not re.search(r'\S', token):
+    if not _HAS.search(token):
         return None
     m = phc.length_metres(token, d['units']['LENGTH'])
     if m is None or m < 0:
@@ -704,16 +736,16 @@ def cell_along(node, ix, iy, iz, steps):
 def known_ok(d, known):
     if not known or not isinstance(known, dict):
         return ''
-    if known.get('len') is not None and re.search(r'\S', _s(known['len'])):
+    if known.get('len') is not None and _HAS.search(_s(known['len'])):
         m = phc.length_metres(known['len'], d['units']['LENGTH'])
         if m is None:
             return 'LENGTH IS NOT A LENGTH'
         if m < 0:
             return 'A LENGTH CANNOT BE NEGATIVE'
-    if known.get('size') is not None and re.search(r'\S', _s(known['size'])):
+    if known.get('size') is not None and _HAS.search(_s(known['size'])):
         if not (is_num(_s(known['size'])) and float(known['size']) >= 0):
             return 'SIZE IS NOT A NUMBER'
-    if known.get('c') is not None and re.search(r'\S', _s(known['c'])):
+    if known.get('c') is not None and _HAS.search(_s(known['c'])):
         if not (is_num(_s(known['c'])) and float(known['c']) >= 0):
             return 'C IS NOT A NUMBER'
     return ''
@@ -757,7 +789,7 @@ def add_node(d, kind, ix, iy, iz=None, elev=None):
     iy = iround(iy)
     if iz is None:
         iz = 0
-    if node_at(d, ix, iy, iz):
+    if _true(node_at(d, ix, iy, iz)):
         return ('THAT POINT IS ALREADY USED', None)
     if elev is None or elev == '':
         elev = metres_to_token(d, iz * (d['grid'] or 1), 'ELEVATION')
@@ -807,18 +839,18 @@ def add_pipe(d, start, end, known=None):
     use = d['pipes'][-1] if d['pipes'] else {'use_type': 'BORE',
                                              'use_c': '120'}
     size = '1' if d['units']['SIZE'] == 'IN' else '25'
-    if known.get('size') is not None and re.search(r'\S', _s(known['size'])):
+    if known.get('size') is not None and _HAS.search(_s(known['size'])):
         size = known['size']
-    if known.get('fits') is not None and re.search(r'\S', _s(known['fits'])):
-        fits = [t for t in _s(known['fits']).split() if t]
+    if known.get('fits') is not None and _HAS.search(_s(known['fits'])):
+        fits = _words(_s(known['fits']))
     else:
         fits = []
     c = use['use_c']
-    if known.get('c') is not None and re.search(r'\S', _s(known['c'])):
+    if known.get('c') is not None and _HAS.search(_s(known['c'])):
         c = known['c']
     p = {'name': name, 'start': start, 'end': end, 'size': size,
          'fits': fits, 'use_type': use['use_type'], 'use_c': c}
-    if known.get('len') is not None and re.search(r'\S', _s(known['len'])):
+    if known.get('len') is not None and _HAS.search(_s(known['len'])):
         p['len'] = known['len']
     else:
         p['len'] = metres_to_token(d, geom_metres(d, p), 'LENGTH')
@@ -863,7 +895,7 @@ def move_node(d, name, ix, iy, iz=None):
     if iz is None:
         iz = n['iz']
     at = node_at(d, ix, iy, iz)
-    if at and at != name:
+    if _true(at) and at != name:
         return 'THAT POINT IS ALREADY USED'
     z_moved = abs(iz - n['iz']) > 1e-9
     n['ix'] = ix
@@ -919,13 +951,13 @@ def set_node(d, name, field, value):
         return 'NO SUCH POINT'
     if value is None:
         value = ''
-    value = value.strip()
+    value = _TRIM.sub('', value)
     if field == 'NAME':
         if value == name:
             return ''
         if value.upper() == 'END':
             return 'END CANNOT BE A NAME'
-        if re.search(r'\s|~', value) or value == '':
+        if _SPACE_OR_TILDE.search(value) or value == '':
             return 'A NAME CANNOT CONTAIN A SPACE OR ~'
         if value in d['nodes']:
             return 'THAT NAME IS USED'
@@ -956,7 +988,7 @@ def set_node(d, name, field, value):
             return 'ELEVATION IS NOT AN ELEVATION'
         iz = m / (d['grid'] or 1)
         at = node_at(d, n['ix'], n['iy'], iz)
-        if at and at != name:
+        if _true(at) and at != name:
             return 'THAT POINT IS ALREADY USED'
         n['elev'] = value
         n['iz'] = iz
@@ -991,13 +1023,13 @@ def set_pipe(d, name, field, value):
         return 'NO SUCH PIPE'
     if value is None:
         value = ''
-    value = value.strip()
+    value = _TRIM.sub('', value)
     if field == 'NAME':
         if value == name:
             return ''
         if value.upper() == 'END':
             return 'END CANNOT BE A NAME'
-        if re.search(r'\s|~', value) or value == '':
+        if _SPACE_OR_TILDE.search(value) or value == '':
             return 'A NAME CANNOT CONTAIN A SPACE OR ~'
         if link_taken(d, value):
             return 'THAT NAME IS USED'
@@ -1026,7 +1058,7 @@ def set_pipe(d, name, field, value):
                     abs(nz - b['iz']) < 1e-6)
             if not same:
                 at = node_at(d, nx, ny, nz)
-                if at and at != p['end']:
+                if _true(at) and at != p['end']:
                     return 'THAT POINT IS ALREADY USED'
                 move = move_node(d, p['end'], nx, ny, nz)
                 if move:
@@ -1042,7 +1074,7 @@ def set_pipe(d, name, field, value):
             del p['note']
         return ''
     if field == 'FITTINGS':
-        p['fits'] = [t for t in value.split() if t]
+        p['fits'] = _words(value)
         return ''
     if field == 'TYPE':
         t = value.upper()
@@ -1082,13 +1114,13 @@ def set_pump(d, name, field, value):
         return 'NO SUCH PUMP'
     if value is None:
         value = ''
-    value = value.strip()
+    value = _TRIM.sub('', value)
     if field == 'NAME':
         if value == name:
             return ''
         if value.upper() == 'END':
             return 'END CANNOT BE A NAME'
-        if re.search(r'\s|~', value) or value == '':
+        if _SPACE_OR_TILDE.search(value) or value == '':
             return 'A NAME CANNOT CONTAIN A SPACE OR ~'
         if link_taken(d, value):
             return 'THAT NAME IS USED'
@@ -1101,10 +1133,13 @@ def set_pump(d, name, field, value):
         return 'NOT A NUMBER'
     if field == 'CHURN':
         p['churn'] = value
-    elif field == 'FLOW':
-        p['pairs'][0] = value
-    elif field == 'PRESSURE':
-        p['pairs'][1] = value
+    elif field in ('FLOW', 'PRESSURE'):
+        # Perl's array grows to the index assigned, undef in between.
+        i = 0 if field == 'FLOW' else 1
+        pairs = p.setdefault('pairs', [])
+        while len(pairs) <= i:
+            pairs.append(None)
+        pairs[i] = value
     if field not in ('CHURN', 'FLOW', 'PRESSURE'):
         return 'NO SUCH FIELD'
     return ''
@@ -1158,7 +1193,7 @@ def link_taken(d, name):
 def rename_token(line, old, new):
     parts = line.split('//', 1)
     code = parts[0]
-    tk = re.split(r'(\s+)', code)
+    tk = _GAPS.split(code)
     out = ''.join(new if t == old else t for t in tk)
     if len(parts) == 2:
         out += '//' + parts[1]

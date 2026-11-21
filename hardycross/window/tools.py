@@ -307,11 +307,34 @@ def tools_refresh():
         fn()
     for tool in ('VEL', 'FIT', 'LOSS'):
         if QT[tool]['type'] != tools.BORE and \
-                QT[tool]['size'] not in tools.sizes(QT[tool]['type']):
+                QT[tool]['size'] not in [
+                    str(dn) for dn in tools.sizes(QT[tool]['type'])]:
             QT[tool]['size'] = ''
         tools_sizes(tool)
     for tool in ('VEL', 'FIT', 'K', 'KCONV', 'LOSS'):
         tools_update(tool)
+
+
+# vel_limit -- the PROJECT tab's velocity limit as the calculators use
+# it: 6 m/s unless the field holds digits and points only and is more
+# than nothing.  The number is read as Perl reads one from text, the
+# leading part that is a number: "1.2.3" is 1.2, and "." is nothing.
+def vel_limit(raw):
+    import re as _re
+    if raw is None or not _re.match(r'^\s*[\d.]+\s*$', str(raw), _re.A):
+        return 6.0
+    m = _re.match(r'\s*(\d+\.?\d*|\.\d+)', str(raw), _re.A)
+    v = float(m.group(1)) if m else 0.0
+    return v if v > 0 else 6.0
+
+
+# _size_var -- the SIZE field shows the tool's size: the Perl tied the
+# field to it, so a size cleared or chosen elsewhere (a change of pipe
+# type, a pick from the list) is what the field holds when it is shown.
+def _size_var(w, size):
+    var = w.get('size_var')
+    if var is not None and var.get() != (size or ''):
+        var.set(size or '')
 
 
 # tool_units -- the PROJECT tab's units, each unset one at its default.
@@ -340,6 +363,7 @@ def unit_name(q, u):
 def tools_sizes(tool):
     w = QTW[tool]
     type_ = QT[tool]['type']
+    _size_var(w, QT[tool]['size'])
     w['size_menu'].delete(0, 'end')
     if type_ == tools.BORE:
         w['size_mb'].pack_forget()
@@ -387,6 +411,7 @@ def tools_update(tool):
         return
     if w.get('size_mb'):
         tools_show_size(tool)
+        _size_var(w, QT[tool]['size'])
     f = QT[tool]
     u = tool_units()
     # sync any StringVars (typing) into the fields
@@ -464,10 +489,7 @@ def tools_update(tool):
         t.insert('end', '\n')
         lim = win.settings['options'].get('VEL_LIMIT')
         import re as _re
-        if not (lim and _re.match(r'^\s*[\d.]+\s*$', str(lim))
-                and float(lim) > 0):
-            lim = 6
-        lim = float(lim)
+        lim = vel_limit(lim)
         line('AGAINST THE LIMIT', '%.1f M/S: %s' % (
             lim, 'ABOVE IT' if res['velocity'] > lim else 'WITHIN IT'),
             'head' if res['velocity'] > lim else None)

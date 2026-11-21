@@ -61,6 +61,29 @@ def blank(v):
     # as in Perl, a number is its own text: 50 is not blank.
     return v is None or not re.search(r'\S', str(v))
 
+# _num -- a field that is_num passed, as the number Perl makes of it: the
+# number its ASCII figures spell from the start (0 if there are none: \d
+# matches the figures of any script, but only 0-9 count), and a whole number
+# as a whole number, so that '-0' is 0 and not the float -0.0.
+_NUMIFY_RE = re.compile(r'\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)')
+
+def _num(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = _NUMIFY_RE.match(str(v))
+    if not m:
+        return 0.0
+    return float(m.group(1)) + 0.0      # -0.0 + 0.0 is 0.0
+
+# _dnkey -- a size as Perl's $size + 0 keys the database: the number's own
+# text, to 15 significant figures (50.0 and 5e1 are 50; 50.0000001 is not).
+def _dnkey(size):
+    return '%.15g' % _num(size)
+
+# Perl's // : the value unless it is missing.
+def _dor(v, default):
+    return default if v is None else v
+
 #------------------------------------------------------------------------------
 # Units.
 #------------------------------------------------------------------------------
@@ -71,7 +94,12 @@ KALIAS = {'US': 'GPM/PSI', 'BAR': 'LPM/BAR', 'KPA': 'LPM/KPA'}
 # units_of -- a units hash completed: anything not given is the internal unit.
 def units_of(u=None):
     u = u or {}
-    return {q: ((str(u.get(q) or '').upper()) or INTERNAL[q]) for q in INTERNAL}
+    # uc(...) || the internal unit: '' and '0' are no unit
+    out = {}
+    for q in INTERNAL:
+        v = str(_dor(u.get(q), '')).upper()
+        out[q] = v if v not in ('', '0') else INTERNAL[q]
+    return out
 
 # factor -- what one of $unit is in the internal unit of $q: L/min, kPa, m, mm.
 def factor(q, unit):
@@ -88,12 +116,16 @@ def factor(q, unit):
 def kfactor_factor(unit):
     unit = str(unit).upper()
     unit = KALIAS.get(unit, unit)
-    kq, kp = unit.split('/')
+    # the first two parts, as Perl's list assignment takes them; a part that
+    # is not there is no unit, refused by name as the Perl refuses it
+    parts = unit.split('/') if unit != '' else []
+    kq = parts[0] if len(parts) > 0 else ''
+    kp = parts[1] if len(parts) > 1 else ''
     return factor('FLOW', kq) / math.sqrt(factor('PRESSURE', kp))
 
 # show -- an internal value (L/min, kPa, m, mm) in the unit chosen for $q.
 def show(q, v, units=None):
-    return v / factor(q, units_of(units)[q])
+    return v / factor(q, units_of(units).get(q))
 
 def is_num(v):
     # as in Perl, a number is its own text: 500 is a valid field value.
@@ -148,7 +180,7 @@ def number(label, v, rule='pos'):
         return None, '%s IS NEEDED' % label
     if not is_num(v):
         return None, "%s '%s' IS NOT A NUMBER" % (label, re.sub(r'^\s+|\s+$', '', str(v)))
-    n = float(v)
+    n = _num(v)
     if rule == 'pos' and n <= 0:
         return None, '%s MUST BE ABOVE ZERO' % label
     if n < 0:
@@ -170,7 +202,7 @@ def bore_of(type_, size, u=None):
         return None, ['TYPE', 'UNKNOWN PIPE TYPE %s' % type_]
     if blank(size):
         return None, ['SIZE', 'CHOOSE A SIZE']
-    d = pipedata.bore(type_, '%g' % float(size)) if is_num(size) else None
+    d = pipedata.bore(type_, _dnkey(size)) if is_num(size) else None
     d = float(d) if d is not None else None
     if not d:
         return None, ['SIZE', '%s IS NOT MADE IN DN%s - CHOOSE A SIZE FROM THE LIST' % (type_, size)]
@@ -206,7 +238,7 @@ def velocity(**f):
 #   { ok: 0, errors: [ [field, problem] ] }
 #------------------------------------------------------------------------------
 def kfactor(**f):
-    unit = str(f.get('unit') or 'KPA').upper()
+    unit = str(_dor(f.get('unit'), 'KPA')).upper()
     unit = KALIAS.get(unit, unit)
     u = units_of(f.get('units'))
     given = [x for x in ('K', 'Q', 'P') if not blank(f.get(x.lower()))]
@@ -256,7 +288,7 @@ def kfactor(**f):
 #   { ok: 0, errors: [ [field, problem] ] }
 #------------------------------------------------------------------------------
 def kconvert(**f):
-    frm = str(f.get('from') or 'US').upper()
+    frm = str(_dor(f.get('from'), 'US')).upper()
     k, e = number('K', f.get('value'))
     if e:
         return {'ok': 0, 'errors': [['VALUE', e]]}
@@ -379,8 +411,12 @@ def fittings(**f):
     def _short(w):
         m = re.match(r'^(\d*)([GCB])\Z', w)
         return m and (m.group(1) + {'G': 'GV', 'C': 'CV', 'B': 'BV'}[m.group(2)]) or w
-    spec = '+'.join(_short(w) for w in spec.split('+'))
-    r = pipedata.resolve(type=f.get('type'), dn='%g' % float(f.get('size')), c=c, spec=spec)
+    # Perl's split drops the empty fields at the end: '2E,' is 2E, not 2E+
+    words = spec.split('+')
+    while words and words[-1] == '':
+        words.pop()
+    spec = '+'.join(_short(w) for w in words)
+    r = pipedata.resolve(type=f.get('type'), dn=_dnkey(f.get('size')), c=c, spec=spec)
     if r['errors']:
         return {'ok': 0, 'errors': [['SPEC', str(x).upper()] for x in r['errors']]}
     rows = [{'count': x['count'], 'code': x['code'],
@@ -433,7 +469,7 @@ def _plate_ratio(d, bigd, cd):
     return r if r >= 0 else 0
 
 def plate(**f):
-    mode = str(f.get('mode') or 'SIZE').upper()
+    mode = str(_dor(f.get('mode'), 'SIZE')).upper()
     if mode != 'DROP':
         mode = 'SIZE'
     u = units_of(f.get('units'))
@@ -464,7 +500,8 @@ def plate(**f):
         else:
             target = drop * factor('PRESSURE', u['PRESSURE'])
         if blank(f.get('step')):
-            step = f['step_default'] if f.get('step_default') is not None else 0.5
+            # a number, or a setting's text, which Perl numifies where used
+            step = _num(f['step_default']) if f.get('step_default') is not None else 0.5
             if step < 0:
                 err.append(['STEP', 'BORE STEP MUST BE ZERO OR ABOVE'])
         else:

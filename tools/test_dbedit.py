@@ -237,6 +237,128 @@ if True:
         not p and not od['modified']
         and [r for r in DB.rows(od, 'PIPETYPE') if r['fields'][0] == 'ASAM'][0]['fields'][5] == 'DASH',
         '; '.join(x['message'] for x in p))
+print('6. AS THE PERL - where the port and the Perl could differ')
+# Each of these was a difference between the port and the Perl 1.6.0, found
+# by reading the two side by side and run on both; what is asserted is what
+# the Perl gives.
+if True:
+    import hardycross
+    import hashlib
+
+    def put(name, data):
+        p = os.path.join(TMP, name)
+        with open(p, 'wb') as o:
+            o.write(data)
+        return p
+
+    def died(code):
+        try:
+            code()
+        except hardycross.ModelError as e:
+            return e.msg
+        return None
+
+    e = died(lambda: DB.open_db(os.path.join(TMP, 'nonesuch.dat')))
+    is_('a database that is not there: the reason alone, in capitals',
+        e == 'CANNOT OPEN THE DATABASE %s: NO SUCH FILE OR DIRECTORY' % os.path.join(TMP, 'nonesuch.dat'), e)
+    os.mkdir(os.path.join(TMP, 'isdir.dat.new'))
+    d = DB.open_db(REAL)
+    e = died(lambda: DB.save(d, os.path.join(TMP, 'isdir.dat')))
+    is_('   likewise a file that cannot be written',
+        e is not None and re.match(r'CANNOT WRITE %s: [A-Z ]+\Z' % re.escape(os.path.join(TMP, 'isdir.dat.new')), e), e)
+    PD.load(REAL)
+
+    d = DB.open_db(put('l1.dat', b'# caf\xe9\nKPRIME|X|caf\xe9 \xb0|1.5|\n'))
+    f = DB.rows(d, 'KPRIME')[0]['fields']
+    is_('a file that is not UTF-8 opens, each byte a character',
+        f[1] == 'caf\xe9 \xb0' and DB.shown(f[1]) == 'CAF  DEG'
+        and DB.text(d).encode('utf-8') == b'# caf\xc3\xa9\nKPRIME|X|caf\xc3\xa9 \xc2\xb0|1.5|\n', f)
+
+    d = DB.open_db(put('e.dat', b''))
+    err, at = DB.add_row(d, 'PIPETYPE', ['X', 'n', 's', 'r', '120', 'DASH'])
+    is_('an empty file has no lines: the first row added is line 0',
+        err is None and at == 0 and len(d['lines']) == 1 and DB.text(d, 'D') == 'PIPETYPE|X|n|s|r|120|DASH\n',
+        (err, at, DB.text(d, 'D')))
+
+    d = DB.open_db(put('ar.dat', ('PIPETYPE|T|n|s|r|120|DASH\nPIPE|T|\u0663|60|5\u0663|DASH\n'
+                                  'PIPE|T|1\u0663|6\u0660|53|DASH\nKPRIME|K|c|\u0663|\n').encode('utf-8')))
+    is_('figures that are not 0-9 count for nothing: a DN of Arabic-Indic 3 is 0, and refused',
+        ['%d: %s' % (p['line'], p['message']) for p in DB.check_all(d)]
+        == ["1: DN '\u0663' MUST BE A WHOLE NUMBER ABOVE ZERO", '2: BORE MM 53 MUST BE LESS THAN OD MM 6\u0660',
+            "3: K' '\u0663' MUST BE A NUMBER ABOVE ZERO"], DB.check_all(d))
+
+    d = DB.open_db(put('sh.dat', b'PIPETYPE\nPIPETYPE|T|n|s|r|120|DASH\nPIPE|T\nPIPE\nPIPE|T|50|60|53|DASH\n'
+                                 b'FIT|S\nFIT|S|E|elbow|50|1.5\nKPRIME\nDATASET\n'))
+    p = DB.check_all(d)
+    is_('rows cut short in the file are each named, and the whole rows beside them still checked',
+        ['%d: %s' % (x['line'], x['message']) for x in p]
+        == ['0: PIPE TYPES TAKES 6 FIELDS, NOT 0', '2: PIPE SIZES TAKES 5 FIELDS, NOT 1',
+            '3: PIPE SIZES TAKES 5 FIELDS, NOT 0', '5: FITTINGS TAKES 5 FIELDS, NOT 1',
+            "7: K' FACTORS TAKES 4 FIELDS, NOT 0"], p)
+    is_('   a pipe type is still counted against them',
+        DB.delete_row(d, 1) == 'PIPE TYPE T STILL HAS 2 PIPE SIZES: DELETE THOSE FIRST')
+    d['modified'] = 1
+    is_('   and a DATASET line cut short takes its date', DB.text(d, 'D').endswith('KPRIME\nDATASET||D\n'), DB.text(d, 'D')[-30:])
+
+    d = DB.open_db(put('n.dat', b'# c\nKPRIME|A|x|1|\nKPRIME|B|y|2|\n'))
+    r = [DB.set_row(d, -1, ['B', 'z', '3', '']), DB.set_row(d, -1, ['C', 'z', '3', '']),
+         DB.set_row(d, -4, ['C', 'z', '3', '']), DB.set_row(d, 3, ['C', 'z', '3', '']),
+         DB.delete_row(d, -2), DB.delete_row(d, -9), DB.delete_row(d, 0)]
+    is_('a line counted from the end is that line, as a Perl index is',
+        r == ['THERE IS ALREADY A ROW FOR B', None, 'NO SUCH ROW', 'NO SUCH ROW', None, 'NO SUCH ROW',
+              'NOT A ROW OF A TABLE'] and DB.text(d) == '# c\nKPRIME|C|z|3|\n', (r, DB.text(d)))
+
+    d = DB.open_db(put('dt.dat', b'DATASET|n|old\r\nKPRIME|A|x|1|\r\n'))
+    d['modified'] = 1
+    is_("a date given as '' is the date written", DB.text(d, '') == 'DATASET|n|\r\nKPRIME|A|x|1|\r\n', DB.text(d, ''))
+
+    # save to a file named with no folder: it is in the folder we are in
+    here = os.getcwd()
+    os.mkdir(os.path.join(TMP, 'sv'))
+    shutil.copy(REAL, os.path.join(TMP, 'sv', 'pipes.dat'))
+    os.chdir(os.path.join(TMP, 'sv'))
+    try:
+        d = DB.open_db('pipes.dat')
+        r0 = DB.rows(d, 'KPRIME')[0]
+        f = list(r0['fields'])
+        f[1] = 'CHANGED'
+        e = DB.set_row(d, r0['line'], f)
+        s = DB.save(d, None, '1 January 2030')
+        is_('a database named with no folder is saved where it is',
+            e is None and s['ok'] and s['path'] == 'pipes.dat' and not os.path.exists('pipes.dat.new')
+            and s['sha256'] == hashlib.sha256(slurp('pipes.dat')).hexdigest(), s)
+
+        # A file with no newline at its end is written back as it was, and
+        # can be saved over.  (The Perl cannot save over it: a slip in
+        # open_db loses the fingerprint.  A defect there, deliberately not
+        # copied.)
+        with open('nonl.dat', 'wb') as o:
+            o.write(ORIG.rstrip(b'\r\n'))
+        d = DB.open_db('nonl.dat')
+        is_('a file with no newline at its end: unchanged, it writes back to the same bytes',
+            DB.text(d).encode('utf-8') == ORIG.rstrip(b'\r\n')
+            and d.get('sha256') == hashlib.sha256(ORIG.rstrip(b'\r\n')).hexdigest())
+        r0 = DB.rows(d, 'KPRIME')[0]
+        f = list(r0['fields'])
+        f[1] = 'CHANGED'
+        DB.set_row(d, r0['line'], f)
+        s = DB.save(d, None, 'D')
+        s2 = DB.save(d, None, 'D')
+        is_('   it is saved over, and saved again', s['ok'] and s['path'] == 'nonl.dat' and s2['ok'], (s, s2))
+
+        # a database that will not load: the problem as the Perl words it
+        d = DB.open_db('pipes.dat')
+        d['modified'] = 1
+        d['lines'][:] = [l for l in d['lines'] if l.get('kind') != 'DATASET']
+        s = DB.save(d, 'bad2.dat')
+        is_('a database that will not load is not saved: the reason in capitals, ending as the Perl ends it',
+            not s['ok'] and s['problems'][0]['message']
+            == 'DATABASE BAD2.DAT.NEW HAS NO DATASET LINE -- ADD ONE NAMING THIS DATA AND ITS DATE\n'
+            and not os.path.exists('bad2.dat.new') and not os.path.exists('bad2.dat'), s)
+    finally:
+        os.chdir(here)
+        PD.load(REAL)
+
 is_('the real database was never touched', slurp(REAL) == ORIG)
 
 shutil.rmtree(TMP, ignore_errors=True)

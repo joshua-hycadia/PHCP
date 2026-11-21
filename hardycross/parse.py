@@ -16,7 +16,7 @@ import math
 import re
 
 from . import (GAMMA_W, Q_TINY, D_TINY, HWK_DEF, fail, set_unit,
-               fit_curve, ModelError)
+               fit_curve, ModelError, perl_add, _pw)
 from . import pipedata
 
 # The database is loaded once, on first use, from data/pipes.dat.  A model
@@ -61,24 +61,30 @@ def roughness_warning(net):
              'USE <type> <mm>), or for the pipe type in the database.'
              % (len(ids), ', '.join(shown)))]
 
-_FIT_RE = re.compile(r'(FIT=\S*)')
+# /gie in Parse.pm: fit= and Fit= are protected as FIT= is.
+_FIT_RE = re.compile(r'(FIT=\S*)', re.I)
 
 def tokenize(line):
     # Strip the line ending FIRST (see Parse.pm), then comments, then make
     # control bytes and non-printable ASCII separators, protecting the commas
     # inside a FIT= value.
-    line = re.sub(r'\r?\n$', '', line)
+    line = re.sub(r'\r?\n\Z', '', line)
     line = re.sub(r'[!#].*$', '', line)
     line = re.sub(r'[^\x20-\x7E]+', ' ', line)
     line = _FIT_RE.sub(lambda m: m.group(1).replace(',', '+'), line)
     return [t for t in re.split(r'[ \t,;]+', line) if t]
 
-_NUM_RE = re.compile(r'^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$')
+# re.A: \d is 0-9 only, as it is to Perl on the bytes of a model.  Without it
+# an Arabic-Indic or full-width digit read as a number, which Perl reads as 0.
+_NUM_RE = re.compile(r'^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$', re.A)
 _NAN_RE = re.compile(r'^[-+]?(nan|inf)', re.I)
 
 def is_num(t):
     if t is None:
         return 0
+    if not isinstance(t, str):
+        # A number handed over as one: Perl matches its text.
+        t = '%.15g' % t
     if _NAN_RE.match(t):
         return 0
     if not _NUM_RE.match(t):
@@ -91,8 +97,34 @@ def is_num(t):
     return 0 if math.isinf(abs(v)) else 1
 
 def num(t):
-    t = 0 if t is None else t
-    return float(t) if is_num(t) else 0
+    # "+ 0" as in Parse.pm ($t + 0): it makes "-0", "-0.0" and a negative
+    # number too small to hold plain zero.  Without it an elevation typed
+    # -0.0 was printed -0.000 in the report, where the Perl prints 0.000.
+    if t is None:
+        return 0
+    return float(t) + 0 if is_num(t) else 0
+
+def _at(tk, i):
+    # $tk->[$i]: undef, not an error, beyond the end of a short row.
+    return tk[i] if i < len(tk) else None
+
+def _uc(t):
+    # uc of a token that may be undef.
+    return '' if t is None else t.upper()
+
+def _iv(x):
+    # What Perl's %d prints for a number: the integer part, and beyond a
+    # 64-bit integer the casts Perl makes (IV_MIN below it; wrapped as an
+    # unsigned 64-bit integer up to 2**64, and -1 beyond).
+    if x != x:
+        return 0
+    if x < -2 ** 63:
+        return -2 ** 63
+    if x < 2 ** 63:
+        return int(x)
+    if x < 2 ** 64:
+        return int(x) - 2 ** 64
+    return -1
 
 def kv(tk, key):
     for t in tk:
@@ -157,13 +189,16 @@ def new_net():
 
 
 def parse_row(net, section, tk):
+    # A row shorter than its section expects is read as Perl reads it: a
+    # missing token is undef ('' as text, 0 as a number), not an IndexError.
+    id0 = _at(tk, 0)
     #--------------------------------------------------------------- UNITS
     if section == 'UNITS':
-        set_unit(net, tk[0].upper(), (tk[1] if len(tk) > 1 else '').upper())
+        set_unit(net, _uc(_at(tk, 0)), _uc(_at(tk, 1)))
         return
     #------------------------------------------------------------- OPTIONS
     if section == 'OPTIONS':
-        k = tk[0].upper()
+        k = _uc(_at(tk, 0))
         v = tk[1] if len(tk) > 1 else ''
         o = net['opts']
         if k == 'METHOD':
@@ -200,8 +235,8 @@ def parse_row(net, section, tk):
             if o['hose'] < 0:
                 fail('HOSE_ALLOWANCE cannot be negative')
         elif k == 'PUMPDUTY':
-            o.setdefault('pump_duty', {})[v] = [num(tk[2]) * net['f_flow'],
-                                                num(tk[3]) * net['f_pres']]
+            o.setdefault('pump_duty', {})[v] = [num(_at(tk, 2)) * net['f_flow'],
+                                                num(_at(tk, 3)) * net['f_pres']]
         elif k == 'NU':
             o['nu'] = num(v)
             if o['nu'] <= 0:
@@ -256,7 +291,7 @@ def parse_row(net, section, tk):
         return
     #--------------------------------------------------------------- NODES
     if section == 'NODES':
-        i = node_index(net, tk[0])
+        i = node_index(net, _at(tk, 0))
         if len(tk) > 1:
             net['nodes'][i]['z'] = num(tk[1]) * net['f_len']
         return
@@ -287,7 +322,7 @@ def parse_row(net, section, tk):
             b = pipedata.bore(ptype, dn)
             if b is None:
                 fail('pipe %s: DATA_REQUIRED - DN%d is not in the database '
-                     'for %s; the bore is not guessed', tk[0], dn, ptype)
+                     'for %s; the bore is not guessed', tk[0], _iv(dn), ptype)
             bore = float(b)
             c = kv(tk, 'C')
             if c is None and len(tk) > 5 and '=' not in tk[5]:
@@ -360,26 +395,26 @@ def parse_row(net, section, tk):
     #--------------------------------------------------------------- PUMPS
     if section == 'PUMPS':
         net['elems'].append({
-            'id': tk[0], 'kind': 'PUMP',
-            'n1': node_index(net, tk[1]), 'n2': node_index(net, tk[2]),
+            'id': _at(tk, 0), 'kind': 'PUMP',
+            'n1': node_index(net, _at(tk, 1)), 'n2': node_index(net, _at(tk, 2)),
             'curve': read_curve(net, tk, 3, 0), 'q': 0, 'in_tree': 0,
         })
         return
     #------------------------------------------------------------ SUPPLIES
     if section == 'SUPPLIES':
-        n = node_index(net, tk[1])
+        n = node_index(net, _at(tk, 1))
         zk = kv(tk, 'Z')
         z = zk * net['f_len'] if zk is not None else net['nodes'][n]['z']
-        if tk[2].upper() == 'STATIC':
+        if _uc(_at(tk, 2)) == 'STATIC':
             net['elems'].append({
-                'id': tk[0], 'kind': 'SUPPLY_STATIC',
+                'id': id0, 'kind': 'SUPPLY_STATIC',
                 'n1': net['iref'], 'n2': n,
-                'pstat': num(tk[3]) * net['f_pres'], 'z': z,
+                'pstat': num(_at(tk, 3)) * net['f_pres'], 'z': z,
                 'q': 0, 'in_tree': 0,
             })
         else:
             net['elems'].append({
-                'id': tk[0], 'kind': 'SUPPLY_CURVE',
+                'id': _at(tk, 0), 'kind': 'SUPPLY_CURVE',
                 'n1': net['iref'], 'n2': n,
                 'curve': read_curve(net, tk, 3, 0), 'z': z,
                 'q': 0, 'in_tree': 0,
@@ -387,8 +422,8 @@ def parse_row(net, section, tk):
         return
     #---------------------------------------------------------- DISCHARGES
     if section == 'DISCHARGES':
-        n = node_index(net, tk[1])
-        ty = tk[2].upper()
+        n = node_index(net, _at(tk, 1))
+        ty = _uc(_at(tk, 2))
         zk = kv(tk, 'Z')
         z = zk * net['f_len'] if zk is not None else net['nodes'][n]['z']
         uf, up = net['f_flow'], net['f_pres']
@@ -410,26 +445,27 @@ def parse_row(net, section, tk):
             if qq is None:
                 fail('FIXEDFLOW needs Q=')
             if pp is not None and pp < 0:
-                fail('FIXEDFLOW %s has a negative minimum pressure', tk[0])
-            net['nodes'][n]['demand'] += qq
+                fail('FIXEDFLOW %s has a negative minimum pressure', id0)
+            # perl_add: a fixed flow of 0 leaves the demand the integer 0.
+            net['nodes'][n]['demand'] = perl_add(net['nodes'][n]['demand'], qq)
             net.setdefault('fixed', []).append({
-                'id': tk[0], 'kind': 'FIXEDFLOW', 'n1': n,
+                'id': id0, 'kind': 'FIXEDFLOW', 'n1': n,
                 'qreq': qq, 'q': qq, 'preq': pp, 'z': z,
             })
             return
         given = sum(1 for x in (kk, qq, pp) if x is not None)
         if given < 2:
-            fail('discharge %s needs any TWO of K, Q, P', tk[0])
+            fail('discharge %s needs any TWO of K, Q, P', id0)
         if kk is None:
             kk = qq / math.sqrt(pp) if pp > D_TINY else 0
         if qq is None:
             qq = kk * math.sqrt(pp if pp > 0 else 0)
         if pp is None:
-            pp = (qq / kk) ** 2 if kk > D_TINY else 0
+            pp = _pw(qq / kk, 2) if kk > D_TINY else 0
         if kk <= D_TINY:
-            fail('discharge %s resolves to an unusable K-factor', tk[0])
+            fail('discharge %s resolves to an unusable K-factor', id0)
         net['elems'].append({
-            'id': tk[0], 'kind': 'DISCHARGE',
+            'id': id0, 'kind': 'DISCHARGE',
             'otype': ty,
             'n1': n, 'n2': net['iref'],
             'k': kk, 'qreq': qq, 'preq': pp, 'z': z,
@@ -438,9 +474,9 @@ def parse_row(net, section, tk):
         return
     #------------------------------------------------------------- DEVICES
     if section == 'DEVICES':
-        n1 = node_index(net, tk[1])
-        n2 = node_index(net, tk[2])
-        ty = tk[3].upper()
+        n1 = node_index(net, _at(tk, 1))
+        n2 = node_index(net, _at(tk, 2))
+        ty = _uc(_at(tk, 3))
         dnk = kv(tk, 'DN')
         dn = int(dnk if dnk is not None else 0)
         pdk = kv(tk, 'PIPEDIA')
@@ -452,33 +488,33 @@ def parse_row(net, section, tk):
         borek = kv(tk, 'BORE')
         bore = (borek if borek is not None else 0) * net['f_dia']
         if ty == 'PRV' and dp <= 0:
-            fail('PRV %s needs a positive DP=', tk[0])
+            fail('PRV %s needs a positive DP=', id0)
         if ty == 'ORIFICE_P' and dp <= 0:
-            fail('ORIFICE_P %s needs a positive DP=', tk[0])
+            fail('ORIFICE_P %s needs a positive DP=', id0)
         if ty == 'ORIFICE_D' and bore <= 0:
-            fail('ORIFICE_D %s needs a positive BORE=', tk[0])
+            fail('ORIFICE_D %s needs a positive BORE=', id0)
         if ty == 'ORIFICE_D' and pd > 0 and bore >= pd:
-            fail('orifice %s bore is not smaller than the pipe bore', tk[0])
+            fail('orifice %s bore is not smaller than the pipe bore', id0)
         if ty in ('ORIFICE_P', 'ORIFICE_D') and (cd <= 0 or cd > 1):
-            fail('orifice %s CD must be more than 0 and not more than 1', tk[0])
+            fail('orifice %s CD must be more than 0 and not more than 1', id0)
 
         if ty == 'PRV':
             net['elems'].append({
-                'id': tk[0], 'kind': 'FIXED_DROP', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'FIXED_DROP', 'n1': n1, 'n2': n2,
                 'dp': (kv(tk, 'DP') or 0) * net['f_pres'], 'q': 0, 'in_tree': 0,
             })
         elif ty == 'ORIFICE_P':
             if pd <= 0:
-                fail('orifice %s needs DN= or PIPEDIA= for the pipe bore', tk[0])
+                fail('orifice %s needs DN= or PIPEDIA= for the pipe bore', id0)
             net['elems'].append({
-                'id': tk[0], 'kind': 'ORIFICE_REQUIRED', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'ORIFICE_REQUIRED', 'n1': n1, 'n2': n2,
                 'dp': (kv(tk, 'DP') or 0) * net['f_pres'],
                 'dn': dn, 'pipedia': pd, 'cd': cd, 'bore': 0,
                 'q': 0, 'in_tree': 0,
             })
         elif ty == 'ORIFICE_D':
             net['elems'].append({
-                'id': tk[0], 'kind': 'ORIFICE', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'ORIFICE', 'n1': n1, 'n2': n2,
                 'bore': (kv(tk, 'BORE') or 0) * net['f_dia'],
                 'pipedia': pd, 'cd': cd, 'q': 0, 'in_tree': 0,
             })
@@ -486,18 +522,18 @@ def parse_row(net, section, tk):
             r = kv(tk, 'RATIO')
             r = 0 if r is None else r
             if r <= 1:
-                fail('PRA %s needs RATIO= more than 1', tk[0])
+                fail('PRA %s needs RATIO= more than 1', id0)
             mi = kv(tk, 'MININLET')
             band = kv(tk, 'BAND')
             band = 5 if band is None else band
             if band < 0:
-                fail('PRA %s: BAND= cannot be negative', tk[0])
+                fail('PRA %s: BAND= cannot be negative', id0)
             if band / 100 >= 1 / r:
                 fail('PRA %s: a band of %g%% of the inlet pressure is more than the %g%% '
                      'a %g:1 valve passes - the bottom of the band would be no pressure at all',
-                     tk[0], band, 100 / r, r)
+                     id0, band, 100 / r, r)
             e = {
-                'id': tk[0], 'kind': 'RATIO', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'RATIO', 'n1': n1, 'n2': n2,
                 'ratio': r, 'band': band / 100, 'dp': 0, 'q': 0, 'in_tree': 0,
             }
             if mi is not None and mi > 0:
@@ -505,7 +541,7 @@ def parse_row(net, section, tk):
             net['elems'].append(e)
         elif ty == 'BFP':
             net['elems'].append({
-                'id': tk[0], 'kind': 'BFP', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'BFP', 'n1': n1, 'n2': n2,
                 'curve': read_curve(net, tk, 4, 1), 'q': 0, 'in_tree': 0,
             })
         elif ty == 'DPV':
@@ -515,7 +551,8 @@ def parse_row(net, section, tk):
             if mode == 'RATIO':
                 trip['trip_ratio'] = kv(tk, 'RATIO')
             elif mode == 'TRIP':
-                trip['trip_pressure'] = kv(tk, 'TRIP') * net['f_pres']
+                # MODE=TRIP with no TRIP=: undef, 0 to Perl's arithmetic.
+                trip['trip_pressure'] = (kv(tk, 'TRIP') or 0) * net['f_pres']
             pts = [t for t in tk[4:] if '=' not in t]
             loss, data = 'NONE', {}
             vk = kv_text(tk, 'VALVE')
@@ -525,7 +562,7 @@ def parse_row(net, section, tk):
                 sizek = kv(tk, 'SIZE')
                 v = pipedata.dry_valve(mk, md, int(sizek if sizek is not None else 0))
                 if v is None:
-                    fail('DPV %s: %s is not in the database in this size', tk[0], vk)
+                    fail('DPV %s: %s is not in the database in this size', id0, vk)
                 if v.get('cv') or (v.get('eql_m') is not None and v.get('bore_mm') and v.get('c')):
                     loss = 'DB'
                     if v.get('cv'):
@@ -554,7 +591,7 @@ def parse_row(net, section, tk):
             data.setdefault('loss_source', 'NONE')
             data.setdefault('data_status', 'DATA_REQUIRED' if loss == 'NONE' else 'GIVEN')
             e = {
-                'id': tk[0], 'kind': 'DPV', 'n1': n1, 'n2': n2,
+                'id': id0, 'kind': 'DPV', 'n1': n1, 'n2': n2,
                 'size': int(kv(tk, 'SIZE') or 0), 'host_id': kv_text(tk, 'HOST'),
                 'trip_mode': mode, 'accelerator': acc,
                 'loss': loss, 'q': 0, 'in_tree': 0,

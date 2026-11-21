@@ -17,6 +17,7 @@
 #   4  NONCOMPLIANT, with --strict
 #==============================================================================
 
+import re
 import sys
 
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
@@ -35,6 +36,17 @@ def die(msg, err=None):
     sys.stderr.write(msg)
     sys.stdout.flush()
     sys.exit((err.errno if err is not None and err.errno else 0) or 255)
+
+
+def num(fmt, x):
+    # printf of a number as Perl prints it: a flow that has run away to
+    # not-a-number or infinity (a solve that diverged) is NaN, Inf or -Inf,
+    # where Python's % gives nan, inf and -inf.
+    if x != x:
+        return 'NaN'
+    if x in (float('inf'), float('-inf')):
+        return 'Inf' if x > 0 else '-Inf'
+    return fmt % x
 
 
 def fail_out(e):
@@ -122,7 +134,8 @@ def main():
     if report_path is not None:
         from hardycross import report
         name = 'STDIN.PHC' if model == '-' else model
-        if report_path.lower().endswith('.pdf'):
+        # /\.pdf$/i in Perl: $ also matches before a newline that ends the name.
+        if re.search(r'\.pdf$', report_path, re.I):
             try:
                 report.write_pdf_report(net, ok, name, report_path)
             except OSError as e:
@@ -165,9 +178,9 @@ def main():
     va = _validate.assess(net, ok, demand=with_demand)['validation']
 
     sys.stdout.write('# PHCP - Python Hydraulic Calculation Program %s\n' % VERSION)
-    sys.stdout.write('# converged %s  iterations %d  loops %d  continuity %.4e\n'
+    sys.stdout.write('# converged %s  iterations %d  loops %d  continuity %s\n'
                      % ('yes' if ok else 'NO', net['iters'], len(net['loops']),
-                        continuity_error(net)))
+                        num('%.4e', continuity_error(net))))
     sys.stdout.write('# units flow %s pressure %s\n' % (net['u_flow'], net['u_pres']))
     sys.stdout.write('# acceptance %s%s\n'
                      % (va['acceptance'],
@@ -175,15 +188,28 @@ def main():
                         else ' (supply demand not assessed: use --strict, --json or a report)'))
     for ei in range(1, len(net['elems'])):
         e = net['elems'][ei]
-        sys.stdout.write('Q %s %.4f\n' % (e['id'], e['q'] / net['f_flow']))
+        sys.stdout.write('Q %s %s\n' % (e['id'], num('%.4f', e['q'] / net['f_flow'])))
     for i in range(1, len(net['nodes'])):
         n = net['nodes'][i]
         if n['id'] == 'REF':
             continue
-        sys.stdout.write('P %s %.4f\n'
-                         % (n['id'], (n['h'] - GAMMA_W * n['z']) / net['f_pres']))
+        sys.stdout.write('P %s %s\n'
+                         % (n['id'], num('%.4f', (n['h'] - GAMMA_W * n['z']) / net['f_pres'])))
     sys.exit(jsonout.exit_code(va['acceptance'], strict))
 
 
 if __name__ == '__main__':
-    main()
+    # An error nothing above caught (a fault in the program, a damaged data
+    # file): Perl's die prints its one line and exits 255, or with the
+    # system's error number when the failure was the system's.  No
+    # traceback, and never exit status 1, which means INDETERMINATE.  The
+    # words are Python's own: the Perl's name its source file and line.
+    try:
+        main()
+    except Exception as e:
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        sys.stderr.write('%s\n' % (str(e).rstrip('\n') or type(e).__name__))
+        sys.exit((e.errno if isinstance(e, OSError) and e.errno else 0) or 255)

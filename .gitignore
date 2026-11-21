@@ -5,3 +5,4 @@ __pycache__/
 /build/
 /smoke_test*
 /.claude/
+/fuzz_failures/

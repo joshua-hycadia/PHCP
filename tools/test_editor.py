@@ -516,5 +516,78 @@ if True:
     is_('WRITE REPORT .pdf is a PDF',
        os.path.getsize(os.path.join(TMP, 'r.pdf')) and pdf_head == b'%PDF-')
 
+
+#------------------------------------------------------------------------------
+# The audit of the port against the Perl, 20 November 2026.  Each check below
+# is a difference found by running HardyCross::Editor and this module on the
+# same input; the expectation is what the Perl gives.
+#------------------------------------------------------------------------------
+print('\nPort audit: the Perl\'s answers')
+is_('an empty buffer has no lines', editor.lines('') == [None] and editor.lines(None) == [None]
+    and editor.check_buffer('')['lines'] == [None])
+d0 = {'settings': editor.new_settings(), 'network': 'NODE A 0\nNODE B 0\n'}
+is_('the network\'s closing newline is not a line of its own',
+    len(editor.doc_check(d0)['lines']) == 3)
+is_('a line outside the buffer has the default USE',
+    editor.context_at('NODE A 0\nUSE MS', 5)['use'] == {'type': 'BORE'})
+is_('a word is what Perl\'s \\S+ makes it: FS to US are not white space',
+    editor.words('NODE\x1fB 0') == [[0, 6, 'NODE\x1fB'], [7, 8, '0']]
+    and editor.colour_spans('NODE\x1fB 0') == [])
+h = editor.header_lines({'title': '0', 'project': {}, 'units': {'LENGTH': 'M'},
+                         'method': '', 'options': {}})
+is_('a blank method and a unit not set are written as blanks',
+    ['METHOD    ', 'METHOD'] in h and ['UNITS     SIZE ', 'SIZE'] in h
+    and h[0] == ['TITLE     0', 'TITLE'])
+
+# An element named 0 is false to Perl, and is left out of the look-ups.
+Z = '\n'.join(['UNITS     LENGTH M', 'WATER     W 0 500 1000 400', 'NODE      A 0',
+               'SPRINKLER 0 0 -50 80', 'SPRINKLER S2 0 -50 80',
+               'PIPE      P1 W A 10 25', 'PIPE      P2 A 0 10 25', 'PIPE      P3 A S2 10 25', ''])
+z = editor.solve_text(Z, 'Z.PHC')
+zt = editor.result_tables(z['net'])
+zrow = [r for r in zt['nodes']['rows'] if r['cells'][0] == '0'][0]
+is_('a sprinkler named 0 is a NODE in the NODES table, as in the Perl',
+    zrow['cells'][1] == 'NODE' and zrow['cells'][5] == '-')
+is_('and its line reads as a node\'s',
+    (editor.results_at(z['net'], 'SPRINKLER 0 0 -50 80') or '').startswith('0  PRESSURE '))
+ff = editor.solve_text(M, 'TEST.PHC')['net']
+if ff.get('fixed'):
+    f0 = ff['fixed'][0]
+    f1 = dict(f0)
+    f1['q'] = f0['q'] * 2
+    ff['fixed'].append(f1)
+    a1 = editor.results_at(ff, 'FIXEDFLOW %s X 1' % f0['id'])
+    ff['fixed'].pop()
+    is_('of two fixed flows of one name the first is shown',
+        a1 == editor.results_at(ff, 'FIXEDFLOW %s X 1' % f0['id']))
+
+# Files: the Perl's messages, and the bytes of the file kept.
+try:
+    editor.load_file(os.path.join(TMP, 'nodir', 'none.phc'))
+    err = None
+except Exception as e:
+    err = e
+is_('a file that cannot be opened: the reason alone, as Perl\'s $!',
+    err is not None and is_model_error(err)
+    and err.msg == 'CANNOT OPEN %s: NO SUCH FILE OR DIRECTORY' % os.path.join(TMP, 'nodir', 'none.phc'),
+    getattr(err, 'msg', err))
+try:
+    editor.write_report_file(z['net'], z['converged'], 'Z.PHC', os.path.join(TMP, 'nodir', 'r.txt'))
+    err = None
+except Exception as e:
+    err = e
+is_('a report that cannot be written is a model error with the reason',
+    err is not None and is_model_error(err)
+    and err.msg == 'CANNOT WRITE %s: NO SUCH FILE OR DIRECTORY' % os.path.join(TMP, 'nodir', 'r.txt'),
+    getattr(err, 'msg', err))
+raw = b'TITLE caf\xe9\nPROJECT JOB d\xc3\xa9j\xc3\xa0 \xe2\x82\xac\nNODE A 0 // \xff\xfe\n'
+with open(os.path.join(TMP, 'bytes.phc'), 'wb') as fh:
+    fh.write(raw)
+lt = editor.load_file(os.path.join(TMP, 'bytes.phc'))['text']
+is_('a file is read byte for character, so no byte is lost',
+    lt.encode(editor.file_encoding(lt)) == raw and editor.file_encoding(lt) == 'latin-1')
+is_('a text with a character over 255 is written as UTF-8, as Perl prints it',
+    editor.file_encoding('AΔ') == 'utf-8' and editor.file_encoding('') == 'latin-1')
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)

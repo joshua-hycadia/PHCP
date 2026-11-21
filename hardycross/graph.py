@@ -59,6 +59,7 @@
 #
 
 import math
+import os
 import re
 
 from . import fit_curve, curve_eval, VERSION
@@ -117,6 +118,18 @@ def is_num(v):
 def blank(v):
     return v is None or not re.search(r'\S', str(v))
 
+# _num -- a field that is_num passed, as the number Perl makes of it: the
+# number its ASCII figures spell from the start, 0 if there are none.  \d
+# matches the figures of any script in a character string, in Perl as here,
+# but only 0-9 count: a field of Arabic-Indic threes is_num, and is 0.
+_NUMIFY_RE = re.compile(r'\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)')
+
+def _num(v):
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = _NUMIFY_RE.match(str(v))
+    return float(m.group(1)) + 0.0 if m else 0.0     # '-0' is 0, as $q + 0
+
 #------------------------------------------------------------------------------
 # check -- every field checked.  Returns
 #   { ok, errors => [ [field, message] ],
@@ -153,17 +166,17 @@ def check(g):
                 err.append((f, '%s ROW %d: ROW %d IS EMPTY - FILL THE ROWS IN ORDER, WITH NO GAPS'
                             % (c, i + 1, gap)))
                 gap = None
-            if float(q) < 0:
+            if _num(q) < 0:
                 err.append((f, '%s ROW %d: A FLOW CANNOT BE NEGATIVE' % (c, i + 1)))
                 continue
-            if float(pr) < 0:
+            if _num(pr) < 0:
                 err.append((f, '%s ROW %d: A PRESSURE CANNOT BE NEGATIVE' % (c, i + 1)))
                 continue
-            if p and float(q) <= p[-1][0]:
+            if p and _num(q) <= p[-1][0]:
                 err.append((f, '%s ROW %d: FLOWS MUST RISE FROM ROW TO ROW, WITH NO FLOW TWICE'
                             % (c, i + 1)))
                 continue
-            p.append([float(q), float(pr)])
+            p.append([_num(q), _num(pr)])
         pts[c] = p
     if len(pts['A']) < 2:
         err.append(('A1', 'A, THE WATER SUPPLY, NEEDS AT LEAST TWO POINTS'))
@@ -197,21 +210,21 @@ def check(g):
             err.append((f, 'DUTY ROW %d: %s IS NOT A NUMBER'
                         % (i + 1, "PRESSURE '%s'" % pr if is_num(q) else "FLOW '%s'" % q)))
             continue
-        if float(q) < 0:
+        if _num(q) < 0:
             err.append((f, 'DUTY ROW %d: A FLOW CANNOT BE NEGATIVE' % (i + 1)))
             continue
         duty.append({'label': str(i + 1) if blank(label) else clean(label),
                      'desc': clean(desc or ''),
-                     'q': float(q), 'p': float(pr), 'row': i + 1})
+                     'q': _num(q), 'p': _num(pr), 'row': i + 1})
 
     for k in AXIS:
         v = g['axis'].get(k)
         if blank(v):
             continue
-        if not is_num(v) or float(v) <= 0:
+        if not is_num(v) or _num(v) <= 0:
             err.append((k, "%s: '%s' MUST BE A NUMBER ABOVE ZERO, OR BLANK" % (AXIS_LABEL[k], v)))
             continue
-        axis[k] = float(v)
+        axis[k] = _num(v)
     return {'ok': not err, 'errors': err, 'points': pts, 'curve': curve, 'duty': duty,
             'axis': axis, 'units': units(g)}
 
@@ -325,22 +338,40 @@ def write_file(g, path):
         l.append(' '.join(['DUTY   ', ('-' if blank(q) else _pstr(q)), ('-' if blank(p) else _pstr(p)),
                            ('-' if blank(label) else re.sub(r'\s+', '_', _pstr(label)))]
                           + ([] if blank(desc) else [_pstr(desc)])))
+    # The bytes Perl's print writes to a handle with no encoding layer: a
+    # line of characters below 256 as those bytes (an e-acute is one byte,
+    # E9), a line with any character above as UTF-8.  In text mode, as the
+    # Perl's '>': CRLF on Windows.
+    data = b''.join(_perl_bytes(x + '\n') for x in l)
+    if os.linesep != '\n':
+        data = data.replace(b'\n', os.linesep.encode('ascii'))
     try:
-        fh = open(path, 'w')
+        fh = open(path, 'wb')
     except OSError as e:
         raise ModelFileError('CANNOT WRITE %s: %s\n' % (path, e.strerror))
     with fh:
-        fh.write(''.join(x + '\n' for x in l))
+        fh.write(data)
     return 1
+
+def _perl_bytes(t):
+    try:
+        return t.encode('latin-1')
+    except UnicodeEncodeError:
+        return t.encode('utf-8', 'surrogatepass')
 
 # read_file -- a graph from a .phg file; dies with the line at fault.
 def read_file(path):
     # Read as bytes, as the Perl does: each byte outside printable ASCII is
     # one space below, and only \n ends a line.  A file that cannot be
     # opened says so in the Perl's words.
+    # Only \n ends a line (newline='\n'): a carriage return alone is a
+    # character of its line, a space below, as in the Perl -- not a line end.
+    # A folder opens and reads as nothing, as Perl's open and <> do.
     try:
-        with open(path, encoding='latin-1', newline='') as fh:
+        with open(path, encoding='latin-1', newline='\n') as fh:
             lines = fh.readlines()
+    except IsADirectoryError:
+        lines = []
     except OSError as e:
         raise ModelFileError('CANNOT READ %s: %s\n' % (path, e.strerror))
     g = new_graph()
@@ -363,7 +394,8 @@ def read_file(path):
             continue
         if k == 'UNITS':
             parts = rest.split()
-            q, unit = (parts[0].upper(), parts[1].upper() if len(parts) > 1 else None)
+            q = parts[0].upper() if len(parts) > 0 else None
+            unit = parts[1].upper() if len(parts) > 1 else None
             ok = FLOW_UNITS if q == 'FLOW' else (PRESSURE_UNITS if q == 'PRESSURE' else ())
             if not ok or unit not in ok:
                 raise ModelFileError('LINE %d: UNITS TAKES FLOW (%s) OR PRESSURE (%s)\n'
@@ -374,8 +406,8 @@ def read_file(path):
             if n[k] >= ROWS:
                 raise ModelFileError('LINE %d: MORE THAN %d POINTS ON CURVE %s\n' % (ln, ROWS, k))
             parts = rest.split()
-            qq = dash(parts[0]) if len(parts) > 0 else None
-            pp = dash(parts[1]) if len(parts) > 1 else None
+            qq = dash(parts[0]) if len(parts) > 0 else ''
+            pp = dash(parts[1]) if len(parts) > 1 else ''
             g[k][n[k]] = [qq, pp]
             n[k] += 1
             continue
@@ -384,7 +416,8 @@ def read_file(path):
                 raise ModelFileError('LINE %d: MORE THAN %d DUTY POINTS\n' % (ln, DUTY_ROWS))
             parts = rest.split(None, 3)
             label = dash(parts[2]).replace('_', ' ') if len(parts) > 2 else ''
-            desc = dash(parts[3]) if len(parts) > 3 else ''
+            # the description stands as written: a '-' there is a '-'
+            desc = parts[3] if len(parts) > 3 else ''
             qq = dash(parts[0]) if len(parts) > 0 else ''
             pp = dash(parts[1]) if len(parts) > 1 else ''
             g['duty'][n['DUTY']] = [label, desc, qq, pp]
@@ -447,14 +480,17 @@ def sheet(g, page, npages, **meta):
     m = {'header': 'PHCP  Q^1.85 WATER SUPPLY GRAPH', 'title': clean(pj.get('PROJECT')),
          'job': clean(pj.get('JOB')), 'date': clean(pj.get('DATE')),
          'designer': clean(pj.get('BY')),
-         'program': meta.get('program') or 'PHCP %s - Python Hydraulic Calculation Program' % VERSION,
-         'model': meta.get('model') or ''}
+         'program': (meta['program'] if meta.get('program') is not None
+                     else 'PHCP %s - Python Hydraulic Calculation Program' % VERSION),
+         'model': meta['model'] if meta.get('model') is not None else ''}
     s = pdfout.frame(page, npages, **m)
 
     # Title block.
     y = geo['top']
     s += txt(L, y, 'Q^1.85 WATER SUPPLY GRAPH' + (' - %s' % m['title'] if len(m['title']) else ''), 10, 1)
-    s += txt(R, y, ' '.join(x for x in ('PREPARED BY %s' % m['designer'] if m['designer'] else '',)
+    # PREPARED BY 0 is not printed: '0' is false to the Perl's test
+    s += txt(R, y, ' '.join(x for x in ('PREPARED BY %s' % m['designer']
+                                        if m['designer'] not in ('', '0') else '',)
                             if len(x)), 8, 0, 'r')
 
     # The plot.

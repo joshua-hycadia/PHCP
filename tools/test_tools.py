@@ -408,5 +408,56 @@ if True:
             T.plate(mode='SIZE', type='BORE', size=D, flow=q, drop=drop, step=-1),
             'STEP', r'CANNOT BE NEGATIVE')
 
+print('9. AS THE PERL - where the port and the Perl could differ')
+# Each of these was a difference between the port and the Perl 1.6.0, found
+# by reading the two side by side and run on both; what is asserted is what
+# the Perl gives.
+if True:
+    TY = T.pipe_types()[0]
+    DN = T.sizes(TY)[2]
+    r = T.velocity(type=TY, size='%d.0000001' % DN, flow=100)
+    is_('a size is looked up by its own figures: DN%d.0000001 is not DN%d' % (DN, DN),
+        not r['ok'] and r['errors'][0] == ['SIZE', '%s IS NOT MADE IN DN%d.0000001 - CHOOSE A SIZE FROM THE LIST' % (TY, DN)], r)
+    r1, r2 = T.velocity(type=TY, size='0%d.0' % DN, flow=100), T.velocity(type=TY, size=DN, flow=100)
+    is_('   and 0%d.0 is DN%d' % (DN, DN), r1['ok'] and r1 == r2, r1)
+    r = T.fittings(type=TY, size=DN, spec='2E,')
+    is_("a comma after the last fitting is not another fitting: '2E,' is 2E",
+        r['ok'] and r['spec'] == '2E' and len(r['rows']) == 1, r)
+    r = T.fittings(type=TY, size=DN, spec=' 2e , t ,, ')
+    is_("   ' 2e , t ,, ' is 2E+T", r['ok'] and r['spec'] == '2E+T' and len(r['rows']) == 2, r)
+    r = T.fittings(type=TY, size=DN, spec=',')
+    is_("   and ',' alone is no fittings at all", r['ok'] and r['spec'] == '' and r['rows'] == [] and r['total'] == 0, r)
+
+    def died(code):
+        try:
+            code()
+        except Exception as e:      # noqa: BLE001 - the message is the check
+            return getattr(e, 'msg', None) or str(e)
+        return None
+    is_('a K unit that is no unit is refused by name',
+        died(lambda: T.kconvert(value=5.6, **{'from': 'XYZ'})) == 'unknown unit XYZ for FLOW')
+    is_('   an empty one too: it is not taken for US or KPA',
+        died(lambda: T.kconvert(value=5.6, **{'from': ''})) == 'unknown unit  for FLOW'
+        and died(lambda: T.kfactor(k=8, p=100, unit='')) == 'unknown unit  for FLOW')
+    is_('   a flow unit alone has no pressure unit',
+        died(lambda: T.kconvert(value=5.6, **{'from': 'LPM'})) == 'unknown unit  for PRESSURE')
+    r = T.kconvert(value=5.6, **{'from': 'lpm/bar/x'})
+    is_('   and only the first two parts of one are read', r['ok'] and rel(r['bar'], 5.6) < 1e-12, r)
+    is_("a unit of '0' is no unit: the internal one", T.units_of({'FLOW': '0', 'PRESSURE': 'psi'})
+        == {'FLOW': 'LPM', 'PRESSURE': 'PSI', 'LENGTH': 'M', 'SIZE': 'MM', 'KFACTOR': 'LPM/KPA'})
+    is_('show of a quantity with no unit says so', died(lambda: T.show('VOLUME', 1)) == 'no unit factor for VOLUME')
+    r = T.plate(type=TY, size=DN, flow=500, drop=100, step_default='0.25')
+    is_('a default bore step given as text (a setting) is the number it spells',
+        r['ok'] and r['step'] == 0.25 and rel(r['bore'] / 0.25, round(r['bore'] / 0.25)) < 1e-12, r)
+    r = T.plate(type=TY, size=DN, flow=500, drop=100, step_default='-1')
+    is_('   and a negative one is refused', not r['ok'] and r['errors'] == [['STEP', 'BORE STEP MUST BE ZERO OR ABOVE']], r)
+    n, e = T.number('X', '-0', 'nonneg')
+    is_("-0 is 0, not minus zero: a flow of -0 gives a velocity of 0.00, not -0.00",
+        e is None and '%.2f' % n == '0.00' and '%.2f' % T.velocity(type='BORE', size=50, flow='-0')['velocity'] == '0.00', n)
+    n, e = T.number('X', '\u0663', 'nonneg')
+    is_('figures that are not 0-9 count for nothing: Arabic-Indic 3 is 0', e is None and n == 0, (n, e))
+    n, e = T.number('X', '\u0663')
+    is_('   so where zero is refused, it is', n is None and e == 'X MUST BE ABOVE ZERO', (n, e))
+
 print('\n%d passed, %d failed' % (_pass, _fail))
 sys.exit(1 if _fail else 0)
